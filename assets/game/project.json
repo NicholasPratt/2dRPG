@@ -1,0 +1,11 @@
+{
+  "id": "adventure",
+  "assetRoots": {
+    "rawSprites": "assets/raw/sprites",
+    "gameSprites": "assets/game/sprites",
+    "gameAnimations": "assets/game/animations",
+    "gamePalettes": "assets/game/palettes",
+    "rawTilesets": "assets/raw/tilesets",
+    "gameTilesets": "assets/game/tilesets"
+  }
+}
