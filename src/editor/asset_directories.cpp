@@ -7,9 +7,29 @@ std::filesystem::path AssetDirectories::rawSpritePath() const
     return projectRoot / rawSprites;
 }
 
+std::filesystem::path AssetDirectories::rawCharacterSpritePath() const
+{
+    return projectRoot / rawCharacterSprites;
+}
+
 std::filesystem::path AssetDirectories::gameSpritePath() const
 {
     return projectRoot / gameSprites;
+}
+
+std::filesystem::path AssetDirectories::gameCharacterSpritePath() const
+{
+    return projectRoot / gameCharacterSprites;
+}
+
+std::filesystem::path AssetDirectories::gameCharacterPath() const
+{
+    return projectRoot / gameCharacters;
+}
+
+std::filesystem::path AssetDirectories::gameMapPath() const
+{
+    return projectRoot / gameMaps;
 }
 
 std::filesystem::path AssetDirectories::gameAnimationPath() const

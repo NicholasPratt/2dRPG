@@ -48,9 +48,27 @@ struct SpriteDocument {
     std::vector<std::vector<SpriteCel>> cels;
 };
 
+struct SpriteUndoState {
+    SpriteDocument document;
+    std::array<int, 2> trackedCanvasSize{16, 16};
+    std::array<int, 4> selectionBounds{0, 0, 0, 0};
+    int selectedFrame = 0;
+    int selectedLayer = 0;
+    int selectedTool = 0;
+    int brushSize = 1;
+    int primaryColor = 1;
+    int secondaryColor = 0;
+    int selectionFrame = 0;
+    int selectionLayer = 0;
+    bool hasSelection = false;
+};
+
 class SpriteEditorPanel {
 public:
     void draw(EditorContext& context);
+    void openSpriteReference(const std::filesystem::path& spriteReference);
+    void openCharacterSpriteReference(const std::filesystem::path& spriteReference);
+    [[nodiscard]] std::filesystem::path spriteMetadataReference(const EditorContext& context) const;
 
 private:
     SpriteDocument document_;
@@ -60,6 +78,7 @@ private:
     int selectedFrame_ = 0;
     int selectedLayer_ = 0;
     int selectedTool_ = 0;
+    int brushSize_ = 1;
     int primaryColor_ = 1;
     int secondaryColor_ = 0;
     int playbackFps_ = 12;
@@ -86,6 +105,9 @@ private:
     bool moveDragActive_ = false;
     std::vector<unsigned int> moveSourcePixels_;
     SpriteClipboard clipboard_;
+    std::vector<SpriteUndoState> undoStack_;
+    bool strokeUndoCaptured_ = false;
+    std::string ioStatus_;
 
     void drawLeftRail();
     void drawCenterWorkspace();
@@ -100,12 +122,19 @@ private:
     void drawPalette(EditorContext& context);
     void drawExport(EditorContext& context);
     void saveSpriteMetadata(const EditorContext& context) const;
+    void exportSingleFramePng(const EditorContext& context);
     void exportSpriteSheetPng(const EditorContext& context);
+    void importPng(const EditorContext& context);
+    [[nodiscard]] std::vector<unsigned char> compositeFrameRgba(int frameIndex) const;
     [[nodiscard]] int previewFrameIndex() const;
     void handleShortcuts();
+    bool primaryShortcutDown() const;
+    void recordUndoState();
+    void undo();
 
     void ensureDocumentState();
     void createBlankSprite(int width, int height);
+    void clearCurrentFrame();
     void resizeSprite(int newWidth, int newHeight);
     void resizeCanvasStorage(int oldWidth, int oldHeight, int newWidth, int newHeight);
     void handleCanvasInput(const ImVec2& canvasOrigin, float pixelSize);
@@ -114,6 +143,7 @@ private:
     SpriteCel& celAt(int frameIndex, int layerIndex);
     const SpriteCel& celAt(int frameIndex, int layerIndex) const;
     void setPixel(SpriteCel& cel, int x, int y, unsigned int color);
+    void setBrushPixel(SpriteCel& cel, int x, int y, unsigned int color);
     unsigned int currentPaletteColor(bool useSecondaryColor) const;
     unsigned int sampledVisibleColor(int x, int y) const;
     void paintStroke(int x0, int y0, int x1, int y1, bool useSecondaryColor);
@@ -131,6 +161,13 @@ private:
     void beginMoveDrag();
     void previewMoveSelection(int offsetX, int offsetY);
     void finalizeMoveSelection();
+    void duplicateCurrentFrame();
+    void deleteCurrentFrame();
+    void flipHorizontal();
+    void flipVertical();
+    void rotateClockwise();
+    void flipRegion(SpriteCel& cel, int left, int top, int right, int bottom, bool horizontal);
+    void rotateRegionClockwise(SpriteCel& cel, int left, int top, int right, int bottom);
     void copySelection();
     void pasteSelection();
     void resizeSelection(int newWidth, int newHeight);

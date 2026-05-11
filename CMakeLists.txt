@@ -17,9 +17,19 @@ target_include_directories(imgui PUBLIC
     external/imgui
 )
 
+add_library(adventure_game STATIC
+    src/game/map.cpp
+)
+
+target_include_directories(adventure_game PUBLIC
+    src
+)
+
 add_library(adventure_editor STATIC
     src/editor/asset_directories.cpp
     src/editor/editor_app.cpp
+    src/editor/panels/character_editor_panel.cpp
+    src/editor/panels/map_editor_panel.cpp
     src/editor/panels/sprite_editor_panel.cpp
 )
 
@@ -29,6 +39,7 @@ target_include_directories(adventure_editor PUBLIC
 
 target_link_libraries(adventure_editor PUBLIC
     imgui
+    adventure_game
 )
 
 add_executable(adventure_editor_smoke
@@ -37,6 +48,14 @@ add_executable(adventure_editor_smoke
 
 target_link_libraries(adventure_editor_smoke PRIVATE
     adventure_editor
+)
+
+add_executable(adventure_game_smoke
+    src/app/main_game_smoke.cpp
+)
+
+target_link_libraries(adventure_game_smoke PRIVATE
+    adventure_game
 )
 
 find_package(OpenGL)

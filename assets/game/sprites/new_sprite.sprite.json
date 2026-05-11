@@ -1,0 +1,12 @@
+{
+  "id": "new_sprite",
+  "source": "",
+  "canvasSize": [16, 16],
+  "gridSize": [16, 16],
+  "pivot": [8, 8],
+  "frames": [
+    {"rect": [0, 0, 16, 16], "durationMs": 100},
+    {"rect": [0, 0, 16, 16], "durationMs": 100}
+  ],
+  "tags": ["idle"]
+}

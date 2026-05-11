@@ -1,525 +1,285 @@
 # Code Base Structure
 
-This project is a C++ 2D action RPG built with raylib, with an editor developed alongside the game. The editor uses Dear ImGui for dockable tools, inspectors, asset workflows, and editing panels. The game style target is classic SNES/GBA action RPGs: tile maps, sprite animation, room/world transitions, real-time combat, dialogue, inventory, triggers, and authored encounters.
+This project is currently a C++ 2D RPG editor/runtime scaffold. The implemented app is an editor built with Dear ImGui, GLFW, and OpenGL. Runtime game code is only just starting: the first shared game-facing module is a tile map loader/saver for custom `.admap` map files.
 
-The main architectural goal is to keep runtime game code, editor-only code, data formats, and low-level platform code separated. The editor should create the same data that the game loads. The game should not depend on ImGui.
+The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
-## Core Principles
-
-- The game runtime must be able to run without editor code.
-- Editor tools should operate on shared asset/data types, not duplicate game-only formats.
-- Prefer data-driven content for maps, entities, sprites, animations, items, dialogue, and combat definitions.
-- Keep raylib usage behind thin systems where practical, but do not over-abstract simple drawing/input calls too early.
-- Build content tools early because action RPGs are content-heavy.
-- Use stable file formats from the beginning: JSON/TOML/YAML for authored data, PNG for images, WAV/OGG for audio, and a project manifest for asset indexing.
-- Keep hot reload and quick iteration in mind, even if implemented later.
-
-## Current Directory Layout
-
-The project scaffold has been created with the directories below. Source files are listed as the planned ownership points for each module; add them as the implementation grows. The empty directories are intentional so assets, dependencies, runtime code, editor tools, and tests have stable homes from the start.
+## Current Layout
 
 ```text
-Adventure/
+2drpg/
+  CMakeLists.txt
   code_base.md
-  CMakeLists.txt                  # planned build entry point
   assets/
-    raw/                          # source assets before game-ready processing
-      sprites/
-      tilesets/
-      audio/
-      fonts/
-    game/                         # editor-authored assets loaded by the runtime
-      sprites/
-      tilesets/
-      maps/
-      animations/
-      entities/
-      items/
-      dialogue/
-      palettes/
-      project.json                # planned asset manifest
-  external/                       # third-party dependencies, preferably pinned
-    raylib/
-    imgui/
-    rlImGui/
-  src/                            # project source
-    app/                          # executable entry points
-      main_game.cpp
-      main_editor.cpp
-    core/                         # dependency-free utilities and primitives
-      assert.hpp
-      filesystem.hpp
-      log.hpp
-      math.hpp
-      result.hpp
-      time.hpp
-      types.hpp
-    platform/                     # raylib-backed platform services
-      window.hpp
-      window_raylib.cpp
-      input.hpp
-      input_raylib.cpp
-      audio.hpp
-      audio_raylib.cpp
-    render/                       # 2D renderer and texture wrappers
-      camera2d.hpp
-      color.hpp
-      renderer2d.hpp
-      renderer2d_raylib.cpp
-      texture.hpp
-      texture_raylib.cpp
-      draw_batch.hpp
-    assets/                       # asset ids, database, loaders, validation
-      asset_id.hpp
-      asset_database.hpp
-      asset_loader.hpp
-      image_asset.hpp
-      sprite_asset.hpp
-      tileset_asset.hpp
-      map_asset.hpp
-      animation_asset.hpp
-      audio_asset.hpp
-    data/                         # serializable authored data structures
-      serialization.hpp
-      project_file.hpp
-      sprite_data.hpp
-      tileset_data.hpp
-      map_data.hpp
-      entity_data.hpp
-      item_data.hpp
-      dialogue_data.hpp
-    game/                         # runtime simulation and game UI
-      game.hpp
-      game_state.hpp
-      world/                      # maps, rooms, layers, triggers
-        world.hpp
-        map.hpp
-        room.hpp
-        tile_layer.hpp
-        collision_layer.hpp
-        trigger.hpp
-      entities/                   # entity model and gameplay actors
-        entity.hpp
-        entity_id.hpp
-        entity_registry.hpp
-        components.hpp
-        player.hpp
-        enemy.hpp
-        npc.hpp
-        projectile.hpp
-      systems/                    # runtime update/render systems
-        animation_system.hpp
-        collision_system.hpp
-        combat_system.hpp
-        enemy_ai_system.hpp
-        interaction_system.hpp
-        movement_system.hpp
-        render_system.hpp
-        script_system.hpp
-      ui/                         # runtime HUD and menus
-        hud.hpp
-        dialogue_box.hpp
-        inventory_menu.hpp
-      save/                       # save file format and persistence
-        save_file.hpp
-        save_system.hpp
-    editor/                       # ImGui editor application
-      editor_app.hpp
-      editor_context.hpp
-      editor_document.hpp
-      editor_history.hpp
-      editor_selection.hpp
-      commands/                   # undoable editor mutations
-        editor_command.hpp
-        map_commands.hpp
-        sprite_commands.hpp
-        tileset_commands.hpp
-      panels/                     # dockable ImGui panels
-        dockspace_panel.hpp
-        asset_browser_panel.hpp
-        inspector_panel.hpp
-        viewport_panel.hpp
-        console_panel.hpp
-        sprite_editor_panel.hpp
-        tile_editor_panel.hpp
-        map_editor_panel.hpp
-      tools/                      # viewport/editing tools
-        editor_tool.hpp
-        select_tool.hpp
-        paint_tile_tool.hpp
-        erase_tile_tool.hpp
-        fill_tool.hpp
-        collision_tool.hpp
-        entity_place_tool.hpp
-        trigger_tool.hpp
-      widgets/                    # reusable ImGui widgets
-        property_grid.hpp
-        file_picker.hpp
-        texture_preview.hpp
-        timeline_widget.hpp
-        palette_widget.hpp
-  tests/                          # unit and data-validation tests
-    asset_tests.cpp
-    map_tests.cpp
-    serialization_tests.cpp
-```
-
-Created directories:
-
-```text
-assets/raw/sprites
-assets/raw/tilesets
-assets/raw/audio
-assets/raw/fonts
-assets/game/sprites
-assets/game/tilesets
-assets/game/maps
-assets/game/animations
-assets/game/entities
-assets/game/items
-assets/game/dialogue
-assets/game/palettes
-external/raylib
-external/imgui
-external/rlImGui
-src/app
-src/core
-src/platform
-src/render
-src/assets
-src/data
-src/game/world
-src/game/entities
-src/game/systems
-src/game/ui
-src/game/save
-src/editor/commands
-src/editor/panels
-src/editor/tools
-src/editor/widgets
-tests
+      raw/
+      sprites/                         # PNG exports/source sprite sheets
+      character_sprites/               # raw character sprite sheets
+      tilesets/                         # raw map tileset images
+    game/
+      project.json                     # asset root manifest
+      sprites/                         # .sprite.json metadata
+      character_sprites/                # game-ready character sprite sheet assets
+      maps/                            # .admap tile maps
+      characters/                      # planned character data
+      animations/                      # planned animation data
+      palettes/                        # planned palette data
+  external/
+    imgui/                             # Dear ImGui source and backends
+  src/
+    app/
+      main_editor.cpp                  # windowed editor executable
+      main_editor_smoke.cpp            # headless ImGui editor smoke test
+      main_game_smoke.cpp              # runtime map loader smoke test
+    editor/
+      asset_directories.hpp/.cpp       # central asset root paths
+      editor_app.hpp/.cpp              # top-level ImGui tabs
+      editor_context.hpp               # shared editor context
+      panels/
+        character_editor_panel.hpp/.cpp
+        map_editor_panel.hpp/.cpp
+        sprite_editor_panel.hpp/.cpp
+    game/
+      map.hpp/.cpp                     # runtime .admap map type/load/save
 ```
 
 ## Build Targets
 
-Use separate executables that share libraries:
+The active CMake targets are:
 
 ```text
-adventure_core      Shared utilities, math, logging, filesystem, serialization.
-adventure_platform  raylib-backed window, input, audio, texture loading.
-adventure_assets    Asset database, loading, validation, import/export.
-adventure_runtime   Game simulation, world, entities, systems, UI.
-adventure_editor    ImGui editor application and editor-only tools.
-adventure_game      Shipping game executable.
+imgui                    Static Dear ImGui library.
+adventure_game           Runtime-facing game/data code. Currently map loading/saving.
+adventure_editor         Editor library. Depends on imgui and adventure_game.
+adventure_editor_smoke   Headless editor smoke executable.
+adventure_game_smoke     Loads an .admap file through runtime code.
+adventure_editor_window  GLFW/OpenGL editor window, built when dependencies are found.
 ```
 
-The important dependency direction:
+Useful commands:
+
+```sh
+cmake --build build --target adventure_editor_window
+cmake --build build --target adventure_editor_smoke
+cmake --build build --target adventure_game_smoke
+./build/adventure_game_smoke assets/game/maps/new_map.admap
+./build/adventure_editor_smoke
+```
+
+On macOS, the window target currently emits OpenGL deprecation warnings and a GLFW deployment-version linker warning. These are warnings only.
+
+## Dependency Direction
+
+The intended dependency direction is:
 
 ```text
-editor -> runtime -> assets -> platform -> core
-game   -> runtime -> assets -> platform -> core
+editor -> game/runtime data modules
+editor -> imgui
+window executable -> editor -> game
+game executable/smoke -> game
 ```
 
-The runtime must not include editor headers. Editor-only features such as selection, undo history, dock layouts, gizmos, and ImGui widgets should stay in `src/editor`.
+Runtime modules in `src/game` must not include editor headers or ImGui headers. Shared authored file formats should be implemented in runtime-facing code when the game needs to load them.
 
-## Runtime Loop
+## Editor App
 
-The game executable should be small:
+`EditorApp` owns the top-level ImGui tabs:
 
-```cpp
-int main()
-{
-    Platform platform;
-    AssetDatabase assets;
-    Game game;
+- `Characters`
+- `Sprites`
+- `Maps`
+- `Assets`
 
-    platform.init();
-    assets.loadProject("assets/game/project.json");
-    game.init(&platform, &assets);
+The editor currently uses simple retained panel state rather than a document system. Undo exists only inside the sprite editor and is snapshot-based.
 
-    while (!platform.shouldClose()) {
-        float dt = platform.beginFrame();
-        game.update(dt);
-        game.render();
-        platform.endFrame();
-    }
+## Character Editor
 
-    game.shutdown();
-    platform.shutdown();
-}
-```
+Implemented in `src/editor/panels/character_editor_panel.*`.
 
-Keep `Game::update()` deterministic where possible. Input is gathered at the platform layer, translated into gameplay actions, then consumed by movement, combat, interaction, and menu systems.
+Current behavior:
 
-## Editor Loop
+- Shows character names in a side list.
+- Selecting a character opens a simple sheet.
+- A sheet has name, bio, and sprite reference fields.
+- Clicking the sprite reference opens the `Sprites` tab.
+- If the sprite editor was launched from a character sheet, the selected character’s sprite reference follows the active sprite metadata path, e.g. `assets/game/sprites/new_sprite.sprite.json`.
+- Character-launched blank sprites default to a `32x32` canvas.
 
-The editor owns ImGui state, active documents, selection, undo/redo, open panels, and tool modes:
+Current limitation:
 
-```cpp
-int main()
-{
-    Platform platform;
-    AssetDatabase assets;
-    EditorApp editor;
-
-    platform.init();
-    assets.loadProject("assets/game/project.json");
-    editor.init(&platform, &assets);
-
-    while (!platform.shouldClose()) {
-        float dt = platform.beginFrame();
-        editor.update(dt);
-        editor.render();
-        platform.endFrame();
-    }
-
-    editor.shutdown();
-    platform.shutdown();
-}
-```
-
-The editor can embed a live game preview by owning a `Game` instance inside a viewport panel, but the dependency still points from editor to runtime.
-
-## Data Model
-
-Use plain data structures for authored content. Runtime systems can build optimized working state from these structures.
-
-Recommended asset types:
-
-- `SpriteAsset`: source image, frame rectangles, pivots, tags, collision boxes.
-- `AnimationAsset`: named clips, frame timing, loop mode, events.
-- `TilesetAsset`: tile size, atlas texture, tile metadata, autotile rules, collision flags.
-- `MapAsset`: dimensions, tile layers, collision layer, entity placements, triggers, exits, music.
-- `EntityData`: archetype, sprite/animation references, stats, collision body, behavior id.
-- `ItemData`: name, icon, stack rules, use behavior, equipment slot if needed.
-- `DialogueData`: dialogue graph or simple script references.
-
-Use stable asset ids instead of raw file paths in saved data:
-
-```cpp
-struct AssetId {
-    uint64_t value;
-};
-```
-
-The asset database maps ids to paths and metadata. This lets files move without breaking every map.
+- Character data is in-memory only. There is no character save/load format yet.
 
 ## Sprite Editor
 
-The sprite editor should focus on turning source images into game-ready sprite data.
+Implemented in `src/editor/panels/sprite_editor_panel.*`.
 
-Core features:
+Current behavior:
 
-- Import PNG.
-- Define frame grid or manually draw frame rectangles.
-- Set origin/pivot per sprite or per animation.
-- Define hurtboxes, hitboxes, interact boxes, and shadow anchors.
-- Preview animations.
-- Assign tags such as `idle`, `walk_down`, `attack_left`, `hurt`, `death`.
-- Save to `assets/game/sprites/*.sprite.json`.
+- Pixel editing with frames, layers, palette, preview, and basic animation playback.
+- Tools include pen, mirror, bucket, eraser, stroke, line, rect, circle, move, select, picker, and shade.
+- Brush sizes: `1x1`, `2x2`, and `4x4`.
+- Frame actions: add blank frame, copy frame, delete frame, clear frame.
+- Transform actions: horizontal flip, vertical flip, clockwise rotate.
+- Selection-aware transforms: active selection transforms only the selected region on the active layer; otherwise transforms apply to every layer in the current frame.
+- Clipboard operations for selections: copy and paste.
+- OS-aware keyboard shortcuts:
+  - macOS: `Cmd+Z`, `Cmd+C`, `Cmd+V`
+  - Linux/other: `Ctrl+Z`, `Ctrl+C`, `Ctrl+V`
+- Snapshot-based undo for drawing, shapes, bucket/shade, paste, move, frame/layer changes, resize, clear frame, import, and new sprite.
 
-Keep image editing minimal at first. Full pixel-art editing can become a large project by itself. Start with metadata editing over external PNGs, then add pixel editing only after the game needs it.
+Sprite export/import:
 
-## Tile Editor
+- `Save .sprite.json` writes metadata to `assets/game/sprites/<id>.sprite.json`.
+- `Export single frame PNG` writes `assets/raw/sprites/<id>_frame_<n>.png`.
+- `Export sprite sheet PNG` writes `assets/raw/sprites/<id>_sheet.png`.
+- `Import source PNG` reads the `Source PNG` field.
+- PNG import currently supports RGBA PNGs exported by this editor. It is not a general-purpose PNG decoder.
 
-The tile editor defines how tiles behave.
+Current limitation:
 
-Core features:
-
-- Import tileset PNG.
-- Configure tile width/height.
-- Select tiles and assign collision flags.
-- Define terrain type such as grass, water, wall, ledge, stairs, pit, bridge.
-- Define tile animation frames for water, torches, grass, etc.
-- Define autotile rules later, after manual tile painting works.
-- Save to `assets/game/tilesets/*.tileset.json`.
-
-Tile collision should be metadata on the tileset, with optional map-level collision overrides.
+- Sprite metadata loading is minimal. Opening a sprite reference updates the active sprite id/source path but does not fully deserialize `.sprite.json` into editor state yet.
 
 ## Map Editor
 
-The map editor is the most important production tool.
+Implemented in `src/editor/panels/map_editor_panel.*`.
 
-Core features:
+Current behavior:
 
-- Paint tile layers.
-- Edit collision overlay.
-- Place entities from archetypes.
-- Place triggers, exits, doors, save points, signs, and cutscene markers.
-- Preview map using the runtime renderer.
-- Toggle gameplay preview.
-- Validate missing assets, invalid exits, overlapping blockers, and broken entity references.
-- Save to `assets/game/maps/*.map.json`.
+- Basic wall/no-wall map painting.
+- White tile = wall.
+- Black tile = no wall.
+- Spawn edit mode places the player start tile.
+- Adjustable map width/height.
+- Adjustable displayed tile size, defaulting to `16x16` pixels.
+- Left-drag paints the selected tile type.
+- Right-drag erases to no wall.
+- `Fill walls` and `Clear walls`.
+- `Save .admap` and `Load .admap` use the runtime map module.
+- `Test map` starts an in-editor runtime preview. The 32x32 player spawns at the spawn tile and moves with cursor keys while wall tiles block movement.
 
-Suggested map layers:
+The map editor saves to:
 
 ```text
-ground
-detail_low
-collision
-objects
-detail_high
-foreground
-triggers
-entities
+assets/game/maps/<map_id>.admap
 ```
 
-For SNES/GBA-style action RPGs, support draw sorting by Y position for entities and object layers. This lets characters walk in front of or behind trees, pillars, counters, and NPCs.
+## `.admap` Format
 
-## Entity Architecture
+Implemented in `src/game/map.hpp/.cpp`.
 
-Start with a simple component-based model, not a complex ECS framework.
+This is the first custom game-loadable file type. It is intentionally simple and text-based:
+
+```text
+ADMAP 1
+id new_map
+size 24 16
+spawn 1 1
+tiles
+111111111111111111111111
+100000000000000000000001
+100000000000000000000001
+111111111111111111111111
+end
+```
+
+Rules:
+
+- `ADMAP 1` is the magic/version header.
+- `id` is a single token map id.
+- `size <width> <height>` defines dimensions.
+- `spawn <x> <y>` defines the player start tile. Older files without this line load with a default spawn.
+- `tiles` contains exactly `height` rows.
+- Each row must have exactly `width` characters.
+- `0` means no wall.
+- `1` means wall.
+- `end` terminates the file.
+
+Runtime API:
 
 ```cpp
-struct Entity {
-    EntityId id;
-    TransformComponent transform;
-    SpriteComponent sprite;
-    CollisionComponent collision;
-    CombatComponent combat;
-    BrainComponent brain;
+namespace adventure::game {
+
+struct TileMap {
+    std::string id;
+    int width;
+    int height;
+    std::vector<unsigned char> walls;
 };
-```
 
-Not every entity needs every component. A simple registry with vectors and ids is enough at first. Move to a stricter ECS only when the game has enough entities or systems to justify it.
+bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);
+bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* errorMessage = nullptr);
 
-Important early components:
-
-- `TransformComponent`: position, facing, sort offset.
-- `SpriteComponent`: sprite id, animation state.
-- `CollisionComponent`: body size, solid flag, trigger flag.
-- `MovementComponent`: velocity, acceleration, movement mode.
-- `CombatComponent`: health, attack definitions, invulnerability timer.
-- `InteractionComponent`: prompt, interaction script/dialogue.
-- `BrainComponent`: behavior id and local AI state.
-
-## Combat Model
-
-For classic action RPG combat, use authored attack definitions:
-
-```cpp
-struct AttackData {
-    AssetId animation;
-    int damage;
-    float startupTime;
-    float activeTime;
-    float recoveryTime;
-    Rect hitbox;
-    Vec2 knockback;
-    bool canMoveDuringAttack;
-};
-```
-
-Combat should be based on animation events and temporary hitboxes. Avoid hardcoding sword swings directly in player code. The player, enemies, and bosses should all be able to use the same attack pipeline.
-
-## Editor Commands and Undo
-
-Use a command pattern for editor mutations:
-
-```cpp
-class EditorCommand {
-public:
-    virtual ~EditorCommand() = default;
-    virtual void execute(EditorContext& ctx) = 0;
-    virtual void undo(EditorContext& ctx) = 0;
-};
-```
-
-Examples:
-
-- `PaintTileCommand`
-- `EraseTileCommand`
-- `MoveEntityCommand`
-- `PlaceTriggerCommand`
-- `ChangeSpritePivotCommand`
-- `SetTileCollisionCommand`
-
-This keeps undo/redo consistent across sprite, tile, and map editing.
-
-## File Formats
-
-Use readable text formats while the project is young. JSON is a practical default because many libraries support it and diffs are readable enough.
-
-Example map file:
-
-```json
-{
-  "id": "map_forest_entrance",
-  "name": "Forest Entrance",
-  "size": [64, 48],
-  "tileSize": [16, 16],
-  "tilesets": ["tileset_forest"],
-  "layers": [],
-  "entities": [],
-  "triggers": [],
-  "exits": []
 }
 ```
 
-Later, if load times or file sizes become a problem, add a packed binary build step for shipping. Keep the editor source files readable.
+`adventure_game_smoke` verifies the runtime can load a map without editor code:
 
-## Milestone Order
+```sh
+./build/adventure_game_smoke assets/game/maps/new_map.admap
+```
 
-1. Create a window, fixed timestep update, basic renderer, and input wrapper.
-2. Load a texture and draw a player sprite.
-3. Implement map data, tileset data, and a simple tilemap renderer.
-4. Build the map editor viewport with pan/zoom and tile painting.
-5. Add collision metadata to tiles and player collision.
-6. Add sprite animation data and animation preview.
-7. Add entity placement in the map editor.
-8. Add player sword attack with hitbox data.
-9. Add one enemy with movement, health, and knockback.
-10. Add map exits and room transitions.
-11. Add dialogue and simple interaction triggers.
-12. Add save/load.
+Expected output:
 
-Do not start with a full engine framework. Start with the smallest runtime/editor loop that can load data, edit a map, save it, and immediately play it.
+```text
+Loaded map new_map [24x16]
+```
 
-## Early Technical Choices
+## Asset Directories
 
-Recommended libraries:
+`AssetDirectories` centralizes editor asset paths:
 
-- raylib: windowing, graphics, audio, input.
-- Dear ImGui: editor UI.
-- rlImGui or equivalent integration layer: ImGui with raylib.
-- nlohmann/json or yyjson: readable asset serialization.
-- glm or custom small math types: optional, because raylib already has `Vector2`, `Rectangle`, and `Color`.
-- Catch2 or doctest: lightweight tests for serialization and game logic.
+```text
+rawSprites       assets/raw/sprites
+rawCharacterSprites assets/raw/character_sprites
+rawTilesets      assets/raw/tilesets
+gameSprites      assets/game/sprites
+gameCharacterSprites assets/game/character_sprites
+gameCharacters   assets/game/characters
+gameMaps         assets/game/maps
+gameTilesets     assets/game/tilesets
+gameAnimations   assets/game/animations
+gamePalettes     assets/game/palettes
+```
 
-Recommended rendering setup:
+The project manifest at `assets/game/project.json` mirrors these roots.
 
-- Internal game resolution: `320x180`, `384x216`, or `400x240`.
-- Scale to window using integer scaling where possible.
-- Draw world to a render texture.
-- Draw UI separately.
-- Keep pixel art filtering set to nearest.
+## Current Data Status
 
-For a SNES/GBA-like RPG, `16x16` tiles are a strong default. Use larger sprites such as `16x24`, `24x32`, or `32x32` depending on the character style.
+Implemented game-loadable data:
 
-## Things To Avoid Early
+- `.admap` tile maps.
 
-- Building a full pixel-art editor before map editing works.
-- Adding scripting before the core interaction model is clear.
-- Implementing a complex ECS before there is enough gameplay to need it.
-- Creating binary-only asset formats too early.
-- Mixing ImGui/editor state into game runtime classes.
-- Hardcoding player-only combat rules.
-- Letting maps reference raw image paths directly.
+Implemented editor-authored data:
 
-## Definition Of A Good First Vertical Slice
+- `.sprite.json` metadata writes.
+- Sprite PNG exports.
+- In-memory character sheets.
+- In-memory sprite pixel documents.
+- In-memory map edits with `.admap` save/load.
 
-A good first slice should prove that the architecture works:
+Not implemented yet:
 
-- Open the editor.
-- Import a tileset.
-- Mark wall tiles as solid.
-- Paint a small map.
-- Place the player spawn.
-- Place one enemy.
-- Press play in the editor.
-- Walk around with collision.
-- Attack the enemy.
-- Transition to another map.
-- Save the project and reload it.
+- General runtime sprite loader.
+- Runtime renderer.
+- Runtime collision/movement.
+- Character save/load format.
+- Tile set editor and tile metadata.
+- Entity placement.
+- Play-in-editor preview.
+- Persistent project asset index beyond root paths.
 
-Once that works, the codebase has enough shape to grow into a real action RPG.
+## Near-Term Priorities
+
+1. Add a real game window target that loads `assets/game/maps/new_map.admap` and draws white/black map tiles.
+2. Add player position and collision against `.admap` wall tiles.
+3. Add full `.sprite.json` loading into both editor and runtime.
+4. Save/load character sheets, including sprite metadata references.
+5. Expand `.admap` only when needed: spawn point, tile size, named layers, entities, exits, and triggers.
+6. Replace the limited PNG importer with a real PNG decoder dependency if arbitrary external PNG import becomes important.
+
+## Engineering Notes
+
+- Keep editor UI state out of `src/game`.
+- Keep file format parsing in runtime-facing modules when the game needs to load that format.
+- Prefer readable text formats while the project is small.
+- Avoid large engine abstractions until there is actual runtime gameplay pressure.
+- The current sprite undo stack snapshots whole sprite editor state. This is pragmatic now, but command-based undo will become better once files and documents are larger.

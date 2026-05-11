@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <system_error>
+#include <utility>
 
 #include "imgui.h"
 
@@ -76,6 +78,14 @@ void appendBigEndian32(std::vector<unsigned char>& bytes, std::uint32_t value)
     bytes.push_back(static_cast<unsigned char>((value >> 16) & 0xffu));
     bytes.push_back(static_cast<unsigned char>((value >> 8) & 0xffu));
     bytes.push_back(static_cast<unsigned char>(value & 0xffu));
+}
+
+std::uint32_t readBigEndian32(const unsigned char* bytes)
+{
+    return (static_cast<std::uint32_t>(bytes[0]) << 24) |
+        (static_cast<std::uint32_t>(bytes[1]) << 16) |
+        (static_cast<std::uint32_t>(bytes[2]) << 8) |
+        static_cast<std::uint32_t>(bytes[3]);
 }
 
 std::uint32_t crc32(const unsigned char* data, std::size_t size)
@@ -174,6 +184,112 @@ bool writePngRgba(const std::filesystem::path& path, int width, int height, cons
     }
     output.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     return static_cast<bool>(output);
+}
+
+bool inflateStoredZlib(const std::vector<unsigned char>& compressed, std::vector<unsigned char>& output)
+{
+    if (compressed.size() < 6 || compressed[0] != 0x78u) {
+        return false;
+    }
+
+    std::size_t offset = 2;
+    const std::size_t dataEnd = compressed.size() - 4;
+    while (offset < dataEnd) {
+        const unsigned char blockHeader = compressed[offset++];
+        const bool finalBlock = (blockHeader & 0x01u) != 0u;
+        const unsigned char blockType = (blockHeader >> 1) & 0x03u;
+        if (blockType != 0u || offset + 4 > dataEnd) {
+            return false;
+        }
+
+        const std::uint16_t length = static_cast<std::uint16_t>(compressed[offset] | (compressed[offset + 1] << 8));
+        const std::uint16_t inverseLength = static_cast<std::uint16_t>(compressed[offset + 2] | (compressed[offset + 3] << 8));
+        offset += 4;
+        if (static_cast<std::uint16_t>(~length) != inverseLength || offset + length > dataEnd) {
+            return false;
+        }
+
+        output.insert(output.end(), compressed.begin() + static_cast<std::ptrdiff_t>(offset), compressed.begin() + static_cast<std::ptrdiff_t>(offset + length));
+        offset += length;
+        if (finalBlock) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool readEditorPngRgba(const std::filesystem::path& path, int& width, int& height, std::vector<unsigned char>& rgba)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return false;
+    }
+
+    const std::vector<unsigned char> png(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    if (png.size() < std::size(kPngSignature) || std::memcmp(png.data(), kPngSignature, std::size(kPngSignature)) != 0) {
+        return false;
+    }
+
+    std::vector<unsigned char> idat;
+    std::size_t offset = std::size(kPngSignature);
+    bool foundIhdr = false;
+    while (offset + 12 <= png.size()) {
+        const std::uint32_t chunkSize = readBigEndian32(png.data() + offset);
+        offset += 4;
+        if (offset + 4 + chunkSize + 4 > png.size()) {
+            return false;
+        }
+
+        const unsigned char* type = png.data() + offset;
+        offset += 4;
+        const unsigned char* data = png.data() + offset;
+
+        if (std::memcmp(type, "IHDR", 4) == 0) {
+            if (chunkSize != 13u || data[8] != 8u || data[9] != 6u || data[10] != 0u || data[11] != 0u || data[12] != 0u) {
+                return false;
+            }
+            width = static_cast<int>(readBigEndian32(data));
+            height = static_cast<int>(readBigEndian32(data + 4));
+            foundIhdr = width > 0 && height > 0;
+        } else if (std::memcmp(type, "IDAT", 4) == 0) {
+            idat.insert(idat.end(), data, data + chunkSize);
+        } else if (std::memcmp(type, "IEND", 4) == 0) {
+            break;
+        }
+
+        offset += chunkSize + 4;
+    }
+
+    if (!foundIhdr || idat.empty()) {
+        return false;
+    }
+
+    std::vector<unsigned char> raw;
+    if (!inflateStoredZlib(idat, raw)) {
+        return false;
+    }
+
+    const std::size_t expected = static_cast<std::size_t>(height) * (1u + static_cast<std::size_t>(width) * 4u);
+    if (raw.size() != expected) {
+        return false;
+    }
+
+    rgba.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u, 0u);
+    for (int y = 0; y < height; ++y) {
+        const std::size_t rawRow = static_cast<std::size_t>(y) * (1u + static_cast<std::size_t>(width) * 4u);
+        if (raw[rawRow] != 0u) {
+            return false;
+        }
+        std::copy(
+            raw.begin() + static_cast<std::ptrdiff_t>(rawRow + 1u),
+            raw.begin() + static_cast<std::ptrdiff_t>(rawRow + 1u + static_cast<std::size_t>(width) * 4u),
+            rgba.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u));
+    }
+
+    return true;
 }
 
 ImVec2 rectCenter(const ImVec2& min, const ImVec2& max)
@@ -320,6 +436,56 @@ void SpriteEditorPanel::draw(EditorContext& context)
     ImGui::PopStyleVar(2);
 }
 
+void SpriteEditorPanel::openSpriteReference(const std::filesystem::path& spriteReference)
+{
+    if (spriteReference.empty()) {
+        return;
+    }
+
+    const std::filesystem::path filename = spriteReference.filename();
+    std::string id = filename.string();
+    constexpr const char* kSpriteMetadataSuffix = ".sprite.json";
+    if (id.size() > std::char_traits<char>::length(kSpriteMetadataSuffix) &&
+        id.compare(id.size() - std::char_traits<char>::length(kSpriteMetadataSuffix), std::char_traits<char>::length(kSpriteMetadataSuffix), kSpriteMetadataSuffix) == 0) {
+        id.erase(id.size() - std::char_traits<char>::length(kSpriteMetadataSuffix));
+    } else if (filename.has_stem()) {
+        id = filename.stem().string();
+    }
+
+    if (!id.empty()) {
+        document_.id = id;
+    }
+
+    if (spriteReference.extension() == ".png") {
+        document_.sourcePng = spriteReference;
+    }
+}
+
+void SpriteEditorPanel::openCharacterSpriteReference(const std::filesystem::path& spriteReference)
+{
+    openSpriteReference(spriteReference);
+
+    const bool blankDocument = std::all_of(document_.cels.begin(), document_.cels.end(), [](const std::vector<SpriteCel>& frame) {
+        return std::all_of(frame.begin(), frame.end(), [](const SpriteCel& cel) {
+            return std::all_of(cel.pixels.begin(), cel.pixels.end(), [](unsigned int color) {
+                return color == 0u;
+            });
+        });
+    });
+
+    newSpriteSize_ = {32, 32};
+    resizeSpriteSize_ = {32, 32};
+    if (blankDocument && document_.canvasSize != std::array<int, 2>{32, 32}) {
+        createBlankSprite(32, 32);
+        openSpriteReference(spriteReference);
+    }
+}
+
+std::filesystem::path SpriteEditorPanel::spriteMetadataReference(const EditorContext& context) const
+{
+    return context.assets.gameSprites / (document_.id + ".sprite.json");
+}
+
 void SpriteEditorPanel::drawTopBar()
 {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(28, 31, 35, 255));
@@ -357,6 +523,7 @@ void SpriteEditorPanel::drawTopBar()
         }
 
         if (ImGui::Button("Create", ImVec2(120.0f, 0.0f))) {
+            recordUndoState();
             createBlankSprite(newSpriteSize_[0], newSpriteSize_[1]);
             ImGui::CloseCurrentPopup();
         }
@@ -382,6 +549,7 @@ void SpriteEditorPanel::drawTopBar()
         ImGui::TextUnformatted("Resizes all frames and layers using nearest-neighbor scaling.");
 
         if (ImGui::Button("Resize", ImVec2(120.0f, 0.0f))) {
+            recordUndoState();
             resizeSprite(resizeSpriteSize_[0], resizeSpriteSize_[1]);
             ImGui::CloseCurrentPopup();
         }
@@ -407,6 +575,7 @@ void SpriteEditorPanel::drawTopBar()
         ImGui::TextUnformatted("Resizes the active layer selection using nearest-neighbor scaling.");
 
         if (ImGui::Button("Resize", ImVec2(120.0f, 0.0f))) {
+            recordUndoState();
             resizeSelection(resizeSelectionSize_[0], resizeSelectionSize_[1]);
             ImGui::CloseCurrentPopup();
         }
@@ -459,9 +628,21 @@ void SpriteEditorPanel::drawLeftRail()
     }
 
     if (ImGui::Button("+ Add frame", ImVec2(-1.0f, 36.0f))) {
+        recordUndoState();
         document_.frames.push_back(document_.frames[selectedFrame_]);
-        document_.cels.push_back(document_.cels[selectedFrame_]);
+        document_.cels.push_back(std::vector<SpriteCel>(
+            document_.layers.size(),
+            SpriteCel{std::vector<unsigned int>(static_cast<std::size_t>(document_.canvasSize[0] * document_.canvasSize[1]), 0u)}));
         selectedFrame_ = static_cast<int>(document_.frames.size()) - 1;
+    }
+    if (ImGui::Button("Copy frame", ImVec2(-1.0f, 30.0f))) {
+        duplicateCurrentFrame();
+    }
+    if (ImGui::Button("Delete frame", ImVec2(-1.0f, 30.0f))) {
+        deleteCurrentFrame();
+    }
+    if (ImGui::Button("Clear frame", ImVec2(-1.0f, 30.0f))) {
+        clearCurrentFrame();
     }
 
     sectionHeader("Tools");
@@ -470,6 +651,24 @@ void SpriteEditorPanel::drawLeftRail()
         if (i % 4 != 3) {
             ImGui::SameLine();
         }
+    }
+
+    sectionHeader("Brush");
+    const int brushSizes[] = {1, 2, 4};
+    for (int i = 0; i < static_cast<int>(std::size(brushSizes)); ++i) {
+        ImGui::PushID(brushSizes[i]);
+        const bool selected = brushSize_ == brushSizes[i];
+        ImGui::PushStyleColor(ImGuiCol_Button, selected ? IM_COL32(236, 203, 49, 255) : IM_COL32(56, 61, 67, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255));
+        const std::string label = std::to_string(brushSizes[i]) + "x" + std::to_string(brushSizes[i]);
+        if (ImGui::Button(label.c_str(), ImVec2(58.0f, 30.0f))) {
+            brushSize_ = brushSizes[i];
+        }
+        ImGui::PopStyleColor(2);
+        if (i + 1 < static_cast<int>(std::size(brushSizes))) {
+            ImGui::SameLine();
+        }
+        ImGui::PopID();
     }
 
     sectionHeader("Colors");
@@ -663,11 +862,17 @@ void SpriteEditorPanel::drawRightInspector(EditorContext& context)
     drawLayers();
 
     sectionHeader("Transform");
-    if (ImGui::Button("Flip H", ImVec2(62.0f, 34.0f))) {}
+    if (ImGui::Button("Flip H", ImVec2(62.0f, 34.0f))) {
+        flipHorizontal();
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Flip V", ImVec2(62.0f, 34.0f))) {}
+    if (ImGui::Button("Flip V", ImVec2(62.0f, 34.0f))) {
+        flipVertical();
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Rotate", ImVec2(72.0f, 34.0f))) {}
+    if (ImGui::Button("Rotate", ImVec2(72.0f, 34.0f))) {
+        rotateClockwise();
+    }
     if (hasSelection_ && selectionAppliesToActiveCel()) {
         ImGui::SameLine();
         if (ImGui::Button("Resize Sel", ImVec2(92.0f, 34.0f))) {
@@ -722,18 +927,23 @@ void SpriteEditorPanel::drawPreview(const ImVec2& availableSize)
 void SpriteEditorPanel::drawFrames()
 {
     if (ImGui::Button("Add frame")) {
+        recordUndoState();
         document_.frames.push_back(document_.frames[selectedFrame_]);
-        document_.cels.push_back(document_.cels[selectedFrame_]);
+        document_.cels.push_back(std::vector<SpriteCel>(
+            document_.layers.size(),
+            SpriteCel{std::vector<unsigned int>(static_cast<std::size_t>(document_.canvasSize[0] * document_.canvasSize[1]), 0u)}));
         selectedFrame_ = static_cast<int>(document_.frames.size()) - 1;
     }
     ImGui::SameLine();
     if (ImGui::Button("Duplicate frame") && !document_.frames.empty()) {
+        recordUndoState();
         document_.frames.insert(document_.frames.begin() + selectedFrame_ + 1, document_.frames[selectedFrame_]);
         document_.cels.insert(document_.cels.begin() + selectedFrame_ + 1, document_.cels[selectedFrame_]);
         ++selectedFrame_;
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete frame") && document_.frames.size() > 1) {
+        recordUndoState();
         document_.frames.erase(document_.frames.begin() + selectedFrame_);
         document_.cels.erase(document_.cels.begin() + selectedFrame_);
         selectedFrame_ = std::clamp(selectedFrame_, 0, static_cast<int>(document_.frames.size()) - 1);
@@ -758,6 +968,7 @@ void SpriteEditorPanel::drawFrames()
 void SpriteEditorPanel::drawLayers()
 {
     if (ImGui::Button("Add layer")) {
+        recordUndoState();
         document_.layers.push_back({"Layer " + std::to_string(document_.layers.size() + 1), true, 1.0f});
         for (auto& frame : document_.cels) {
             frame.push_back(SpriteCel{std::vector<unsigned int>(static_cast<std::size_t>(document_.canvasSize[0] * document_.canvasSize[1]), 0u)});
@@ -766,6 +977,7 @@ void SpriteEditorPanel::drawLayers()
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete layer") && document_.layers.size() > 1) {
+        recordUndoState();
         document_.layers.erase(document_.layers.begin() + selectedLayer_);
         for (auto& frame : document_.cels) {
             frame.erase(frame.begin() + selectedLayer_);
@@ -838,8 +1050,18 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
     if (ImGui::Button("Save .sprite.json")) {
         saveSpriteMetadata(context);
     }
-    if (ImGui::Button("Export PNG spritesheet")) {
+    if (ImGui::Button("Export single frame PNG")) {
+        exportSingleFramePng(context);
+    }
+    if (ImGui::Button("Export sprite sheet PNG")) {
         exportSpriteSheetPng(context);
+    }
+    if (ImGui::Button("Import source PNG")) {
+        importPng(context);
+    }
+    ImGui::TextDisabled("Import supports RGBA PNGs exported by this editor.");
+    if (!ioStatus_.empty()) {
+        ImGui::TextWrapped("%s", ioStatus_.c_str());
     }
 }
 
@@ -889,51 +1111,146 @@ void SpriteEditorPanel::exportSpriteSheetPng(const EditorContext& context)
     std::vector<unsigned char> rgba(static_cast<std::size_t>(sheetWidth) * static_cast<std::size_t>(sheetHeight) * 4u, 0u);
 
     for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+        const std::vector<unsigned char> frameRgba = compositeFrameRgba(frameIndex);
         for (int y = 0; y < frameHeight; ++y) {
             for (int x = 0; x < frameWidth; ++x) {
-                float outR = 0.0f;
-                float outG = 0.0f;
-                float outB = 0.0f;
-                float outA = 0.0f;
-
-                for (int layerIndex = 0; layerIndex < static_cast<int>(document_.layers.size()); ++layerIndex) {
-                    const SpriteLayer& layer = document_.layers[layerIndex];
-                    if (!layer.visible || layer.opacity <= 0.0f) {
-                        continue;
-                    }
-
-                    const SpriteCel& cel = celAt(frameIndex, layerIndex);
-                    const unsigned int color = cel.pixels[static_cast<std::size_t>(y) * frameWidth + x];
-                    const float srcA = (static_cast<float>((color >> 24) & 0xffu) / 255.0f) * std::clamp(layer.opacity, 0.0f, 1.0f);
-                    if (srcA <= 0.0f) {
-                        continue;
-                    }
-
-                    const float srcR = static_cast<float>((color >> 0) & 0xffu) / 255.0f;
-                    const float srcG = static_cast<float>((color >> 8) & 0xffu) / 255.0f;
-                    const float srcB = static_cast<float>((color >> 16) & 0xffu) / 255.0f;
-
-                    outR = srcR * srcA + outR * (1.0f - srcA);
-                    outG = srcG * srcA + outG * (1.0f - srcA);
-                    outB = srcB * srcA + outB * (1.0f - srcA);
-                    outA = srcA + outA * (1.0f - srcA);
-                }
-
                 const int sheetX = frameIndex * frameWidth + x;
                 const std::size_t outIndex = (static_cast<std::size_t>(y) * sheetWidth + static_cast<std::size_t>(sheetX)) * 4u;
-                rgba[outIndex + 0] = static_cast<unsigned char>(std::clamp(outR * 255.0f, 0.0f, 255.0f));
-                rgba[outIndex + 1] = static_cast<unsigned char>(std::clamp(outG * 255.0f, 0.0f, 255.0f));
-                rgba[outIndex + 2] = static_cast<unsigned char>(std::clamp(outB * 255.0f, 0.0f, 255.0f));
-                rgba[outIndex + 3] = static_cast<unsigned char>(std::clamp(outA * 255.0f, 0.0f, 255.0f));
+                const std::size_t frameIndexRgba = (static_cast<std::size_t>(y) * frameWidth + x) * 4u;
+                std::copy(frameRgba.begin() + static_cast<std::ptrdiff_t>(frameIndexRgba), frameRgba.begin() + static_cast<std::ptrdiff_t>(frameIndexRgba + 4u), rgba.begin() + static_cast<std::ptrdiff_t>(outIndex));
             }
         }
     }
 
-    const std::filesystem::path outputPath = context.assets.rawSpritePath() / (document_.id + ".png");
+    const std::filesystem::path outputPath = context.assets.rawSpritePath() / (document_.id + "_sheet.png");
     if (writePngRgba(outputPath, sheetWidth, sheetHeight, rgba)) {
-        const std::filesystem::path relativePath = context.assets.rawSprites / (document_.id + ".png");
+        const std::filesystem::path relativePath = context.assets.rawSprites / (document_.id + "_sheet.png");
         document_.sourcePng = relativePath;
+        ioStatus_ = "Exported sprite sheet: " + relativePath.generic_string();
+    } else {
+        ioStatus_ = "Failed to export sprite sheet PNG.";
     }
+}
+
+void SpriteEditorPanel::exportSingleFramePng(const EditorContext& context)
+{
+    ensureDirectory(context.assets.rawSpritePath());
+    if (selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.frames.size())) {
+        ioStatus_ = "No frame selected for PNG export.";
+        return;
+    }
+
+    const std::filesystem::path outputPath = context.assets.rawSpritePath() / (document_.id + "_frame_" + std::to_string(selectedFrame_ + 1) + ".png");
+    if (writePngRgba(outputPath, document_.canvasSize[0], document_.canvasSize[1], compositeFrameRgba(selectedFrame_))) {
+        const std::filesystem::path relativePath = context.assets.rawSprites / outputPath.filename();
+        document_.sourcePng = relativePath;
+        ioStatus_ = "Exported single frame: " + relativePath.generic_string();
+    } else {
+        ioStatus_ = "Failed to export single-frame PNG.";
+    }
+}
+
+void SpriteEditorPanel::importPng(const EditorContext& context)
+{
+    const std::filesystem::path inputPath = document_.sourcePng.is_absolute() ? document_.sourcePng : context.assets.projectRoot / document_.sourcePng;
+    int width = 0;
+    int height = 0;
+    std::vector<unsigned char> rgba;
+    if (!readEditorPngRgba(inputPath, width, height, rgba)) {
+        ioStatus_ = "Failed to import PNG. Import currently supports RGBA PNGs exported by this editor.";
+        return;
+    }
+    if (width > kMaxCanvasSize * kMaxCanvasSize || height > kMaxCanvasSize) {
+        ioStatus_ = "PNG is too large for the sprite editor import limits.";
+        return;
+    }
+
+    const int frameWidth = width % document_.canvasSize[0] == 0 && height == document_.canvasSize[1] ? document_.canvasSize[0] : width;
+    const int frameHeight = height;
+    const int frameCount = std::max(1, width / frameWidth);
+    if (frameWidth > kMaxCanvasSize || frameHeight > kMaxCanvasSize) {
+        ioStatus_ = "Imported frame dimensions exceed the sprite editor limit.";
+        return;
+    }
+
+    recordUndoState();
+    document_.canvasSize = {frameWidth, frameHeight};
+    document_.gridSize = document_.canvasSize;
+    document_.pivot = {frameWidth / 2, frameHeight / 2};
+    document_.frames.assign(static_cast<std::size_t>(frameCount), SpriteFrame{});
+    document_.layers.assign(1, SpriteLayer{});
+    document_.cels.assign(static_cast<std::size_t>(frameCount), std::vector<SpriteCel>(1));
+
+    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+        document_.frames[frameIndex].width = frameWidth;
+        document_.frames[frameIndex].height = frameHeight;
+        SpriteCel& cel = document_.cels[frameIndex][0];
+        cel.pixels.assign(static_cast<std::size_t>(frameWidth * frameHeight), 0u);
+        for (int y = 0; y < frameHeight; ++y) {
+            for (int x = 0; x < frameWidth; ++x) {
+                const std::size_t srcIndex = (static_cast<std::size_t>(y) * width + static_cast<std::size_t>(frameIndex * frameWidth + x)) * 4u;
+                cel.pixels[static_cast<std::size_t>(y) * frameWidth + x] =
+                    (static_cast<unsigned int>(rgba[srcIndex + 3]) << 24) |
+                    (static_cast<unsigned int>(rgba[srcIndex + 2]) << 16) |
+                    (static_cast<unsigned int>(rgba[srcIndex + 1]) << 8) |
+                    static_cast<unsigned int>(rgba[srcIndex + 0]);
+            }
+        }
+    }
+
+    selectedFrame_ = 0;
+    selectedLayer_ = 0;
+    trackedCanvasSize_ = document_.canvasSize;
+    resizeSpriteSize_ = document_.canvasSize;
+    clearSelection();
+    ioStatus_ = "Imported PNG: " + document_.sourcePng.generic_string();
+}
+
+std::vector<unsigned char> SpriteEditorPanel::compositeFrameRgba(int frameIndex) const
+{
+    const int frameWidth = document_.canvasSize[0];
+    const int frameHeight = document_.canvasSize[1];
+    std::vector<unsigned char> rgba(static_cast<std::size_t>(frameWidth) * static_cast<std::size_t>(frameHeight) * 4u, 0u);
+
+    for (int y = 0; y < frameHeight; ++y) {
+        for (int x = 0; x < frameWidth; ++x) {
+            float outR = 0.0f;
+            float outG = 0.0f;
+            float outB = 0.0f;
+            float outA = 0.0f;
+
+            for (int layerIndex = 0; layerIndex < static_cast<int>(document_.layers.size()); ++layerIndex) {
+                const SpriteLayer& layer = document_.layers[layerIndex];
+                if (!layer.visible || layer.opacity <= 0.0f) {
+                    continue;
+                }
+
+                const SpriteCel& cel = celAt(frameIndex, layerIndex);
+                const unsigned int color = cel.pixels[static_cast<std::size_t>(y) * frameWidth + x];
+                const float srcA = (static_cast<float>((color >> 24) & 0xffu) / 255.0f) * std::clamp(layer.opacity, 0.0f, 1.0f);
+                if (srcA <= 0.0f) {
+                    continue;
+                }
+
+                const float srcR = static_cast<float>((color >> 0) & 0xffu) / 255.0f;
+                const float srcG = static_cast<float>((color >> 8) & 0xffu) / 255.0f;
+                const float srcB = static_cast<float>((color >> 16) & 0xffu) / 255.0f;
+
+                outR = srcR * srcA + outR * (1.0f - srcA);
+                outG = srcG * srcA + outG * (1.0f - srcA);
+                outB = srcB * srcA + outB * (1.0f - srcA);
+                outA = srcA + outA * (1.0f - srcA);
+            }
+
+            const std::size_t outIndex = (static_cast<std::size_t>(y) * frameWidth + x) * 4u;
+            rgba[outIndex + 0] = static_cast<unsigned char>(std::clamp(outR * 255.0f, 0.0f, 255.0f));
+            rgba[outIndex + 1] = static_cast<unsigned char>(std::clamp(outG * 255.0f, 0.0f, 255.0f));
+            rgba[outIndex + 2] = static_cast<unsigned char>(std::clamp(outB * 255.0f, 0.0f, 255.0f));
+            rgba[outIndex + 3] = static_cast<unsigned char>(std::clamp(outA * 255.0f, 0.0f, 255.0f));
+        }
+    }
+
+    return rgba;
 }
 
 int SpriteEditorPanel::previewFrameIndex() const
@@ -969,18 +1286,83 @@ void SpriteEditorPanel::handleShortcuts()
         return;
     }
 
-    const ImGuiIO& io = ImGui::GetIO();
-    const bool primaryShortcut = io.KeyCtrl || io.KeySuper;
-    if (!primaryShortcut) {
+    if (!primaryShortcutDown()) {
         return;
     }
 
+    if (ImGui::IsKeyPressed(ImGuiKey_Z)) {
+        undo();
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_C)) {
         copySelection();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_V)) {
         pasteSelection();
     }
+}
+
+bool SpriteEditorPanel::primaryShortcutDown() const
+{
+    const ImGuiIO& io = ImGui::GetIO();
+#if defined(__APPLE__)
+    return io.KeySuper;
+#else
+    return io.KeyCtrl;
+#endif
+}
+
+void SpriteEditorPanel::recordUndoState()
+{
+    constexpr std::size_t kMaxUndoStates = 64;
+    undoStack_.push_back(SpriteUndoState{
+        document_,
+        trackedCanvasSize_,
+        selectionBounds_,
+        selectedFrame_,
+        selectedLayer_,
+        selectedTool_,
+        brushSize_,
+        primaryColor_,
+        secondaryColor_,
+        selectionFrame_,
+        selectionLayer_,
+        hasSelection_,
+    });
+
+    if (undoStack_.size() > kMaxUndoStates) {
+        undoStack_.erase(undoStack_.begin());
+    }
+}
+
+void SpriteEditorPanel::undo()
+{
+    if (undoStack_.empty()) {
+        return;
+    }
+
+    const SpriteUndoState state = std::move(undoStack_.back());
+    undoStack_.pop_back();
+
+    document_ = state.document;
+    trackedCanvasSize_ = state.trackedCanvasSize;
+    selectionBounds_ = state.selectionBounds;
+    selectedFrame_ = state.selectedFrame;
+    selectedLayer_ = state.selectedLayer;
+    selectedTool_ = state.selectedTool;
+    brushSize_ = state.brushSize;
+    primaryColor_ = state.primaryColor;
+    secondaryColor_ = state.secondaryColor;
+    selectionFrame_ = state.selectionFrame;
+    selectionLayer_ = state.selectionLayer;
+    hasSelection_ = state.hasSelection;
+
+    selectionDragActive_ = false;
+    moveDragActive_ = false;
+    shapeDragActive_ = false;
+    strokeUndoCaptured_ = false;
+    lastPaintPixel_ = {-1, -1};
+    moveSourcePixels_.clear();
+    ensureDocumentState();
 }
 
 void SpriteEditorPanel::ensureDocumentState()
@@ -1052,6 +1434,7 @@ void SpriteEditorPanel::createBlankSprite(int width, int height)
     selectedFrame_ = 0;
     selectedLayer_ = 0;
     selectedTool_ = kToolPen;
+    brushSize_ = 1;
     primaryColor_ = std::min(1, static_cast<int>(document_.palette.size()) - 1);
     secondaryColor_ = 0;
     lastPaintPixel_ = {-1, -1};
@@ -1063,6 +1446,19 @@ void SpriteEditorPanel::createBlankSprite(int width, int height)
     clearSelection();
 
     resizeCanvasStorage(document_.canvasSize[0], document_.canvasSize[1], document_.canvasSize[0], document_.canvasSize[1]);
+}
+
+void SpriteEditorPanel::clearCurrentFrame()
+{
+    if (selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.cels.size())) {
+        return;
+    }
+
+    recordUndoState();
+    for (SpriteCel& cel : document_.cels[selectedFrame_]) {
+        std::fill(cel.pixels.begin(), cel.pixels.end(), 0u);
+    }
+    clearSelection();
 }
 
 void SpriteEditorPanel::resizeSprite(int newWidth, int newHeight)
@@ -1163,6 +1559,7 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
 
         if (shapeDragActive_ && releasedShapeButton) {
             if (hoveredPixel) {
+                recordUndoState();
                 SpriteCel& cel = activeCel();
                 const unsigned int color = currentPaletteColor(dragUsesSecondaryColor_);
                 if (selectedTool_ == kToolLine) {
@@ -1180,9 +1577,11 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
 
     if (selectedTool_ == kToolBucket || selectedTool_ == kToolPicker || selectedTool_ == kToolShade) {
         if (leftClicked) {
+            recordUndoState();
             applyClickTool(x, y, false);
         }
         if (rightClicked) {
+            recordUndoState();
             applyClickTool(x, y, true);
         }
         return;
@@ -1239,6 +1638,8 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
     }
 
     if (leftClicked || rightClicked) {
+        recordUndoState();
+        strokeUndoCaptured_ = true;
         dragUsesSecondaryColor_ = rightClicked;
         paintStroke(x, y, x, y, dragUsesSecondaryColor_);
         lastPaintPixel_ = {x, y};
@@ -1248,6 +1649,7 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
     if (!hoveredPixel) {
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             lastPaintPixel_ = {-1, -1};
+            strokeUndoCaptured_ = false;
         }
         return;
     }
@@ -1256,10 +1658,15 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
     const bool draggingRight = ImGui::IsMouseDown(ImGuiMouseButton_Right);
     if (!draggingLeft && !draggingRight) {
         lastPaintPixel_ = {-1, -1};
+        strokeUndoCaptured_ = false;
         return;
     }
 
     if (lastPaintPixel_[0] < 0 || lastPaintPixel_[1] < 0) {
+        if (!strokeUndoCaptured_) {
+            recordUndoState();
+            strokeUndoCaptured_ = true;
+        }
         lastPaintPixel_ = {x, y};
     }
 
@@ -1306,6 +1713,16 @@ void SpriteEditorPanel::setPixel(SpriteCel& cel, int x, int y, unsigned int colo
     }
 
     cel.pixels[static_cast<std::size_t>(y) * document_.canvasSize[0] + x] = color;
+}
+
+void SpriteEditorPanel::setBrushPixel(SpriteCel& cel, int x, int y, unsigned int color)
+{
+    const int size = std::clamp(brushSize_, 1, 4);
+    for (int offsetY = 0; offsetY < size; ++offsetY) {
+        for (int offsetX = 0; offsetX < size; ++offsetX) {
+            setPixel(cel, x + offsetX, y + offsetY, color);
+        }
+    }
 }
 
 unsigned int SpriteEditorPanel::currentPaletteColor(bool useSecondaryColor) const
@@ -1368,7 +1785,16 @@ void SpriteEditorPanel::applyClickTool(int x, int y, bool useSecondaryColor)
     }
 
     if (selectedTool_ == kToolShade) {
-        shadePixel(x, y, useSecondaryColor);
+        const int size = std::clamp(brushSize_, 1, 4);
+        for (int offsetY = 0; offsetY < size; ++offsetY) {
+            for (int offsetX = 0; offsetX < size; ++offsetX) {
+                const int brushX = x + offsetX;
+                const int brushY = y + offsetY;
+                if (brushX < document_.canvasSize[0] && brushY < document_.canvasSize[1]) {
+                    shadePixel(brushX, brushY, useSecondaryColor);
+                }
+            }
+        }
     }
 }
 
@@ -1381,9 +1807,10 @@ void SpriteEditorPanel::drawLine(SpriteCel& cel, int x0, int y0, int x1, int y1,
     int error = dx + dy;
 
     while (true) {
-        setPixel(cel, x0, y0, color);
+        setBrushPixel(cel, x0, y0, color);
         if (mirror) {
-            setPixel(cel, document_.canvasSize[0] - 1 - x0, y0, color);
+            const int mirroredX = document_.canvasSize[0] - std::clamp(brushSize_, 1, 4) - x0;
+            setBrushPixel(cel, mirroredX, y0, color);
         }
 
         if (x0 == x1 && y0 == y1) {
@@ -1431,7 +1858,7 @@ void SpriteEditorPanel::drawCircle(SpriteCel& cel, int x0, int y0, int x1, int y
         const float angle = (static_cast<float>(step) / static_cast<float>(steps)) * 2.0f * 3.14159265f;
         const int px = static_cast<int>(std::lround(centerX + std::cos(angle) * radiusX));
         const int py = static_cast<int>(std::lround(centerY + std::sin(angle) * radiusY));
-        setPixel(cel, px, py, color);
+        setBrushPixel(cel, px, py, color);
     }
 }
 
@@ -1566,6 +1993,7 @@ void SpriteEditorPanel::setSelectionFromDrag(int x0, int y0, int x1, int y1)
 
 void SpriteEditorPanel::beginMoveDrag()
 {
+    recordUndoState();
     moveDragActive_ = true;
     selectionFrame_ = selectedFrame_;
     selectionLayer_ = selectedLayer_;
@@ -1626,6 +2054,142 @@ void SpriteEditorPanel::finalizeMoveSelection()
     moveSourcePixels_.clear();
 }
 
+void SpriteEditorPanel::duplicateCurrentFrame()
+{
+    if (document_.frames.empty() || selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.frames.size())) {
+        return;
+    }
+
+    recordUndoState();
+    const int insertIndex = selectedFrame_ + 1;
+    document_.frames.insert(document_.frames.begin() + insertIndex, document_.frames[selectedFrame_]);
+    document_.cels.insert(document_.cels.begin() + insertIndex, document_.cels[selectedFrame_]);
+    selectedFrame_ = insertIndex;
+}
+
+void SpriteEditorPanel::deleteCurrentFrame()
+{
+    if (document_.frames.size() <= 1 || selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.frames.size())) {
+        return;
+    }
+
+    recordUndoState();
+    document_.frames.erase(document_.frames.begin() + selectedFrame_);
+    document_.cels.erase(document_.cels.begin() + selectedFrame_);
+    selectedFrame_ = std::clamp(selectedFrame_, 0, static_cast<int>(document_.frames.size()) - 1);
+    if (selectionFrame_ == selectedFrame_) {
+        clearSelection();
+    } else if (selectionFrame_ > selectedFrame_) {
+        --selectionFrame_;
+    }
+}
+
+void SpriteEditorPanel::flipHorizontal()
+{
+    if (selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.cels.size())) {
+        return;
+    }
+
+    recordUndoState();
+    if (hasSelection_ && selectionAppliesToActiveCel()) {
+        flipRegion(activeCel(), selectionBounds_[0], selectionBounds_[1], selectionBounds_[2], selectionBounds_[3], true);
+        return;
+    }
+
+    for (SpriteCel& cel : document_.cels[selectedFrame_]) {
+        flipRegion(cel, 0, 0, document_.canvasSize[0] - 1, document_.canvasSize[1] - 1, true);
+    }
+}
+
+void SpriteEditorPanel::flipVertical()
+{
+    if (selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.cels.size())) {
+        return;
+    }
+
+    recordUndoState();
+    if (hasSelection_ && selectionAppliesToActiveCel()) {
+        flipRegion(activeCel(), selectionBounds_[0], selectionBounds_[1], selectionBounds_[2], selectionBounds_[3], false);
+        return;
+    }
+
+    for (SpriteCel& cel : document_.cels[selectedFrame_]) {
+        flipRegion(cel, 0, 0, document_.canvasSize[0] - 1, document_.canvasSize[1] - 1, false);
+    }
+}
+
+void SpriteEditorPanel::rotateClockwise()
+{
+    if (selectedFrame_ < 0 || selectedFrame_ >= static_cast<int>(document_.cels.size())) {
+        return;
+    }
+
+    recordUndoState();
+    if (hasSelection_ && selectionAppliesToActiveCel()) {
+        rotateRegionClockwise(activeCel(), selectionBounds_[0], selectionBounds_[1], selectionBounds_[2], selectionBounds_[3]);
+        return;
+    }
+
+    for (SpriteCel& cel : document_.cels[selectedFrame_]) {
+        rotateRegionClockwise(cel, 0, 0, document_.canvasSize[0] - 1, document_.canvasSize[1] - 1);
+    }
+}
+
+void SpriteEditorPanel::flipRegion(SpriteCel& cel, int left, int top, int right, int bottom, bool horizontal)
+{
+    const int width = document_.canvasSize[0];
+    if (horizontal) {
+        for (int y = top; y <= bottom; ++y) {
+            for (int x = left; x <= left + (right - left) / 2; ++x) {
+                const int mirroredX = right - (x - left);
+                std::swap(
+                    cel.pixels[static_cast<std::size_t>(y) * width + x],
+                    cel.pixels[static_cast<std::size_t>(y) * width + mirroredX]);
+            }
+        }
+        return;
+    }
+
+    for (int y = top; y <= top + (bottom - top) / 2; ++y) {
+        const int mirroredY = bottom - (y - top);
+        for (int x = left; x <= right; ++x) {
+            std::swap(
+                cel.pixels[static_cast<std::size_t>(y) * width + x],
+                cel.pixels[static_cast<std::size_t>(mirroredY) * width + x]);
+        }
+    }
+}
+
+void SpriteEditorPanel::rotateRegionClockwise(SpriteCel& cel, int left, int top, int right, int bottom)
+{
+    const int canvasWidth = document_.canvasSize[0];
+    const int regionWidth = right - left + 1;
+    const int regionHeight = bottom - top + 1;
+    if (regionWidth <= 0 || regionHeight <= 0) {
+        return;
+    }
+
+    const std::vector<unsigned int> originalPixels = cel.pixels;
+    for (int y = top; y <= bottom; ++y) {
+        for (int x = left; x <= right; ++x) {
+            cel.pixels[static_cast<std::size_t>(y) * canvasWidth + x] = 0u;
+        }
+    }
+
+    for (int sourceY = 0; sourceY < regionHeight; ++sourceY) {
+        for (int sourceX = 0; sourceX < regionWidth; ++sourceX) {
+            const int destinationX = left + (regionHeight - 1 - sourceY);
+            const int destinationY = top + sourceX;
+            if (destinationX > right || destinationY > bottom) {
+                continue;
+            }
+
+            cel.pixels[static_cast<std::size_t>(destinationY) * canvasWidth + destinationX] =
+                originalPixels[static_cast<std::size_t>(top + sourceY) * canvasWidth + (left + sourceX)];
+        }
+    }
+}
+
 void SpriteEditorPanel::copySelection()
 {
     if (!hasSelection_ || !selectionAppliesToActiveCel()) {
@@ -1664,6 +2228,7 @@ void SpriteEditorPanel::pasteSelection()
         return;
     }
 
+    recordUndoState();
     for (int y = 0; y < pasteHeight; ++y) {
         for (int x = 0; x < pasteWidth; ++x) {
             cel.pixels[static_cast<std::size_t>(startY + y) * document_.canvasSize[0] + (startX + x)] =
