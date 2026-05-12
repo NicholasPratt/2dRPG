@@ -50,6 +50,7 @@ private:
     bool animatePreview_ = true;
     float previewScrollX_ = 0.0f;
     float previewScrollY_ = 0.0f;
+    float previewAnimationX_ = 0.0f;
     float floorParallax_ = 0.45f;
     std::array<int, 2> dragStart_{-1, -1};
     std::array<int, 2> lastPaint_{-1, -1};

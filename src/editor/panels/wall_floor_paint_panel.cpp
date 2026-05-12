@@ -332,6 +332,7 @@ void WallFloorPaintPanel::drawCanvas()
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 canvasSize{static_cast<float>(width_) * pixelSize, static_cast<float>(height_) * pixelSize};
     ImGui::InvisibleButton("WallFloorCanvas", canvasSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    handleCanvasInput(origin, pixelSize);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     checkerboard(drawList, origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, pixelSize);
@@ -356,14 +357,14 @@ void WallFloorPaintPanel::drawCanvas()
     }
 
     drawList->AddRect(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, IM_COL32(220, 220, 220, 255));
-    handleCanvasInput(origin, pixelSize);
 }
 
 void WallFloorPaintPanel::drawParallaxPreview()
 {
     if (animatePreview_) {
-        previewScrollX_ += ImGui::GetIO().DeltaTime * 36.0f;
+        previewAnimationX_ = std::fmod(previewAnimationX_ + ImGui::GetIO().DeltaTime * 36.0f, static_cast<float>(width_));
     }
+    const float effectiveScrollX = previewScrollX_ + previewAnimationX_;
 
     ImGui::TextUnformatted("Parallax preview");
     ImGui::Checkbox("Animate floor", &animatePreview_);
@@ -384,7 +385,7 @@ void WallFloorPaintPanel::drawParallaxPreview()
     drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(14, 18, 24, 255));
     drawList->PushClipRect(origin, {origin.x + size.x, origin.y + size.y}, true);
     if (floor_.visible) {
-        drawLayerPixels(drawList, floor_, origin, previewScale, {previewScrollX_ * floorParallax_, previewScrollY_ * floorParallax_}, true);
+        drawLayerPixels(drawList, floor_, origin, previewScale, {effectiveScrollX * floorParallax_, previewScrollY_ * floorParallax_}, true);
     }
     if (wall_.visible) {
         drawLayerPixels(drawList, wall_, origin, previewScale, {previewScrollX_, previewScrollY_}, false);
@@ -653,7 +654,8 @@ std::vector<unsigned char> WallFloorPaintPanel::compositeRgba(bool parallaxPrevi
                 int fx = x;
                 int fy = y;
                 if (parallaxPreview) {
-                    fx = (x + static_cast<int>(previewScrollX_ * floorParallax_)) % width_;
+                    const float effectiveScrollX = previewScrollX_ + (animatePreview_ ? previewAnimationX_ : 0.0f);
+                    fx = (x + static_cast<int>(effectiveScrollX * floorParallax_)) % width_;
                     fy = (y + static_cast<int>(previewScrollY_ * floorParallax_)) % height_;
                     if (fx < 0) {
                         fx += width_;
