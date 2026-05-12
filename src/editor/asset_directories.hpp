@@ -19,10 +19,12 @@ struct AssetDirectories {
 
     [[nodiscard]] std::filesystem::path rawSpritePath() const;
     [[nodiscard]] std::filesystem::path rawCharacterSpritePath() const;
+    [[nodiscard]] std::filesystem::path rawTilesetPath() const;
     [[nodiscard]] std::filesystem::path gameSpritePath() const;
     [[nodiscard]] std::filesystem::path gameCharacterSpritePath() const;
     [[nodiscard]] std::filesystem::path gameCharacterPath() const;
     [[nodiscard]] std::filesystem::path gameMapPath() const;
+    [[nodiscard]] std::filesystem::path gameTilesetPath() const;
     [[nodiscard]] std::filesystem::path gameAnimationPath() const;
     [[nodiscard]] std::filesystem::path gamePalettePath() const;
 };

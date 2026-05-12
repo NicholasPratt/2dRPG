@@ -12,6 +12,11 @@ std::filesystem::path AssetDirectories::rawCharacterSpritePath() const
     return projectRoot / rawCharacterSprites;
 }
 
+std::filesystem::path AssetDirectories::rawTilesetPath() const
+{
+    return projectRoot / rawTilesets;
+}
+
 std::filesystem::path AssetDirectories::gameSpritePath() const
 {
     return projectRoot / gameSprites;
@@ -30,6 +35,11 @@ std::filesystem::path AssetDirectories::gameCharacterPath() const
 std::filesystem::path AssetDirectories::gameMapPath() const
 {
     return projectRoot / gameMaps;
+}
+
+std::filesystem::path AssetDirectories::gameTilesetPath() const
+{
+    return projectRoot / gameTilesets;
 }
 
 std::filesystem::path AssetDirectories::gameAnimationPath() const

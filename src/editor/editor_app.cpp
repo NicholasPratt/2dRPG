@@ -54,6 +54,16 @@ void EditorApp::draw()
             ImGui::EndTabItem();
         }
 
+        ImGuiTabItemFlags tilesetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Tilesets ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Tilesets", nullptr, tilesetsTabFlags)) {
+            if (tilesetsTabFlags != 0) {
+                hasRequestedTab_ = false;
+            }
+            spriteEditorLaunchedFromCharacter_ = false;
+            tilesetEditor_.draw(context_);
+            ImGui::EndTabItem();
+        }
+
         ImGuiTabItemFlags assetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Assets ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem("Assets", nullptr, assetsTabFlags)) {
             if (assetsTabFlags != 0) {
@@ -62,10 +72,12 @@ void EditorApp::draw()
             spriteEditorLaunchedFromCharacter_ = false;
             ImGui::Text("Raw sprites: %s", context_.assets.rawSpritePath().string().c_str());
             ImGui::Text("Raw character sprites: %s", context_.assets.rawCharacterSpritePath().string().c_str());
+            ImGui::Text("Raw tilesets: %s", context_.assets.rawTilesetPath().string().c_str());
             ImGui::Text("Game sprites: %s", context_.assets.gameSpritePath().string().c_str());
             ImGui::Text("Game character sprites: %s", context_.assets.gameCharacterSpritePath().string().c_str());
             ImGui::Text("Game characters: %s", context_.assets.gameCharacterPath().string().c_str());
             ImGui::Text("Game maps: %s", context_.assets.gameMapPath().string().c_str());
+            ImGui::Text("Game tilesets: %s", context_.assets.gameTilesetPath().string().c_str());
             ImGui::EndTabItem();
         }
 

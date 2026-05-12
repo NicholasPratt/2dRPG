@@ -4,6 +4,7 @@
 #include "editor/panels/character_editor_panel.hpp"
 #include "editor/panels/map_editor_panel.hpp"
 #include "editor/panels/sprite_editor_panel.hpp"
+#include "editor/panels/tileset_editor_panel.hpp"
 
 namespace adventure::editor {
 
@@ -16,6 +17,7 @@ private:
         Characters,
         Sprites,
         Maps,
+        Tilesets,
         Assets,
     };
 
@@ -23,6 +25,7 @@ private:
     CharacterEditorPanel characterEditor_;
     SpriteEditorPanel spriteEditor_;
     MapEditorPanel mapEditor_;
+    TilesetEditorPanel tilesetEditor_;
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;

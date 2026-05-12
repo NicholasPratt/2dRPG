@@ -9,6 +9,7 @@ namespace adventure::game {
 namespace {
 
 constexpr int kMaxMapDimension = 512;
+constexpr int kMaxTileId = 65535;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -21,7 +22,7 @@ bool validMapShape(const TileMap& map)
 {
     return map.width > 0 && map.height > 0 &&
         map.width <= kMaxMapDimension && map.height <= kMaxMapDimension &&
-        map.walls.size() == static_cast<std::size_t>(map.width * map.height);
+        map.tiles.size() == static_cast<std::size_t>(map.width * map.height);
 }
 
 } // namespace
@@ -42,14 +43,20 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 1\n";
+    output << "ADMAP 2\n";
     output << "id " << map.id << "\n";
+    if (!map.tilesetId.empty()) {
+        output << "tileset " << map.tilesetId << "\n";
+    }
     output << "size " << map.width << " " << map.height << "\n";
     output << "spawn " << std::clamp(map.spawnX, 0, map.width - 1) << " " << std::clamp(map.spawnY, 0, map.height - 1) << "\n";
     output << "tiles\n";
     for (int y = 0; y < map.height; ++y) {
         for (int x = 0; x < map.width; ++x) {
-            output << (map.walls[static_cast<std::size_t>(y) * map.width + x] != 0u ? '1' : '0');
+            if (x > 0) {
+                output << ' ';
+            }
+            output << static_cast<unsigned int>(map.tiles[static_cast<std::size_t>(y) * map.width + x]);
         }
         output << "\n";
     }
@@ -74,7 +81,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version != 1) {
+    if (magic != "ADMAP" || (version != 1 && version != 2)) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -89,6 +96,13 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     input >> loaded.id;
 
     input >> key;
+
+    // Optional tileset (v2 only)
+    if (key == "tileset") {
+        input >> loaded.tilesetId;
+        input >> key;
+    }
+
     if (key != "size") {
         setError(errorMessage, "Expected map size.");
         return false;
@@ -115,20 +129,42 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
         return false;
     }
 
-    loaded.walls.assign(static_cast<std::size_t>(loaded.width * loaded.height), 0u);
-    for (int y = 0; y < loaded.height; ++y) {
-        std::string row;
-        input >> row;
-        if (static_cast<int>(row.size()) != loaded.width) {
-            setError(errorMessage, "Map tile row has the wrong width.");
-            return false;
-        }
-        for (int x = 0; x < loaded.width; ++x) {
-            if (row[static_cast<std::size_t>(x)] != '0' && row[static_cast<std::size_t>(x)] != '1') {
-                setError(errorMessage, "Map tile row contains an invalid tile value.");
+    loaded.tiles.assign(static_cast<std::size_t>(loaded.width * loaded.height), 0u);
+
+    if (version == 1) {
+        // v1: one row per line, each char '0' or '1'
+        for (int y = 0; y < loaded.height; ++y) {
+            std::string row;
+            input >> row;
+            if (static_cast<int>(row.size()) != loaded.width) {
+                setError(errorMessage, "Map tile row has the wrong width.");
                 return false;
             }
-            loaded.walls[static_cast<std::size_t>(y) * loaded.width + x] = row[static_cast<std::size_t>(x)] == '1' ? 1u : 0u;
+            for (int x = 0; x < loaded.width; ++x) {
+                const char c = row[static_cast<std::size_t>(x)];
+                if (c != '0' && c != '1') {
+                    setError(errorMessage, "Map tile row contains an invalid tile value.");
+                    return false;
+                }
+                loaded.tiles[static_cast<std::size_t>(y) * loaded.width + x] = c == '1' ? 1u : 0u;
+            }
+        }
+    } else {
+        // v2: width space-separated integers per row
+        for (int y = 0; y < loaded.height; ++y) {
+            for (int x = 0; x < loaded.width; ++x) {
+                unsigned int tileId = 0;
+                input >> tileId;
+                if (!input) {
+                    setError(errorMessage, "Unexpected end of tile data.");
+                    return false;
+                }
+                if (tileId > static_cast<unsigned int>(kMaxTileId)) {
+                    setError(errorMessage, "Tile ID is out of range (max 65535).");
+                    return false;
+                }
+                loaded.tiles[static_cast<std::size_t>(y) * loaded.width + x] = static_cast<uint16_t>(tileId);
+            }
         }
     }
 

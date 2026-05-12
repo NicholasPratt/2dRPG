@@ -19,6 +19,7 @@ target_include_directories(imgui PUBLIC
 
 add_library(adventure_game STATIC
     src/game/map.cpp
+    src/game/tileset.cpp
 )
 
 target_include_directories(adventure_game PUBLIC
@@ -28,13 +29,16 @@ target_include_directories(adventure_game PUBLIC
 add_library(adventure_editor STATIC
     src/editor/asset_directories.cpp
     src/editor/editor_app.cpp
+    src/editor/stb_image_impl.cpp
     src/editor/panels/character_editor_panel.cpp
     src/editor/panels/map_editor_panel.cpp
     src/editor/panels/sprite_editor_panel.cpp
+    src/editor/panels/tileset_editor_panel.cpp
 )
 
 target_include_directories(adventure_editor PUBLIC
     src
+    external/stb
 )
 
 target_link_libraries(adventure_editor PUBLIC
