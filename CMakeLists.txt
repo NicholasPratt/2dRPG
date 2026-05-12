@@ -34,6 +34,7 @@ add_library(adventure_editor STATIC
     src/editor/panels/map_editor_panel.cpp
     src/editor/panels/sprite_editor_panel.cpp
     src/editor/panels/tileset_editor_panel.cpp
+    src/editor/panels/wall_floor_paint_panel.cpp
 )
 
 target_include_directories(adventure_editor PUBLIC

@@ -5,6 +5,7 @@
 #include "editor/panels/map_editor_panel.hpp"
 #include "editor/panels/sprite_editor_panel.hpp"
 #include "editor/panels/tileset_editor_panel.hpp"
+#include "editor/panels/wall_floor_paint_panel.hpp"
 
 namespace adventure::editor {
 
@@ -18,6 +19,7 @@ private:
         Sprites,
         Maps,
         Tilesets,
+        WallFloorPaint,
         Assets,
     };
 
@@ -26,6 +28,7 @@ private:
     SpriteEditorPanel spriteEditor_;
     MapEditorPanel mapEditor_;
     TilesetEditorPanel tilesetEditor_;
+    WallFloorPaintPanel wallFloorPaint_;
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;

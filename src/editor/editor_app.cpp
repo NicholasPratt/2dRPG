@@ -64,6 +64,16 @@ void EditorApp::draw()
             ImGui::EndTabItem();
         }
 
+        ImGuiTabItemFlags wallFloorTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::WallFloorPaint ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Wall/Floor Paint", nullptr, wallFloorTabFlags)) {
+            if (wallFloorTabFlags != 0) {
+                hasRequestedTab_ = false;
+            }
+            spriteEditorLaunchedFromCharacter_ = false;
+            wallFloorPaint_.draw(context_);
+            ImGui::EndTabItem();
+        }
+
         ImGuiTabItemFlags assetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Assets ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem("Assets", nullptr, assetsTabFlags)) {
             if (assetsTabFlags != 0) {
