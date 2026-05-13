@@ -1,6 +1,6 @@
 # Code Base Structure
 
-This project is currently a C++ 2D RPG editor/runtime scaffold. The implemented app is an editor built with Dear ImGui, GLFW, and OpenGL. Runtime game code is only just starting: the first shared game-facing module is a tile map loader/saver for custom `.admap` map files.
+This project is a C++ 2D RPG engine and integrated editor scaffold targeting a SNES/Zelda pixel-art style (see `RPG_Engine_Specification.md`). The implemented app is an editor built with Dear ImGui, GLFW, and OpenGL. Runtime game code is authored in `src/game` and must remain ImGui-free.
 
 The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
@@ -10,276 +10,367 @@ The main architectural rule is that the editor creates data the game can load. R
 2drpg/
   CMakeLists.txt
   code_base.md
+  RPG_Engine_Specification.md       # game design / feature spec
   assets/
-      raw/
-      sprites/                         # PNG exports/source sprite sheets
-      character_sprites/               # raw character sprite sheets
-      tilesets/                         # raw map tileset images
+    raw/
+      sprites/                      # PNG source sprite sheets
+      character_sprites/            # raw character sprite PNGs
+      tilesets/                     # raw map tileset images
     game/
-      project.json                     # asset root manifest
-      sprites/                         # .sprite.json metadata
-      character_sprites/                # game-ready character sprite sheet assets
-      maps/                            # .admap tile maps
-      characters/                      # planned character data
-      animations/                      # planned animation data
-      palettes/                        # planned palette data
+      project.json                  # asset root manifest
+      chapters/                     # .adchapter chapter files
+      maps/                         # .admap tile maps
+      sprites/                      # .sprite.json metadata
+      character_sprites/            # game-ready character sprite assets
+      characters/                   # planned character data
+      animations/                   # planned animation data
+      palettes/                     # planned palette data
+      paths/                        # .adpath enemy waypoint paths
+      tilesets/                     # .tileset.json tileset definitions
   external/
-    imgui/                             # Dear ImGui source and backends
+    imgui/                          # Dear ImGui source and backends
+    stb/                            # stb_image for PNG loading
   src/
     app/
-      main_editor.cpp                  # windowed editor executable
-      main_editor_smoke.cpp            # headless ImGui editor smoke test
-      main_game_smoke.cpp              # runtime map loader smoke test
+      main_editor.cpp               # windowed editor executable
+      main_editor_smoke.cpp         # headless ImGui editor smoke test
+      main_game_smoke.cpp           # runtime map + chapter loader smoke test
     editor/
-      asset_directories.hpp/.cpp       # central asset root paths
-      editor_app.hpp/.cpp              # top-level ImGui tabs
-      editor_context.hpp               # shared editor context
+      asset_directories.hpp/.cpp    # central asset root paths
+      editor_app.hpp/.cpp           # top-level ImGui tabs
+      editor_context.hpp            # shared editor context
+      stb_image_impl.cpp            # stb_image implementation unit
       panels/
         character_editor_panel.hpp/.cpp
+        enemy_path_editor_panel.hpp/.cpp
+        layout_editor_panel.hpp/.cpp
         map_editor_panel.hpp/.cpp
         sprite_editor_panel.hpp/.cpp
+        tileset_editor_panel.hpp/.cpp
+        wall_floor_paint_panel.hpp/.cpp
     game/
-      map.hpp/.cpp                     # runtime .admap map type/load/save
+      chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink types and .adchapter load/save
+      map.hpp/.cpp                  # TileMap type and .admap load/save
+      tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
 ```
 
 ## Build Targets
 
-The active CMake targets are:
-
 ```text
 imgui                    Static Dear ImGui library.
-adventure_game           Runtime-facing game/data code. Currently map loading/saving.
+adventure_game           Runtime-facing game/data code (chapter, map, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads an .admap file through runtime code.
-adventure_editor_window  GLFW/OpenGL editor window, built when dependencies are found.
+adventure_game_smoke     Loads an .admap and .adchapter through runtime code.
+adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
 
 Useful commands:
 
 ```sh
-cmake --build build --target adventure_editor_window
-cmake --build build --target adventure_editor_smoke
-cmake --build build --target adventure_game_smoke
-./build/adventure_game_smoke assets/game/maps/new_map.admap
-./build/adventure_editor_smoke
-```
+cmake -B build
+cmake --build build --parallel
 
-On macOS, the window target currently emits OpenGL deprecation warnings and a GLFW deployment-version linker warning. These are warnings only.
+./build/adventure_game_smoke
+./build/adventure_game_smoke assets/game/maps/new_map.admap assets/game/chapters/chapter_1.adchapter
+./build/adventure_editor_smoke
+./build/adventure_editor_window   # macOS: emits OpenGL deprecation warnings, harmless
+```
 
 ## Dependency Direction
 
-The intended dependency direction is:
-
 ```text
-editor -> game/runtime data modules
-editor -> imgui
-window executable -> editor -> game
-game executable/smoke -> game
+window executable  →  adventure_editor  →  adventure_game
+editor_smoke       →  adventure_editor  →  adventure_game
+game_smoke                             →  adventure_game
 ```
 
-Runtime modules in `src/game` must not include editor headers or ImGui headers. Shared authored file formats should be implemented in runtime-facing code when the game needs to load them.
+Runtime modules in `src/game` must not include editor headers or ImGui headers.
 
-## Editor App
+## Editor App Tabs
 
-`EditorApp` owns the top-level ImGui tabs:
+`EditorApp` owns these top-level ImGui tabs (in order):
 
-- `Characters`
-- `Sprites`
-- `Maps`
-- `Assets`
+| Tab | Panel | Purpose |
+|-----|-------|---------|
+| Characters | `CharacterEditorPanel` | Character sheets with sprite references |
+| Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor |
+| Layout | `LayoutEditorPanel` | Chapter macro-view — add/link/delete screens |
+| Maps | `MapEditorPanel` | 3-layer tile map editor with test-game mode |
+| Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
+| Wall/Floor Paint | `WallFloorPaintPanel` | Pixel paint tool for room art with parallax preview |
+| Enemy Paths | `EnemyPathEditorPanel` | Waypoint/spline editor for enemy patrol paths |
+| Assets | *(inline)* | Asset directory listing |
 
-The editor currently uses simple retained panel state rather than a document system. Undo exists only inside the sprite editor and is snapshot-based.
+---
 
-## Character Editor
+## Chapter System
 
-Implemented in `src/editor/panels/character_editor_panel.*`.
+Implemented in `src/game/chapter.hpp/.cpp` and `src/editor/panels/layout_editor_panel.*`.
 
-Current behavior:
+### Data model
 
-- Shows character names in a side list.
-- Selecting a character opens a simple sheet.
-- A sheet has name, bio, and sprite reference fields.
-- Clicking the sprite reference opens the `Sprites` tab.
-- If the sprite editor was launched from a character sheet, the selected character’s sprite reference follows the active sprite metadata path, e.g. `assets/game/sprites/new_sprite.sprite.json`.
-- Character-launched blank sprites default to a `32x32` canvas.
+```cpp
+struct ScreenLink { std::string north, south, east, west; };
 
-Current limitation:
+struct ChapterScreen {
+    std::string id;
+    std::string mapId;        // .admap to load for this screen
+    int gridX, gridY;         // position in macro layout
+    ScreenLink links;         // screen-flip neighbours
+    bool respawnEnemies;      // false = defeated enemies stay gone (spec default)
+};
 
-- Character data is in-memory only. There is no character save/load format yet.
+struct Chapter {
+    std::string id;
+    std::string startScreenId;
+    std::vector<ChapterScreen> screens;
+};
+```
+
+### `.adchapter` format (v2)
+
+```text
+ADCHAPTER 2
+id chapter_1
+start screen_1
+screens 2
+screen screen_1 new_map 0 0
+links - screen_2 - -
+respawn 0
+screen screen_2 dungeon_1 0 1
+links screen_1 - - -
+respawn 1
+end
+```
+
+v1 files (no `respawn` per screen) load with `respawnEnemies = false`.
+
+### Layout Editor
+
+- Macro canvas showing each screen as a coloured box at its grid position, with lines for links.
+- Screen list sidebar and inspector for editing id, mapId, grid position, links, and respawn flag.
+- Save/load from `assets/game/chapters/<id>.adchapter`.
+
+---
+
+## Tile Map System
+
+Implemented in `src/game/map.hpp/.cpp` and `src/editor/panels/map_editor_panel.*`.
+
+### Data model
+
+```cpp
+struct TileMap {
+    std::string id;
+    std::string tilesetId;
+    int width, height;
+    int spawnX, spawnY;
+    // Layer 0: floor   Layer 1: mid (player-level, collision)   Layer 2: ceiling
+    std::array<std::vector<uint16_t>, 3> layers;
+};
+```
+
+### `.admap` format (v3)
+
+```text
+ADMAP 3
+id new_map
+tileset overworld
+size 24 16
+spawn 1 1
+layer 0
+0 0 0 ... (24 values) ...
+layer 1
+1 1 1 1 1 ... 1
+1 0 0 ... 1
+...
+layer 2
+0 0 0 ...
+end
+```
+
+Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) both load into `layers[1]` (mid layer); floor and ceiling default to zero.
+
+### Map Editor
+
+- Layer selector: Floor / Mid / Ceiling radio buttons.
+- Each layer rendered with a distinct tint: floor dim, mid normal, ceiling blue.
+- Inactive layers rendered at 75% brightness.
+- **Copy/paste**: "Select region" enters rubber-band mode → "Copy" copies selected tiles from active layer → "Paste" enters ghost-preview mode; click to stamp.
+- Tileset palette for selecting tile IDs; solid indicator per tile.
+- Test-game mode: arrow-key player movement with tile-based collision on the mid layer.
+- Save/load: `assets/game/maps/<id>.admap`.
+
+---
+
+## Tileset System
+
+Implemented in `src/game/tileset.hpp/.cpp` and `src/editor/panels/tileset_editor_panel.*`.
+
+### Data model
+
+```cpp
+struct TileDef {
+    int id;
+    std::string name;
+    bool solid;
+};
+
+struct TilesetDef {
+    std::string id;
+    std::string sourcePath;
+    int tileWidth, tileHeight;
+    std::vector<TileDef> tiles;
+};
+```
+
+Format: `assets/game/tilesets/<id>.tileset.json`.  
+Editor generates tile definitions from a source PNG grid.
+
+---
 
 ## Sprite Editor
 
 Implemented in `src/editor/panels/sprite_editor_panel.*`.
 
-Current behavior:
+- Pixel editing with frames, layers, palette, preview, and animation playback.
+- Tools: pen, mirror, bucket, eraser, stroke, line, rect, circle, move, select, picker, shade.
+- Brush sizes 1×1, 2×2, 4×4.
+- Frame actions: add, copy, delete, clear.
+- Transform actions: flip H/V, rotate CW — applied to selection or whole frame.
+- Clipboard: copy/paste selections.
+- OS-aware shortcuts: `Cmd+Z/C/V` (macOS), `Ctrl+Z/C/V` (other).
+- Snapshot-based undo for drawing, transforms, paste, resize, frame/layer changes, import.
 
-- Pixel editing with frames, layers, palette, preview, and basic animation playback.
-- Tools include pen, mirror, bucket, eraser, stroke, line, rect, circle, move, select, picker, and shade.
-- Brush sizes: `1x1`, `2x2`, and `4x4`.
-- Frame actions: add blank frame, copy frame, delete frame, clear frame.
-- Transform actions: horizontal flip, vertical flip, clockwise rotate.
-- Selection-aware transforms: active selection transforms only the selected region on the active layer; otherwise transforms apply to every layer in the current frame.
-- Clipboard operations for selections: copy and paste.
-- OS-aware keyboard shortcuts:
-  - macOS: `Cmd+Z`, `Cmd+C`, `Cmd+V`
-  - Linux/other: `Ctrl+Z`, `Ctrl+C`, `Ctrl+V`
-- Snapshot-based undo for drawing, shapes, bucket/shade, paste, move, frame/layer changes, resize, clear frame, import, and new sprite.
+Export/import paths:
 
-Sprite export/import:
+| Operation | Path |
+|-----------|------|
+| Save metadata | `assets/game/sprites/<id>.sprite.json` |
+| Export single frame | `assets/raw/sprites/<id>_frame_<n>.png` |
+| Export sprite sheet | `assets/raw/sprites/<id>_sheet.png` |
+| Import PNG | per Source PNG field |
 
-- `Save .sprite.json` writes metadata to `assets/game/sprites/<id>.sprite.json`.
-- `Export single frame PNG` writes `assets/raw/sprites/<id>_frame_<n>.png`.
-- `Export sprite sheet PNG` writes `assets/raw/sprites/<id>_sheet.png`.
-- `Import source PNG` reads the `Source PNG` field.
-- PNG import currently supports RGBA PNGs exported by this editor. It is not a general-purpose PNG decoder.
+---
 
-Current limitation:
+## Wall / Floor Paint
 
-- Sprite metadata loading is minimal. Opening a sprite reference updates the active sprite id/source path but does not fully deserialize `.sprite.json` into editor state yet.
+Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 
-## Map Editor
+- Two-layer pixel painter: Floor and Wall.
+- Tools: pencil, eraser, fill, line, rect.
+- Palette, brush size, layer visibility/opacity controls.
+- Parallax preview: animated scroll showing floor parallax behind wall layer.
+- Undo with one level of history.
+- Export: writes Floor and Wall PNGs to `assets/raw/`.
 
-Implemented in `src/editor/panels/map_editor_panel.*`.
+---
 
-Current behavior:
+## Enemy Path Editor
 
-- Basic wall/no-wall map painting.
-- White tile = wall.
-- Black tile = no wall.
-- Spawn edit mode places the player start tile.
-- Adjustable map width/height.
-- Adjustable displayed tile size, defaulting to `16x16` pixels.
-- Left-drag paints the selected tile type.
-- Right-drag erases to no wall.
-- `Fill walls` and `Clear walls`.
-- `Save .admap` and `Load .admap` use the runtime map module.
-- `Test map` starts an in-editor runtime preview. The 32x32 player spawns at the spawn tile and moves with cursor keys while wall tiles block movement.
+Implemented in `src/editor/panels/enemy_path_editor_panel.*`.
 
-The map editor saves to:
+Addresses spec §4.4 (movement splines / state definition).
 
-```text
-assets/game/maps/<map_id>.admap
+### Data model
+
+```cpp
+struct Waypoint { float x, y; };  // world pixels
+enum class Behavior { Idle, Patrol, Aggro };
+// Fields: id, mapId (ref), behavior, speed (px/s), loop, respawn, waypoints
 ```
 
-## `.admap` Format
-
-Implemented in `src/game/map.hpp/.cpp`.
-
-This is the first custom game-loadable file type. It is intentionally simple and text-based:
+### `.adpath` format (v1)
 
 ```text
-ADMAP 1
-id new_map
-size 24 16
-spawn 1 1
-tiles
-111111111111111111111111
-100000000000000000000001
-100000000000000000000001
-111111111111111111111111
+ADPATH 1
+id path_1
+map new_map
+behavior 1
+speed 64.0
+loop 1
+respawn 0
+waypoints 4
+wp 48.0 32.0
+wp 96.0 32.0
+wp 96.0 80.0
+wp 48.0 80.0
 end
 ```
 
-Rules:
+`behavior`: 0=Idle, 1=Patrol, 2=Aggro.  
+Files saved to `assets/game/paths/<id>.adpath`.
 
-- `ADMAP 1` is the magic/version header.
-- `id` is a single token map id.
-- `size <width> <height>` defines dimensions.
-- `spawn <x> <y>` defines the player start tile. Older files without this line load with a default spawn.
-- `tiles` contains exactly `height` rows.
-- Each row must have exactly `width` characters.
-- `0` means no wall.
-- `1` means wall.
-- `end` terminates the file.
+### Editor features
 
-Runtime API:
+- Canvas shows a 16px world-tile grid (zoom 0.5×–6×).
+- Optional map background: load any `.admap` mid layer as a tile reference.
+- Click empty area: add waypoint (snaps to grid if enabled).
+- Click near existing waypoint: select it.
+- Drag selected waypoint: move it.
+- Right-click waypoint: delete.
+- Delete key: delete selected waypoint.
+- Loop line drawn from last to first waypoint when loop is enabled.
+- Behavior (Idle/Patrol/Aggro), speed slider, loop checkbox, respawn checkbox.
 
-```cpp
-namespace adventure::game {
-
-struct TileMap {
-    std::string id;
-    int width;
-    int height;
-    std::vector<unsigned char> walls;
-};
-
-bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);
-bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* errorMessage = nullptr);
-
-}
-```
-
-`adventure_game_smoke` verifies the runtime can load a map without editor code:
-
-```sh
-./build/adventure_game_smoke assets/game/maps/new_map.admap
-```
-
-Expected output:
-
-```text
-Loaded map new_map [24x16]
-```
+---
 
 ## Asset Directories
 
-`AssetDirectories` centralizes editor asset paths:
+`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot` (default: current working directory).
 
-```text
-rawSprites       assets/raw/sprites
-rawCharacterSprites assets/raw/character_sprites
-rawTilesets      assets/raw/tilesets
-gameSprites      assets/game/sprites
-gameCharacterSprites assets/game/character_sprites
-gameCharacters   assets/game/characters
-gameMaps         assets/game/maps
-gameTilesets     assets/game/tilesets
-gameAnimations   assets/game/animations
-gamePalettes     assets/game/palettes
-```
+| Field | Default |
+|-------|---------|
+| `rawSprites` | `assets/raw/sprites` |
+| `rawCharacterSprites` | `assets/raw/character_sprites` |
+| `rawTilesets` | `assets/raw/tilesets` |
+| `gameSprites` | `assets/game/sprites` |
+| `gameCharacterSprites` | `assets/game/character_sprites` |
+| `gameCharacters` | `assets/game/characters` |
+| `gameChapters` | `assets/game/chapters` |
+| `gameMaps` | `assets/game/maps` |
+| `gameTilesets` | `assets/game/tilesets` |
+| `gameAnimations` | `assets/game/animations` |
+| `gamePalettes` | `assets/game/palettes` |
+| `gamePaths` | `assets/game/paths` |
 
 The project manifest at `assets/game/project.json` mirrors these roots.
 
-## Current Data Status
+---
 
-Implemented game-loadable data:
+## Implemented vs. Spec
 
-- `.admap` tile maps.
-
-Implemented editor-authored data:
-
-- `.sprite.json` metadata writes.
-- Sprite PNG exports.
-- In-memory character sheets.
-- In-memory sprite pixel documents.
-- In-memory map edits with `.admap` save/load.
-
-Not implemented yet:
-
-- General runtime sprite loader.
-- Runtime renderer.
-- Runtime collision/movement.
-- Character save/load format.
-- Tile set editor and tile metadata.
-- Entity placement.
-- Play-in-editor preview.
-- Persistent project asset index beyond root paths.
+| Spec section | Status |
+|---|---|
+| §3.1 Chapters / Screens / Screen-Flip links | ✅ Data model + editor (no runtime transition yet) |
+| §3.1 Parallax / pseudo-3D | ✅ Editor preview in Wall/Floor Paint (no runtime renderer yet) |
+| §3.2 Real-time combat / timed mechanics | ❌ Not yet |
+| §3.2 Enemy respawn flag | ✅ `respawnEnemies` on `ChapterScreen` |
+| §4.1 Layout editor (macro view, screen management) | ✅ |
+| §4.2 3-layer tile maps (floor / mid / ceiling) | ✅ |
+| §4.2 Copy/paste tiles | ✅ |
+| §4.2 Pixel painting | ✅ Wall/Floor Paint panel |
+| §4.3 Sprite & animation editor | ✅ |
+| §4.4 Enemy paths / splines | ✅ `.adpath` format + editor |
+| §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data |
+| §5 Save/load (JSON, text formats) | ✅ |
+| §6 Runtime game engine (rendering, screen-flip) | ❌ Not yet |
+| §6 Runtime collision | ✅ Test-game mode in map editor |
 
 ## Near-Term Priorities
 
-1. Add a real game window target that loads `assets/game/maps/new_map.admap` and draws white/black map tiles.
-2. Add player position and collision against `.admap` wall tiles.
-3. Add full `.sprite.json` loading into both editor and runtime.
-4. Save/load character sheets, including sprite metadata references.
-5. Expand `.admap` only when needed: spawn point, tile size, named layers, entities, exits, and triggers.
-6. Replace the limited PNG importer with a real PNG decoder dependency if arbitrary external PNG import becomes important.
+1. Runtime game window: load a chapter, render the start screen's `.admap` mid layer, basic player movement.
+2. Screen-flip transitions: when player reaches a screen edge with a link, load and render the linked screen.
+3. Full `.sprite.json` round-trip (currently write-only from editor).
+4. Character save/load format.
+5. Enemy runtime: load `.adpath` and drive a simple entity along the waypoints.
+6. Parallax rendering in the runtime (floor layer scrolls at `floorParallax` factor relative to camera).
 
 ## Engineering Notes
 
 - Keep editor UI state out of `src/game`.
-- Keep file format parsing in runtime-facing modules when the game needs to load that format.
+- File format parsing belongs in runtime-facing modules when the game needs to load that format.
 - Prefer readable text formats while the project is small.
-- Avoid large engine abstractions until there is actual runtime gameplay pressure.
-- The current sprite undo stack snapshots whole sprite editor state. This is pragmatic now, but command-based undo will become better once files and documents are larger.
+- Collision is currently tile-based on the mid layer only. Pixel-perfect collision is a future concern.
+- The sprite editor undo stack snapshots whole state. Command-based undo should replace it once documents become large.
