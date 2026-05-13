@@ -44,6 +44,16 @@ void EditorApp::draw()
             ImGui::EndTabItem();
         }
 
+        ImGuiTabItemFlags layoutTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Layout ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Layout", nullptr, layoutTabFlags)) {
+            if (layoutTabFlags != 0) {
+                hasRequestedTab_ = false;
+            }
+            spriteEditorLaunchedFromCharacter_ = false;
+            layoutEditor_.draw(context_);
+            ImGui::EndTabItem();
+        }
+
         ImGuiTabItemFlags mapsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Maps ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem("Maps", nullptr, mapsTabFlags)) {
             if (mapsTabFlags != 0) {
@@ -74,6 +84,16 @@ void EditorApp::draw()
             ImGui::EndTabItem();
         }
 
+        ImGuiTabItemFlags enemyPathTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::EnemyPaths ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Enemy Paths", nullptr, enemyPathTabFlags)) {
+            if (enemyPathTabFlags != 0) {
+                hasRequestedTab_ = false;
+            }
+            spriteEditorLaunchedFromCharacter_ = false;
+            enemyPathEditor_.draw(context_);
+            ImGui::EndTabItem();
+        }
+
         ImGuiTabItemFlags assetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Assets ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem("Assets", nullptr, assetsTabFlags)) {
             if (assetsTabFlags != 0) {
@@ -86,6 +106,7 @@ void EditorApp::draw()
             ImGui::Text("Game sprites: %s", context_.assets.gameSpritePath().string().c_str());
             ImGui::Text("Game character sprites: %s", context_.assets.gameCharacterSpritePath().string().c_str());
             ImGui::Text("Game characters: %s", context_.assets.gameCharacterPath().string().c_str());
+            ImGui::Text("Game chapters: %s", context_.assets.gameChapterPath().string().c_str());
             ImGui::Text("Game maps: %s", context_.assets.gameMapPath().string().c_str());
             ImGui::Text("Game tilesets: %s", context_.assets.gameTilesetPath().string().c_str());
             ImGui::EndTabItem();

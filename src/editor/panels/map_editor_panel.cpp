@@ -18,6 +18,8 @@ constexpr int kWorldTileSize = 16;
 constexpr float kPlayerSize = 32.0f;
 constexpr float kPlayerSpeed = 96.0f;
 
+const char* kLayerNames[] = {"Floor", "Mid", "Ceiling"};
+
 // Deterministic hashed color per tile ID. Tile 0 = dark background.
 ImU32 colorForTileId(uint16_t id)
 {
@@ -28,6 +30,23 @@ ImU32 colorForTileId(uint16_t id)
     auto r = static_cast<uint8_t>(80 + (h & 0xFFu) * 175u / 255u);
     auto g = static_cast<uint8_t>(80 + ((h >> 8u) & 0xFFu) * 175u / 255u);
     auto b = static_cast<uint8_t>(80 + ((h >> 16u) & 0xFFu) * 175u / 255u);
+    return IM_COL32(r, g, b, 255);
+}
+
+ImU32 dimColor(ImU32 col, float factor)
+{
+    auto r = static_cast<uint8_t>((col & 0xFFu) * factor);
+    auto g = static_cast<uint8_t>(((col >> 8u) & 0xFFu) * factor);
+    auto b = static_cast<uint8_t>(((col >> 16u) & 0xFFu) * factor);
+    return IM_COL32(r, g, b, 255);
+}
+
+// Blue-tinted color for ceiling layer tiles
+ImU32 ceilingColor(ImU32 col)
+{
+    auto r = static_cast<uint8_t>((col & 0xFFu) * 0.4f + 20);
+    auto g = static_cast<uint8_t>(((col >> 8u) & 0xFFu) * 0.4f + 20);
+    auto b = static_cast<uint8_t>(((col >> 16u) & 0xFFu) * 0.4f + 90);
     return IM_COL32(r, g, b, 255);
 }
 
@@ -56,20 +75,22 @@ void MapEditorPanel::resizeMap(int width, int height)
         return;
     }
 
-    std::vector<uint16_t> resized(static_cast<std::size_t>(width * height), 0u);
     const int copyWidth = std::min(width_, width);
     const int copyHeight = std::min(height_, height);
-    for (int y = 0; y < copyHeight; ++y) {
-        for (int x = 0; x < copyWidth; ++x) {
-            resized[static_cast<std::size_t>(y) * width + x] = tileAt(x, y);
+    for (int l = 0; l < 3; ++l) {
+        std::vector<uint16_t> resized(static_cast<std::size_t>(width * height), 0u);
+        for (int y = 0; y < copyHeight; ++y) {
+            for (int x = 0; x < copyWidth; ++x) {
+                resized[static_cast<std::size_t>(y) * width + x] = tileAt(x, y, l);
+            }
         }
+        layers_[l] = std::move(resized);
     }
 
     width_ = width;
     height_ = height;
     spawnX_ = std::clamp(spawnX_, 0, width_ - 1);
     spawnY_ = std::clamp(spawnY_, 0, height_ - 1);
-    tiles_ = std::move(resized);
 }
 
 void MapEditorPanel::drawToolbar(EditorContext& context)
@@ -88,6 +109,13 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
         tileSize_ = std::clamp(tileSize_, kMinTileSize, kMaxTileSize);
     }
 
+    // Layer selector
+    ImGui::TextUnformatted("Layer:");
+    for (int l = 0; l < 3; ++l) {
+        ImGui::SameLine();
+        ImGui::RadioButton(kLayerNames[l], &activeLayer_, l);
+    }
+
     // Tileset selector
     ImGui::SetNextItemWidth(220.0f);
     ImGui::InputText("Tileset id", tilesetId_.data(), tilesetId_.size());
@@ -97,15 +125,48 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
     }
     if (tilesetLoaded_) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "loaded (%d tiles)", static_cast<int>(loadedTileset_.tiles.size()));
+        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "loaded (%d tiles)",
+            static_cast<int>(loadedTileset_.tiles.size()));
     }
 
     if (ImGui::Button("Fill")) {
-        std::fill(tiles_.begin(), tiles_.end(), selectedTileId_);
+        std::fill(layers_[activeLayer_].begin(), layers_[activeLayer_].end(), selectedTileId_);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear (fill 0)")) {
-        std::fill(tiles_.begin(), tiles_.end(), static_cast<uint16_t>(0u));
+    if (ImGui::Button("Clear layer")) {
+        std::fill(layers_[activeLayer_].begin(), layers_[activeLayer_].end(), static_cast<uint16_t>(0u));
+    }
+
+    // Copy / paste controls
+    ImGui::SameLine();
+    if (editMode_ == EditMode::Paint) {
+        if (ImGui::Button("Select region")) {
+            editMode_ = EditMode::Select;
+            hasSelection_ = false;
+        }
+    } else if (editMode_ == EditMode::Select) {
+        if (hasSelection_ && ImGui::Button("Copy")) {
+            copySelection();
+        }
+        if (!clipboard_.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Paste")) {
+                editMode_ = EditMode::Paste;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel select")) {
+            editMode_ = EditMode::Paint;
+            hasSelection_ = false;
+        }
+    } else if (editMode_ == EditMode::Paste) {
+        if (!clipboard_.empty() && ImGui::Button("Paste again")) {
+            // stays in paste mode
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Done paste")) {
+            editMode_ = EditMode::Paint;
+        }
     }
 
     if (ImGui::Button("Save .admap")) {
@@ -124,9 +185,10 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
         }
     }
 
-    ImGui::Text("Spawn: %d, %d   Active tile ID: %d", spawnX_, spawnY_, static_cast<int>(selectedTileId_));
+    ImGui::Text("Spawn: %d,%d   Active tile ID: %d   Editing: %s layer",
+        spawnX_, spawnY_, static_cast<int>(selectedTileId_), kLayerNames[activeLayer_]);
     ImGui::Text("Map files: %s", context.assets.gameMapPath().string().c_str());
-    ImGui::TextDisabled("Left-click paints selected tile. Right-click clears to 0. Spawn mode places player start.");
+    ImGui::TextDisabled("Left-click: paint   Right-click: erase   S+hover: set spawn   Select region for copy/paste");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
@@ -137,13 +199,13 @@ void MapEditorPanel::drawTilesetPalette()
     constexpr float kPaletteSize = 24.0f;
     constexpr int kPaletteCols = 16;
 
-    ImGui::Text("Tileset: %s — click a tile to select it for painting", loadedTileset_.id.c_str());
+    ImGui::Text("Tileset: %s — click to select", loadedTileset_.id.c_str());
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
 
-    int count = static_cast<int>(loadedTileset_.tiles.size());
-    int paletteRows = (count + kPaletteCols - 1) / kPaletteCols;
+    const int count = static_cast<int>(loadedTileset_.tiles.size());
+    const int paletteRows = (count + kPaletteCols - 1) / kPaletteCols;
     const ImVec2 paletteSize{
         static_cast<float>(kPaletteCols) * kPaletteSize,
         static_cast<float>(paletteRows) * kPaletteSize,
@@ -161,14 +223,12 @@ void MapEditorPanel::drawTilesetPalette()
 
         dl->AddRectFilled(min, max, colorForTileId(tileId));
 
-        // Highlight selected tile
         if (tileId == selectedTileId_) {
             dl->AddRect(min, max, IM_COL32(255, 216, 64, 255), 0.0f, 0, 2.0f);
         } else {
             dl->AddRect(min, max, IM_COL32(0, 0, 0, 120));
         }
 
-        // Solid indicator: small dot in corner
         if (t.solid) {
             dl->AddCircleFilled({min.x + 4.0f, min.y + 4.0f}, 3.0f, IM_COL32(255, 80, 80, 200));
         }
@@ -196,11 +256,41 @@ void MapEditorPanel::drawGrid()
         static_cast<float>(width_ * tileSize_),
         static_cast<float>(height_ * tileSize_),
     };
-    ImGui::InvisibleButton("MapGrid", gridSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    ImGui::InvisibleButton("MapGrid", gridSize,
+        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->AddRectFilled(origin, {origin.x + gridSize.x, origin.y + gridSize.y}, IM_COL32(0, 0, 0, 255));
 
+    // Render floor, mid, ceiling in order
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int y = 0; y < height_; ++y) {
+            for (int x = 0; x < width_; ++x) {
+                const uint16_t id = tileAt(x, y, pass);
+                if (id == 0u) {
+                    continue;
+                }
+                const ImVec2 min{
+                    origin.x + static_cast<float>(x * tileSize_),
+                    origin.y + static_cast<float>(y * tileSize_),
+                };
+                const ImVec2 max{min.x + static_cast<float>(tileSize_), min.y + static_cast<float>(tileSize_)};
+                ImU32 color = colorForTileId(id);
+                if (pass == 0) {
+                    color = dimColor(color, 0.5f);
+                } else if (pass == 2) {
+                    color = ceilingColor(color);
+                }
+                // Dim inactive layers slightly when not the editing target
+                if (pass != activeLayer_) {
+                    color = dimColor(color, 0.75f);
+                }
+                drawList->AddRectFilled(min, max, color);
+            }
+        }
+    }
+
+    // Grid lines
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             const ImVec2 min{
@@ -208,11 +298,6 @@ void MapEditorPanel::drawGrid()
                 origin.y + static_cast<float>(y * tileSize_),
             };
             const ImVec2 max{min.x + static_cast<float>(tileSize_), min.y + static_cast<float>(tileSize_)};
-
-            const uint16_t id = tileAt(x, y);
-            if (id != 0u) {
-                drawList->AddRectFilled(min, max, colorForTileId(id));
-            }
             drawList->AddRect(min, max, IM_COL32(50, 50, 50, 180));
         }
     }
@@ -222,8 +307,28 @@ void MapEditorPanel::drawGrid()
         origin.x + static_cast<float>(spawnX_ * tileSize_) + static_cast<float>(tileSize_) * 0.5f,
         origin.y + static_cast<float>(spawnY_ * tileSize_) + static_cast<float>(tileSize_) * 0.5f,
     };
-    drawList->AddCircleFilled(spawnCenter, std::max(4.0f, static_cast<float>(tileSize_) * 0.25f), IM_COL32(80, 180, 255, 255));
-    drawList->AddCircle(spawnCenter, std::max(5.0f, static_cast<float>(tileSize_) * 0.32f), IM_COL32(5, 25, 45, 255), 0, 2.0f);
+    drawList->AddCircleFilled(spawnCenter, std::max(4.0f, static_cast<float>(tileSize_) * 0.25f),
+        IM_COL32(80, 180, 255, 255));
+    drawList->AddCircle(spawnCenter, std::max(5.0f, static_cast<float>(tileSize_) * 0.32f),
+        IM_COL32(5, 25, 45, 255), 0, 2.0f);
+
+    // Selection overlay
+    if ((editMode_ == EditMode::Select || editMode_ == EditMode::Paste) && hasSelection_) {
+        const int sx0 = std::min(selX0_, selX1_);
+        const int sy0 = std::min(selY0_, selY1_);
+        const int sx1 = std::max(selX0_, selX1_);
+        const int sy1 = std::max(selY0_, selY1_);
+        const ImVec2 sMin{
+            origin.x + static_cast<float>(sx0 * tileSize_),
+            origin.y + static_cast<float>(sy0 * tileSize_),
+        };
+        const ImVec2 sMax{
+            origin.x + static_cast<float>((sx1 + 1) * tileSize_),
+            origin.y + static_cast<float>((sy1 + 1) * tileSize_),
+        };
+        drawList->AddRect(sMin, sMax, IM_COL32(255, 216, 64, 220), 0.0f, 0, 2.0f);
+        drawList->AddRectFilled(sMin, sMax, IM_COL32(255, 216, 64, 30));
+    }
 
     if (!ImGui::IsItemHovered()) {
         return;
@@ -241,25 +346,100 @@ void MapEditorPanel::drawGrid()
     const ImVec2 hMax{hMin.x + static_cast<float>(tileSize_), hMin.y + static_cast<float>(tileSize_)};
     drawList->AddRect(hMin, hMax, IM_COL32(255, 216, 64, 255), 0.0f, 0, 2.0f);
 
-    // Tooltip showing tile info
-    const uint16_t hoverId = tileAt(x, y);
+    // Tile tooltip
+    const uint16_t hoverId = tileAt(x, y, activeLayer_);
     const game::TileDef* def = tilesetLoaded_ ? loadedTileset_.findTile(hoverId) : nullptr;
     if (def) {
-        ImGui::SetTooltip("[%d,%d] ID %d: %s (%s)", x, y, hoverId, def->name.c_str(), def->solid ? "solid" : "passable");
+        ImGui::SetTooltip("[%d,%d] %s  ID %d: %s (%s)", x, y, kLayerNames[activeLayer_],
+            hoverId, def->name.c_str(), def->solid ? "solid" : "passable");
     } else {
-        ImGui::SetTooltip("[%d,%d] ID %d", x, y, static_cast<int>(hoverId));
+        ImGui::SetTooltip("[%d,%d] %s  ID %d", x, y, kLayerNames[activeLayer_], static_cast<int>(hoverId));
     }
 
-    // Spawn mode: right-click controls (radio button now hidden in favour of Spawn key)
+    // Paste ghost preview
+    if (editMode_ == EditMode::Paste && !clipboard_.empty()) {
+        for (int py = 0; py < clipboardH_; ++py) {
+            for (int px = 0; px < clipboardW_; ++px) {
+                const int tx = x + px;
+                const int ty = y + py;
+                if (tx >= width_ || ty >= height_) {
+                    continue;
+                }
+                const uint16_t id = clipboard_[static_cast<std::size_t>(py) * clipboardW_ + px];
+                if (id != 0u) {
+                    const ImVec2 gMin{
+                        origin.x + static_cast<float>(tx * tileSize_),
+                        origin.y + static_cast<float>(ty * tileSize_),
+                    };
+                    const ImVec2 gMax{gMin.x + static_cast<float>(tileSize_), gMin.y + static_cast<float>(tileSize_)};
+                    drawList->AddRectFilled(gMin, gMax, dimColor(colorForTileId(id), 0.6f));
+                    drawList->AddRect(gMin, gMax, IM_COL32(200, 200, 255, 180));
+                }
+            }
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            for (int py = 0; py < clipboardH_; ++py) {
+                for (int px = 0; px < clipboardW_; ++px) {
+                    const int tx = x + px;
+                    const int ty = y + py;
+                    if (tx >= 0 && tx < width_ && ty >= 0 && ty < height_) {
+                        tileAt(tx, ty, activeLayer_) = clipboard_[static_cast<std::size_t>(py) * clipboardW_ + px];
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // Selection rubber-band
+    if (editMode_ == EditMode::Select) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            selX0_ = x;
+            selY0_ = y;
+            selX1_ = x;
+            selY1_ = y;
+            selectionDragging_ = true;
+            hasSelection_ = false;
+        }
+        if (selectionDragging_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            selX1_ = x;
+            selY1_ = y;
+        }
+        if (selectionDragging_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            selectionDragging_ = false;
+            hasSelection_ = true;
+        }
+        return;
+    }
+
+    // Paint mode input
     if (ImGui::IsKeyDown(ImGuiKey_S) && !ImGui::GetIO().WantTextInput) {
         spawnX_ = x;
         spawnY_ = y;
-        tileAt(x, y) = 0u;
+        tileAt(x, y, activeLayer_) = 0u;
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        tileAt(x, y) = selectedTileId_;
+        tileAt(x, y, activeLayer_) = selectedTileId_;
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-        tileAt(x, y) = 0u;
+        tileAt(x, y, activeLayer_) = 0u;
     }
+}
+
+void MapEditorPanel::copySelection()
+{
+    const int sx0 = std::min(selX0_, selX1_);
+    const int sy0 = std::min(selY0_, selY1_);
+    const int sx1 = std::max(selX0_, selX1_);
+    const int sy1 = std::max(selY0_, selY1_);
+    clipboardW_ = sx1 - sx0 + 1;
+    clipboardH_ = sy1 - sy0 + 1;
+    clipboard_.resize(static_cast<std::size_t>(clipboardW_ * clipboardH_));
+    for (int py = 0; py < clipboardH_; ++py) {
+        for (int px = 0; px < clipboardW_; ++px) {
+            clipboard_[static_cast<std::size_t>(py) * clipboardW_ + px] = tileAt(sx0 + px, sy0 + py, activeLayer_);
+        }
+    }
+    status_ = "Copied " + std::to_string(clipboardW_) + "x" + std::to_string(clipboardH_) +
+        " region from " + kLayerNames[activeLayer_] + " layer.";
 }
 
 void MapEditorPanel::drawTestGame()
@@ -277,8 +457,39 @@ void MapEditorPanel::drawTestGame()
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->AddRectFilled(origin, {origin.x + viewSize.x, origin.y + viewSize.y}, IM_COL32(0, 0, 0, 255));
 
+    // Draw floor layer (dim)
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
+            const uint16_t id = tileAt(x, y, 0);
+            if (id != 0u) {
+                const ImVec2 min{
+                    origin.x + static_cast<float>(x * kWorldTileSize) * scale,
+                    origin.y + static_cast<float>(y * kWorldTileSize) * scale,
+                };
+                const ImVec2 max{
+                    min.x + static_cast<float>(kWorldTileSize) * scale,
+                    min.y + static_cast<float>(kWorldTileSize) * scale,
+                };
+                drawList->AddRectFilled(min, max, dimColor(colorForTileId(id), 0.5f));
+            }
+        }
+    }
+
+    // Draw mid layer (collision layer)
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const uint16_t id = tileAt(x, y, 1);
+            if (isSolid(id)) {
+                const ImVec2 min{
+                    origin.x + static_cast<float>(x * kWorldTileSize) * scale,
+                    origin.y + static_cast<float>(y * kWorldTileSize) * scale,
+                };
+                const ImVec2 max{
+                    min.x + static_cast<float>(kWorldTileSize) * scale,
+                    min.y + static_cast<float>(kWorldTileSize) * scale,
+                };
+                drawList->AddRectFilled(min, max, colorForTileId(id));
+            }
             const ImVec2 min{
                 origin.x + static_cast<float>(x * kWorldTileSize) * scale,
                 origin.y + static_cast<float>(y * kWorldTileSize) * scale,
@@ -287,28 +498,43 @@ void MapEditorPanel::drawTestGame()
                 min.x + static_cast<float>(kWorldTileSize) * scale,
                 min.y + static_cast<float>(kWorldTileSize) * scale,
             };
-            const uint16_t id = tileAt(x, y);
-            if (isSolid(id)) {
-                drawList->AddRectFilled(min, max, colorForTileId(id));
-            }
             drawList->AddRect(min, max, IM_COL32(55, 55, 55, 255));
         }
     }
 
-    const ImVec2 playerMin{origin.x + playerX_ * scale, origin.y + playerY_ * scale};
+    // Player
+    const ImVec2 playerMin{origin.x + testPlayerX_ * scale, origin.y + testPlayerY_ * scale};
     const ImVec2 playerMax{playerMin.x + kPlayerSize * scale, playerMin.y + kPlayerSize * scale};
     drawList->AddRectFilled(playerMin, playerMax, IM_COL32(55, 155, 255, 255), 3.0f);
     drawList->AddRect(playerMin, playerMax, IM_COL32(5, 25, 55, 255), 3.0f, 0, 2.0f);
+
+    // Draw ceiling layer on top (blue tint, semi-transparent look)
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const uint16_t id = tileAt(x, y, 2);
+            if (id != 0u) {
+                const ImVec2 min{
+                    origin.x + static_cast<float>(x * kWorldTileSize) * scale,
+                    origin.y + static_cast<float>(y * kWorldTileSize) * scale,
+                };
+                const ImVec2 max{
+                    min.x + static_cast<float>(kWorldTileSize) * scale,
+                    min.y + static_cast<float>(kWorldTileSize) * scale,
+                };
+                drawList->AddRectFilled(min, max, ceilingColor(colorForTileId(id)));
+            }
+        }
+    }
 }
 
 void MapEditorPanel::startTestGame()
 {
     spawnX_ = std::clamp(spawnX_, 0, width_ - 1);
     spawnY_ = std::clamp(spawnY_, 0, height_ - 1);
-    playerX_ = static_cast<float>(spawnX_ * kWorldTileSize);
-    playerY_ = static_cast<float>(spawnY_ * kWorldTileSize);
+    testPlayerX_ = static_cast<float>(spawnX_ * kWorldTileSize);
+    testPlayerY_ = static_cast<float>(spawnY_ * kWorldTileSize);
     testMode_ = true;
-    status_ = "Testing map. Use cursor keys to move; solid tiles block the player.";
+    status_ = "Testing map. Arrow keys to move; mid-layer solid tiles block the player.";
 }
 
 void MapEditorPanel::updateTestPlayer()
@@ -336,19 +562,18 @@ void MapEditorPanel::updateTestPlayer()
         return;
     }
 
-    const float length = std::sqrt(dx * dx + dy * dy);
-    dx /= length;
-    dy /= length;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    dx /= len;
+    dy /= len;
 
     const float step = kPlayerSpeed * ImGui::GetIO().DeltaTime;
-    const float nextX = playerX_ + dx * step;
-    if (playerCanMoveTo(nextX, playerY_)) {
-        playerX_ = nextX;
+    const float nextX = testPlayerX_ + dx * step;
+    if (playerCanMoveTo(nextX, testPlayerY_)) {
+        testPlayerX_ = nextX;
     }
-
-    const float nextY = playerY_ + dy * step;
-    if (playerCanMoveTo(playerX_, nextY)) {
-        playerY_ = nextY;
+    const float nextY = testPlayerY_ + dy * step;
+    if (playerCanMoveTo(testPlayerX_, nextY)) {
+        testPlayerY_ = nextY;
     }
 }
 
@@ -376,30 +601,29 @@ bool MapEditorPanel::solidAtPixel(float x, float y) const
     if (x < 0.0f || y < 0.0f) {
         return true;
     }
-
     const int tileX = static_cast<int>(x) / kWorldTileSize;
     const int tileY = static_cast<int>(y) / kWorldTileSize;
     if (tileX < 0 || tileY < 0 || tileX >= width_ || tileY >= height_) {
         return true;
     }
-
-    return isSolid(tileAt(tileX, tileY));
+    // Collision is only checked on the mid layer (player-level)
+    return isSolid(tileAt(tileX, tileY, 1));
 }
 
 void MapEditorPanel::saveMap(EditorContext& context)
 {
-    adventure::game::TileMap map;
+    game::TileMap map;
     map.id = mapId_.data();
     map.tilesetId = tilesetId_.data();
     map.width = width_;
     map.height = height_;
     map.spawnX = spawnX_;
     map.spawnY = spawnY_;
-    map.tiles = tiles_;
+    map.layers = layers_;
 
     std::string error;
     const std::filesystem::path outputPath = context.assets.gameMapPath() / (map.id + ".admap");
-    if (adventure::game::saveTileMap(outputPath, map, &error)) {
+    if (game::saveTileMap(outputPath, map, &error)) {
         status_ = "Saved map: " + outputPath.generic_string();
     } else {
         status_ = "Failed to save map: " + error;
@@ -408,10 +632,11 @@ void MapEditorPanel::saveMap(EditorContext& context)
 
 void MapEditorPanel::loadMap(EditorContext& context)
 {
-    adventure::game::TileMap map;
+    game::TileMap map;
     std::string error;
-    const std::filesystem::path inputPath = context.assets.gameMapPath() / (std::string(mapId_.data()) + ".admap");
-    if (!adventure::game::loadTileMap(inputPath, map, &error)) {
+    const std::filesystem::path inputPath =
+        context.assets.gameMapPath() / (std::string(mapId_.data()) + ".admap");
+    if (!game::loadTileMap(inputPath, map, &error)) {
         status_ = "Failed to load map: " + error;
         return;
     }
@@ -420,7 +645,7 @@ void MapEditorPanel::loadMap(EditorContext& context)
     height_ = map.height;
     spawnX_ = map.spawnX;
     spawnY_ = map.spawnY;
-    tiles_ = std::move(map.tiles);
+    layers_ = std::move(map.layers);
 
     const std::size_t idLen = std::min(map.id.size(), mapId_.size() - 1);
     std::memset(mapId_.data(), 0, mapId_.size());
@@ -430,7 +655,6 @@ void MapEditorPanel::loadMap(EditorContext& context)
     std::memset(tilesetId_.data(), 0, tilesetId_.size());
     std::memcpy(tilesetId_.data(), map.tilesetId.data(), tsLen);
 
-    // Auto-load the referenced tileset if the map has one
     if (!map.tilesetId.empty()) {
         loadTileset(context);
     }
@@ -462,14 +686,14 @@ void MapEditorPanel::loadTileset(EditorContext& context)
     status_ = "Loaded tileset: " + inputPath.generic_string();
 }
 
-uint16_t& MapEditorPanel::tileAt(int x, int y)
+uint16_t& MapEditorPanel::tileAt(int x, int y, int layer)
 {
-    return tiles_[static_cast<std::size_t>(y) * width_ + x];
+    return layers_[static_cast<std::size_t>(layer)][static_cast<std::size_t>(y) * width_ + x];
 }
 
-const uint16_t& MapEditorPanel::tileAt(int x, int y) const
+const uint16_t& MapEditorPanel::tileAt(int x, int y, int layer) const
 {
-    return tiles_[static_cast<std::size_t>(y) * width_ + x];
+    return layers_[static_cast<std::size_t>(layer)][static_cast<std::size_t>(y) * width_ + x];
 }
 
 } // namespace adventure::editor

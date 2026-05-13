@@ -12,10 +12,12 @@ struct AssetDirectories {
     std::filesystem::path gameSprites{"assets/game/sprites"};
     std::filesystem::path gameCharacterSprites{"assets/game/character_sprites"};
     std::filesystem::path gameCharacters{"assets/game/characters"};
+    std::filesystem::path gameChapters{"assets/game/chapters"};
     std::filesystem::path gameMaps{"assets/game/maps"};
     std::filesystem::path gameTilesets{"assets/game/tilesets"};
     std::filesystem::path gameAnimations{"assets/game/animations"};
     std::filesystem::path gamePalettes{"assets/game/palettes"};
+    std::filesystem::path gamePaths{"assets/game/paths"};
 
     [[nodiscard]] std::filesystem::path rawSpritePath() const;
     [[nodiscard]] std::filesystem::path rawCharacterSpritePath() const;
@@ -23,10 +25,12 @@ struct AssetDirectories {
     [[nodiscard]] std::filesystem::path gameSpritePath() const;
     [[nodiscard]] std::filesystem::path gameCharacterSpritePath() const;
     [[nodiscard]] std::filesystem::path gameCharacterPath() const;
+    [[nodiscard]] std::filesystem::path gameChapterPath() const;
     [[nodiscard]] std::filesystem::path gameMapPath() const;
     [[nodiscard]] std::filesystem::path gameTilesetPath() const;
     [[nodiscard]] std::filesystem::path gameAnimationPath() const;
     [[nodiscard]] std::filesystem::path gamePalettePath() const;
+    [[nodiscard]] std::filesystem::path gamePathPath() const;
 };
 
 } // namespace adventure::editor

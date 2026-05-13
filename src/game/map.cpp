@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <fstream>
-#include <sstream>
 #include <system_error>
 
 namespace adventure::game {
@@ -10,6 +9,7 @@ namespace {
 
 constexpr int kMaxMapDimension = 512;
 constexpr int kMaxTileId = 65535;
+constexpr int kLayerCount = 3;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -20,9 +20,53 @@ void setError(std::string* errorMessage, const std::string& message)
 
 bool validMapShape(const TileMap& map)
 {
-    return map.width > 0 && map.height > 0 &&
-        map.width <= kMaxMapDimension && map.height <= kMaxMapDimension &&
-        map.tiles.size() == static_cast<std::size_t>(map.width * map.height);
+    if (map.width <= 0 || map.height <= 0 ||
+        map.width > kMaxMapDimension || map.height > kMaxMapDimension) {
+        return false;
+    }
+    const std::size_t expected = static_cast<std::size_t>(map.width * map.height);
+    for (const auto& layer : map.layers) {
+        if (layer.size() != expected) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void writeTileLayer(std::ofstream& output, const std::vector<uint16_t>& layer, int width, int height)
+{
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (x > 0) {
+                output << ' ';
+            }
+            output << static_cast<unsigned int>(layer[static_cast<std::size_t>(y) * width + x]);
+        }
+        output << '\n';
+    }
+}
+
+bool readTileLayer(std::ifstream& input, std::vector<uint16_t>& layer, int width, int height,
+    std::string* errorMessage)
+{
+    const std::size_t sz = static_cast<std::size_t>(width * height);
+    layer.assign(sz, 0u);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            unsigned int tileId = 0;
+            input >> tileId;
+            if (!input) {
+                setError(errorMessage, "Unexpected end of tile data.");
+                return false;
+            }
+            if (tileId > static_cast<unsigned int>(kMaxTileId)) {
+                setError(errorMessage, "Tile ID out of range (max 65535).");
+                return false;
+            }
+            layer[static_cast<std::size_t>(y) * width + x] = static_cast<uint16_t>(tileId);
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -30,12 +74,12 @@ bool validMapShape(const TileMap& map)
 bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage)
 {
     if (!validMapShape(map)) {
-        setError(errorMessage, "Map dimensions or tile data are invalid.");
+        setError(errorMessage, "Map dimensions or layer data are invalid.");
         return false;
     }
 
-    std::error_code error;
-    std::filesystem::create_directories(path.parent_path(), error);
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
 
     std::ofstream output(path);
     if (!output) {
@@ -43,22 +87,18 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 2\n";
+    output << "ADMAP 3\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
     }
     output << "size " << map.width << " " << map.height << "\n";
-    output << "spawn " << std::clamp(map.spawnX, 0, map.width - 1) << " " << std::clamp(map.spawnY, 0, map.height - 1) << "\n";
-    output << "tiles\n";
-    for (int y = 0; y < map.height; ++y) {
-        for (int x = 0; x < map.width; ++x) {
-            if (x > 0) {
-                output << ' ';
-            }
-            output << static_cast<unsigned int>(map.tiles[static_cast<std::size_t>(y) * map.width + x]);
-        }
-        output << "\n";
+    output << "spawn " << std::clamp(map.spawnX, 0, map.width - 1)
+           << " " << std::clamp(map.spawnY, 0, map.height - 1) << "\n";
+
+    for (int l = 0; l < kLayerCount; ++l) {
+        output << "layer " << l << "\n";
+        writeTileLayer(output, map.layers[l], map.width, map.height);
     }
     output << "end\n";
 
@@ -66,7 +106,6 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         setError(errorMessage, "Failed while writing map file.");
         return false;
     }
-
     return true;
 }
 
@@ -81,13 +120,14 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || (version != 1 && version != 2)) {
+    if (magic != "ADMAP" || version < 1 || version > 3) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
 
     TileMap loaded;
     std::string key;
+
     input >> key;
     if (key != "id") {
         setError(errorMessage, "Expected map id.");
@@ -96,8 +136,6 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     input >> loaded.id;
 
     input >> key;
-
-    // Optional tileset (v2 only)
     if (key == "tileset") {
         input >> loaded.tilesetId;
         input >> key;
@@ -108,7 +146,8 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
         return false;
     }
     input >> loaded.width >> loaded.height;
-    if (loaded.width <= 0 || loaded.height <= 0 || loaded.width > kMaxMapDimension || loaded.height > kMaxMapDimension) {
+    if (loaded.width <= 0 || loaded.height <= 0 ||
+        loaded.width > kMaxMapDimension || loaded.height > kMaxMapDimension) {
         setError(errorMessage, "Map size is outside supported limits.");
         return false;
     }
@@ -124,48 +163,65 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
         loaded.spawnY = 1 < loaded.height ? 1 : 0;
     }
 
-    if (key != "tiles") {
-        setError(errorMessage, "Expected map tile data.");
-        return false;
+    // Allocate all layers; key holds the next section keyword
+    const std::size_t sz = static_cast<std::size_t>(loaded.width * loaded.height);
+    for (auto& layer : loaded.layers) {
+        layer.assign(sz, 0u);
     }
 
-    loaded.tiles.assign(static_cast<std::size_t>(loaded.width * loaded.height), 0u);
-
-    if (version == 1) {
-        // v1: one row per line, each char '0' or '1'
-        for (int y = 0; y < loaded.height; ++y) {
-            std::string row;
-            input >> row;
-            if (static_cast<int>(row.size()) != loaded.width) {
-                setError(errorMessage, "Map tile row has the wrong width.");
-                return false;
-            }
-            for (int x = 0; x < loaded.width; ++x) {
-                const char c = row[static_cast<std::size_t>(x)];
-                if (c != '0' && c != '1') {
-                    setError(errorMessage, "Map tile row contains an invalid tile value.");
+    if (version <= 2) {
+        // v1/v2: single tile section → load into mid layer (index 1)
+        if (key != "tiles") {
+            setError(errorMessage, "Expected map tile data.");
+            return false;
+        }
+        if (version == 1) {
+            for (int y = 0; y < loaded.height; ++y) {
+                std::string row;
+                input >> row;
+                if (static_cast<int>(row.size()) != loaded.width) {
+                    setError(errorMessage, "Map tile row has the wrong width.");
                     return false;
                 }
-                loaded.tiles[static_cast<std::size_t>(y) * loaded.width + x] = c == '1' ? 1u : 0u;
+                for (int x = 0; x < loaded.width; ++x) {
+                    const char c = row[static_cast<std::size_t>(x)];
+                    if (c != '0' && c != '1') {
+                        setError(errorMessage, "Map tile row contains an invalid value.");
+                        return false;
+                    }
+                    loaded.layers[1][static_cast<std::size_t>(y) * loaded.width + x] = (c == '1') ? 1u : 0u;
+                }
+            }
+        } else {
+            if (!readTileLayer(input, loaded.layers[1], loaded.width, loaded.height, errorMessage)) {
+                return false;
             }
         }
     } else {
-        // v2: width space-separated integers per row
-        for (int y = 0; y < loaded.height; ++y) {
-            for (int x = 0; x < loaded.width; ++x) {
-                unsigned int tileId = 0;
-                input >> tileId;
-                if (!input) {
-                    setError(errorMessage, "Unexpected end of tile data.");
-                    return false;
-                }
-                if (tileId > static_cast<unsigned int>(kMaxTileId)) {
-                    setError(errorMessage, "Tile ID is out of range (max 65535).");
-                    return false;
-                }
-                loaded.tiles[static_cast<std::size_t>(y) * loaded.width + x] = static_cast<uint16_t>(tileId);
+        // v3: three labeled layer sections; key is "layer" for the first one
+        for (int l = 0; l < kLayerCount; ++l) {
+            if (key != "layer") {
+                setError(errorMessage, "Expected 'layer' keyword.");
+                return false;
             }
+            int layerIdx = -1;
+            input >> layerIdx;
+            if (layerIdx != l) {
+                setError(errorMessage, "Layer index mismatch in map file.");
+                return false;
+            }
+            if (!readTileLayer(input, loaded.layers[l], loaded.width, loaded.height, errorMessage)) {
+                return false;
+            }
+            input >> key;
         }
+        // key now holds "end" (consumed inside the loop's last iteration)
+        if (key != "end") {
+            setError(errorMessage, "Expected map end marker.");
+            return false;
+        }
+        map = std::move(loaded);
+        return true;
     }
 
     input >> key;

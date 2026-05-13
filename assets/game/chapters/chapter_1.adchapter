@@ -1,0 +1,7 @@
+ADCHAPTER 1
+id chapter_1
+start screen_1
+screens 1
+screen screen_1 new_map 0 0
+links - - - -
+end

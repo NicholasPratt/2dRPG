@@ -6,10 +6,12 @@
     "gameSprites": "assets/game/sprites",
     "gameCharacterSprites": "assets/game/character_sprites",
     "gameCharacters": "assets/game/characters",
+    "gameChapters": "assets/game/chapters",
     "gameMaps": "assets/game/maps",
     "gameAnimations": "assets/game/animations",
     "gamePalettes": "assets/game/palettes",
     "rawTilesets": "assets/raw/tilesets",
-    "gameTilesets": "assets/game/tilesets"
+    "gameTilesets": "assets/game/tilesets",
+    "gamePaths": "assets/game/paths"
   }
 }

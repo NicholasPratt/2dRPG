@@ -32,6 +32,11 @@ std::filesystem::path AssetDirectories::gameCharacterPath() const
     return projectRoot / gameCharacters;
 }
 
+std::filesystem::path AssetDirectories::gameChapterPath() const
+{
+    return projectRoot / gameChapters;
+}
+
 std::filesystem::path AssetDirectories::gameMapPath() const
 {
     return projectRoot / gameMaps;
@@ -50,6 +55,11 @@ std::filesystem::path AssetDirectories::gameAnimationPath() const
 std::filesystem::path AssetDirectories::gamePalettePath() const
 {
     return projectRoot / gamePalettes;
+}
+
+std::filesystem::path AssetDirectories::gamePathPath() const
+{
+    return projectRoot / gamePaths;
 }
 
 } // namespace adventure::editor

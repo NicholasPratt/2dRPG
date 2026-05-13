@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -14,8 +15,12 @@ struct TileMap {
     int height = 16;
     int spawnX = 1;
     int spawnY = 1;
-    // Row-major tile IDs: tiles[y * width + x]. ID 0 = empty/default.
-    std::vector<uint16_t> tiles = std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u);
+    // Layer 0: floor  Layer 1: mid (player-level, used for collision)  Layer 2: ceiling/overlay
+    std::array<std::vector<uint16_t>, 3> layers = {
+        std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
+        std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
+        std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
+    };
 };
 
 [[nodiscard]] bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);
