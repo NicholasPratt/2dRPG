@@ -44,7 +44,7 @@ The main architectural rule is that the editor creates data the game can load. R
         character_editor_panel.hpp/.cpp
         enemy_path_editor_panel.hpp/.cpp
         layout_editor_panel.hpp/.cpp
-        map_editor_panel.hpp/.cpp
+        map_editor_panel.hpp/.cpp        # legacy/detail map panel; not a top-level tab
         sprite_editor_panel.hpp/.cpp
         tileset_editor_panel.hpp/.cpp
         wall_floor_paint_panel.hpp/.cpp
@@ -89,16 +89,17 @@ Runtime modules in `src/game` must not include editor headers or ImGui headers.
 
 ## Editor App Tabs
 
+On startup, `EditorApp` opens a chapter selector modal. The user must load an existing chapter or create a new one before the main editor workflow is shown. Closing the editor or switching chapters prompts to save or discard unsaved work.
+
 `EditorApp` owns these top-level ImGui tabs (in order):
 
 | Tab | Panel | Purpose |
 |-----|-------|---------|
 | Characters | `CharacterEditorPanel` | Character sheets with sprite references |
 | Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor |
-| Layout | `LayoutEditorPanel` | Chapter macro-view — add/link/delete screens |
-| Maps | `MapEditorPanel` | 3-layer tile map editor with test-game mode |
+| Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
-| Wall/Floor Paint | `WallFloorPaintPanel` | Pixel paint tool for room art with parallax preview |
+| Wall/Floor Paint | `WallFloorPaintPanel` | Pixel paint tool for room art with selected-screen wall guide and parallax preview |
 | Enemy Paths | `EnemyPathEditorPanel` | Waypoint/spline editor for enemy patrol paths |
 | Assets | *(inline)* | Asset directory listing |
 
@@ -148,9 +149,13 @@ v1 files (no `respawn` per screen) load with `respawnEnemies = false`.
 
 ### Layout Editor
 
-- Macro canvas showing each screen as a coloured box at its grid position, with lines for links.
-- Screen list sidebar and inspector for editing id, mapId, grid position, links, and respawn flag.
-- Save/load from `assets/game/chapters/<id>.adchapter`.
+- Continuous canvas showing screens as edge-to-edge tile grids based on `gridX/gridY`; the selected screen is centered and highlighted.
+- Adjacent/nearby screens render their mid-layer wall layout as context.
+- The selected screen's `.admap` can be edited directly in the Screens tab. Left-click paints the active tile ID; right-click erases. Layer selector controls Floor / Walls(mid) / Ceiling.
+- Directional buttons create or select connected screens north/south/east/west and write reciprocal screen links.
+- Screen list sidebar and inspector edit id, mapId, grid position, links, respawn flag, and deletion.
+- Save/load from `assets/game/chapters/<id>.adchapter`. Chapter save also saves dirty `.admap` files edited in the Screens tab.
+- `Edit Screen Graphics` opens `Wall/Floor Paint` for the selected screen's map id.
 
 ---
 
@@ -262,8 +267,22 @@ Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 - Tools: pencil, eraser, fill, line, rect.
 - Palette, brush size, layer visibility/opacity controls.
 - Parallax preview: animated scroll showing floor parallax behind wall layer.
+- When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay.
+- The wall guide resizes the paint document to the selected map's dimensions and sets the asset id to the map id.
 - Undo with one level of history.
-- Export: writes Floor and Wall PNGs to `assets/raw/`.
+- Export: writes floor, wall, and parallax-preview PNGs to both `assets/raw/tilesets/` and `assets/game/tilesets/`.
+- Chapter save calls this export path so the current paint document has game-ready PNGs for runtime use.
+
+Exported paint files:
+
+| File | Purpose |
+|------|---------|
+| `assets/raw/tilesets/<id>_floor.png` | Editable/source floor art export |
+| `assets/raw/tilesets/<id>_wall.png` | Editable/source wall art export |
+| `assets/raw/tilesets/<id>_preview.png` | Editable/source composite preview |
+| `assets/game/tilesets/<id>_floor.png` | Game-ready floor art |
+| `assets/game/tilesets/<id>_wall.png` | Game-ready wall/overhead art |
+| `assets/game/tilesets/<id>_preview.png` | Game-ready preview/debug composite |
 
 ---
 
@@ -350,7 +369,7 @@ The project manifest at `assets/game/project.json` mirrors these roots.
 | §4.1 Layout editor (macro view, screen management) | ✅ |
 | §4.2 3-layer tile maps (floor / mid / ceiling) | ✅ |
 | §4.2 Copy/paste tiles | ✅ |
-| §4.2 Pixel painting | ✅ Wall/Floor Paint panel |
+| §4.2 Pixel painting | ✅ Wall/Floor Paint panel with selected-screen wall guide |
 | §4.3 Sprite & animation editor | ✅ |
 | §4.4 Enemy paths / splines | ✅ `.adpath` format + editor |
 | §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data |
@@ -365,7 +384,7 @@ The project manifest at `assets/game/project.json` mirrors these roots.
 3. Full `.sprite.json` round-trip (currently write-only from editor).
 4. Character save/load format.
 5. Enemy runtime: load `.adpath` and drive a simple entity along the waypoints.
-6. Parallax rendering in the runtime (floor layer scrolls at `floorParallax` factor relative to camera).
+6. Parallax rendering in the runtime using `assets/game/tilesets/<mapId>_floor.png` and `<mapId>_wall.png`.
 
 ## Engineering Notes
 

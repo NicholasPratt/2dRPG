@@ -100,18 +100,24 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
     ImGui::Separator();
 
     ImGui::SetNextItemWidth(std::min(420.0f, ImGui::GetContentRegionAvail().x));
-    ImGui::InputText("Name", character.name.data(), character.name.size());
+    if (ImGui::InputText("Name", character.name.data(), character.name.size())) {
+        context.markDirty();
+    }
 
     ImGui::TextUnformatted("Bio");
-    ImGui::InputTextMultiline(
+    if (ImGui::InputTextMultiline(
         "##CharacterBio",
         character.bio.data(),
         character.bio.size(),
-        ImVec2(-1.0f, 220.0f));
+        ImVec2(-1.0f, 220.0f))) {
+        context.markDirty();
+    }
 
     ImGui::Spacing();
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputText("Sprite", character.spriteReference.data(), character.spriteReference.size());
+    if (ImGui::InputText("Sprite", character.spriteReference.data(), character.spriteReference.size())) {
+        context.markDirty();
+    }
     ImGui::Text("Sprite assets: %s", context.assets.gameSpritePath().string().c_str());
     ImGui::Text("Character assets: %s", context.assets.gameCharacterPath().string().c_str());
 
@@ -125,6 +131,10 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
     }
 
     if (openSprite && character.spriteReference.data()[0] != '\0') {
+        return std::filesystem::path(character.spriteReference.data());
+    }
+
+    if (ImGui::Button("Edit Sprite", ImVec2(140.0f, 32.0f)) && character.spriteReference.data()[0] != '\0') {
         return std::filesystem::path(character.spriteReference.data());
     }
 

@@ -54,6 +54,12 @@ ImU32 ceilingColor(ImU32 col)
 
 void MapEditorPanel::draw(EditorContext& context)
 {
+    if (!context.selectedScreenId.empty()) {
+        ImGui::Text("Selected screen: %s", context.selectedScreenId.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("map %s", context.selectedScreenMapId.c_str());
+    }
+
     drawToolbar(context);
     ImGui::Separator();
     if (testMode_) {
@@ -63,7 +69,7 @@ void MapEditorPanel::draw(EditorContext& context)
             drawTilesetPalette();
             ImGui::Separator();
         }
-        drawGrid();
+        drawGrid(context);
     }
 }
 
@@ -93,15 +99,30 @@ void MapEditorPanel::resizeMap(int width, int height)
     spawnY_ = std::clamp(spawnY_, 0, height_ - 1);
 }
 
+void MapEditorPanel::openMapId(EditorContext& context, const std::string& mapId)
+{
+    if (mapId.empty()) {
+        return;
+    }
+
+    std::memset(mapId_.data(), 0, mapId_.size());
+    const std::size_t copyLen = std::min(mapId.size(), mapId_.size() - 1);
+    std::memcpy(mapId_.data(), mapId.data(), copyLen);
+    loadMap(context);
+}
+
 void MapEditorPanel::drawToolbar(EditorContext& context)
 {
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::InputText("Map id", mapId_.data(), mapId_.size());
+    if (ImGui::InputText("Map id", mapId_.data(), mapId_.size())) {
+        context.markDirty();
+    }
 
     int size[2]{width_, height_};
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt2("Map size", size)) {
         resizeMap(size[0], size[1]);
+        context.markDirty();
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(140.0f);
@@ -131,10 +152,12 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
 
     if (ImGui::Button("Fill")) {
         std::fill(layers_[activeLayer_].begin(), layers_[activeLayer_].end(), selectedTileId_);
+        context.markDirty();
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear layer")) {
         std::fill(layers_[activeLayer_].begin(), layers_[activeLayer_].end(), static_cast<uint16_t>(0u));
+        context.markDirty();
     }
 
     // Copy / paste controls
@@ -171,6 +194,7 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
 
     if (ImGui::Button("Save .admap")) {
         saveMap(context);
+        context.dirty = false;
     }
     ImGui::SameLine();
     if (ImGui::Button("Load .admap")) {
@@ -249,7 +273,7 @@ void MapEditorPanel::drawTilesetPalette()
     }
 }
 
-void MapEditorPanel::drawGrid()
+void MapEditorPanel::drawGrid(EditorContext& context)
 {
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 gridSize{
@@ -289,6 +313,8 @@ void MapEditorPanel::drawGrid()
             }
         }
     }
+
+    drawWallOutlines(drawList, origin);
 
     // Grid lines
     for (int y = 0; y < height_; ++y) {
@@ -384,6 +410,7 @@ void MapEditorPanel::drawGrid()
                     const int ty = y + py;
                     if (tx >= 0 && tx < width_ && ty >= 0 && ty < height_) {
                         tileAt(tx, ty, activeLayer_) = clipboard_[static_cast<std::size_t>(py) * clipboardW_ + px];
+                        context.markDirty();
                     }
                 }
             }
@@ -417,10 +444,13 @@ void MapEditorPanel::drawGrid()
         spawnX_ = x;
         spawnY_ = y;
         tileAt(x, y, activeLayer_) = 0u;
+        context.markDirty();
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         tileAt(x, y, activeLayer_) = selectedTileId_;
+        context.markDirty();
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
         tileAt(x, y, activeLayer_) = 0u;
+        context.markDirty();
     }
 }
 
@@ -440,6 +470,38 @@ void MapEditorPanel::copySelection()
     }
     status_ = "Copied " + std::to_string(clipboardW_) + "x" + std::to_string(clipboardH_) +
         " region from " + kLayerNames[activeLayer_] + " layer.";
+}
+
+void MapEditorPanel::drawWallOutlines(ImDrawList* drawList, ImVec2 origin) const
+{
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const uint16_t id = tileAt(x, y, 1);
+            if (id == 0u) {
+                continue;
+            }
+
+            const ImVec2 min{
+                origin.x + static_cast<float>(x * tileSize_),
+                origin.y + static_cast<float>(y * tileSize_),
+            };
+            const ImVec2 max{min.x + static_cast<float>(tileSize_), min.y + static_cast<float>(tileSize_)};
+            drawList->AddRect(min, max, IM_COL32(255, 226, 96, 235), 0.0f, 0, 2.0f);
+
+            if (x == 0 || tileAt(x - 1, y, 1) == 0u) {
+                drawList->AddLine(min, {min.x, max.y}, IM_COL32(10, 10, 10, 240), 2.0f);
+            }
+            if (x + 1 >= width_ || tileAt(x + 1, y, 1) == 0u) {
+                drawList->AddLine({max.x, min.y}, max, IM_COL32(10, 10, 10, 240), 2.0f);
+            }
+            if (y == 0 || tileAt(x, y - 1, 1) == 0u) {
+                drawList->AddLine(min, {max.x, min.y}, IM_COL32(10, 10, 10, 240), 2.0f);
+            }
+            if (y + 1 >= height_ || tileAt(x, y + 1, 1) == 0u) {
+                drawList->AddLine({min.x, max.y}, max, IM_COL32(10, 10, 10, 240), 2.0f);
+            }
+        }
+    }
 }
 
 void MapEditorPanel::drawTestGame()

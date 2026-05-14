@@ -434,6 +434,10 @@ void SpriteEditorPanel::draw(EditorContext& context)
     ImGui::EndChild();
 
     ImGui::PopStyleVar(2);
+
+    if (documentDirty_) {
+        context.markDirty();
+    }
 }
 
 void SpriteEditorPanel::openSpriteReference(const std::filesystem::path& spriteReference)
@@ -484,6 +488,14 @@ void SpriteEditorPanel::openCharacterSpriteReference(const std::filesystem::path
 std::filesystem::path SpriteEditorPanel::spriteMetadataReference(const EditorContext& context) const
 {
     return context.assets.gameSprites / (document_.id + ".sprite.json");
+}
+
+bool SpriteEditorPanel::saveForChapter(const EditorContext& context)
+{
+    saveSpriteMetadata(context);
+    exportSpriteSheetPng(context);
+    documentDirty_ = false;
+    return !document_.id.empty();
 }
 
 void SpriteEditorPanel::drawTopBar()
@@ -1313,6 +1325,7 @@ bool SpriteEditorPanel::primaryShortcutDown() const
 
 void SpriteEditorPanel::recordUndoState()
 {
+    documentDirty_ = true;
     constexpr std::size_t kMaxUndoStates = 64;
     undoStack_.push_back(SpriteUndoState{
         document_,

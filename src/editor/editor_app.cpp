@@ -2,10 +2,18 @@
 
 #include "imgui.h"
 
+#include <algorithm>
+#include <cstring>
+#include <system_error>
+
 namespace adventure::editor {
 
 void EditorApp::draw()
 {
+    if (chapterIds_.empty()) {
+        refreshChapterList();
+    }
+
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -15,6 +23,35 @@ void EditorApp::draw()
         ImGuiWindowFlags_NoNavFocus;
 
     ImGui::Begin("Adventure Editor", nullptr, flags);
+
+    drawChapterMenu();
+
+    if (!startupChapterChosen_) {
+        drawStartupChapterModal();
+        ImGui::End();
+        return;
+    }
+
+    if (pendingExit_ || pendingChapterSwitch_) {
+        drawUnsavedChangesModal();
+    }
+
+    if (context_.requestChapterSwitch) {
+        context_.requestChapterSwitch = false;
+        requestChapterSwitch(context_.requestedChapterSwitchId);
+        context_.requestedChapterSwitchId.clear();
+    }
+
+    if (context_.requestEditScreenGraphics) {
+        context_.requestEditScreenGraphics = false;
+        if (!context_.selectedScreenMapId.empty()) {
+            wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
+        }
+        screenGraphicsMode_ = false;
+        requestedTab_ = MainTab::WallFloorPaint;
+        hasRequestedTab_ = true;
+        spriteEditorLaunchedFromCharacter_ = false;
+    }
 
     if (ImGui::BeginTabBar("EditorMainTabs")) {
         ImGuiTabItemFlags characterTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Characters ? ImGuiTabItemFlags_SetSelected : 0;
@@ -45,22 +82,12 @@ void EditorApp::draw()
         }
 
         ImGuiTabItemFlags layoutTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Layout ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Layout", nullptr, layoutTabFlags)) {
+        if (ImGui::BeginTabItem("Screens", nullptr, layoutTabFlags)) {
             if (layoutTabFlags != 0) {
                 hasRequestedTab_ = false;
             }
             spriteEditorLaunchedFromCharacter_ = false;
             layoutEditor_.draw(context_);
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags mapsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Maps ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Maps", nullptr, mapsTabFlags)) {
-            if (mapsTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            spriteEditorLaunchedFromCharacter_ = false;
-            mapEditor_.draw(context_);
             ImGui::EndTabItem();
         }
 
@@ -116,6 +143,183 @@ void EditorApp::draw()
     }
 
     ImGui::End();
+}
+
+void EditorApp::requestExit()
+{
+    if (context_.dirty) {
+        pendingExit_ = true;
+        ImGui::OpenPopup("Unsaved Changes");
+    } else {
+        exitAccepted_ = true;
+    }
+}
+
+void EditorApp::refreshChapterList()
+{
+    chapterIds_.clear();
+    std::error_code error;
+    const std::filesystem::path chapterDir = context_.assets.gameChapterPath();
+    if (!std::filesystem::exists(chapterDir, error)) {
+        return;
+    }
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(chapterDir, error)) {
+        if (error) {
+            break;
+        }
+        if (entry.is_regular_file(error) && entry.path().extension() == ".adchapter") {
+            chapterIds_.push_back(entry.path().stem().string());
+        }
+    }
+    std::sort(chapterIds_.begin(), chapterIds_.end());
+}
+
+void EditorApp::drawChapterMenu()
+{
+    if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("Chapter")) {
+            ImGui::TextDisabled("Current: %s%s",
+                context_.currentChapterId.empty() ? "none" : context_.currentChapterId.c_str(),
+                context_.dirty ? " *" : "");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Save")) {
+                saveCurrentChapterAndExports();
+            }
+            if (ImGui::MenuItem("Refresh list")) {
+                refreshChapterList();
+            }
+            ImGui::Separator();
+            for (const std::string& chapterId : chapterIds_) {
+                if (ImGui::MenuItem(chapterId.c_str(), nullptr, chapterId == context_.currentChapterId)) {
+                    requestChapterSwitch(chapterId);
+                }
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+}
+
+void EditorApp::drawStartupChapterModal()
+{
+    ImGui::OpenPopup("Select Chapter");
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f},
+        ImGuiCond_Always, {0.5f, 0.5f});
+    if (ImGui::BeginPopupModal("Select Chapter", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Open a chapter to start editing.");
+        ImGui::Separator();
+
+        if (chapterIds_.empty()) {
+            ImGui::TextDisabled("No chapter files found.");
+        }
+        for (const std::string& chapterId : chapterIds_) {
+            if (ImGui::Button(chapterId.c_str(), ImVec2(260.0f, 32.0f))) {
+                chooseChapter(chapterId);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::InputText("New id", newChapterId_.data(), newChapterId_.size());
+        if (ImGui::Button("Create Chapter", ImVec2(260.0f, 32.0f))) {
+            createChapter();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void EditorApp::drawUnsavedChangesModal()
+{
+    ImGui::OpenPopup("Unsaved Changes");
+    if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Save changes before continuing?");
+        if (ImGui::Button("Save", ImVec2(110.0f, 0.0f))) {
+            if (pendingChapterSwitch_) {
+                completeChapterSwitch(true);
+            } else {
+                saveCurrentChapterAndExports();
+                pendingExit_ = false;
+                exitAccepted_ = true;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard", ImVec2(110.0f, 0.0f))) {
+            context_.dirty = false;
+            if (pendingChapterSwitch_) {
+                completeChapterSwitch(false);
+            } else {
+                pendingExit_ = false;
+                exitAccepted_ = true;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f))) {
+            pendingExit_ = false;
+            pendingChapterSwitch_ = false;
+            pendingChapterId_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void EditorApp::chooseChapter(const std::string& chapterId)
+{
+    if (layoutEditor_.loadChapterById(context_, chapterId)) {
+        startupChapterChosen_ = true;
+        screenGraphicsMode_ = false;
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+}
+
+void EditorApp::createChapter()
+{
+    layoutEditor_.createChapter(context_, newChapterId_.data());
+    startupChapterChosen_ = true;
+    screenGraphicsMode_ = false;
+    requestedTab_ = MainTab::Layout;
+    hasRequestedTab_ = true;
+    refreshChapterList();
+}
+
+void EditorApp::requestChapterSwitch(const std::string& chapterId)
+{
+    if (chapterId == context_.currentChapterId) {
+        return;
+    }
+    if (context_.dirty) {
+        pendingChapterSwitch_ = true;
+        pendingChapterId_ = chapterId;
+        ImGui::OpenPopup("Unsaved Changes");
+    } else {
+        chooseChapter(chapterId);
+    }
+}
+
+void EditorApp::completeChapterSwitch(bool saveFirst)
+{
+    if (saveFirst) {
+        saveCurrentChapterAndExports();
+    }
+    const std::string target = pendingChapterId_;
+    pendingChapterSwitch_ = false;
+    pendingChapterId_.clear();
+    chooseChapter(target);
+}
+
+void EditorApp::saveCurrentChapterAndExports()
+{
+    spriteEditor_.saveForChapter(context_);
+    wallFloorPaint_.saveForChapter(context_);
+    (void)layoutEditor_.saveCurrentChapter(context_);
+    refreshChapterList();
 }
 
 } // namespace adventure::editor

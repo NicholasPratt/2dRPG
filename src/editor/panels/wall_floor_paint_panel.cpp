@@ -174,6 +174,56 @@ void WallFloorPaintPanel::draw(EditorContext& context)
     ImGui::Spacing();
     drawParallaxPreview();
     ImGui::Columns(1);
+
+    if (documentDirty_) {
+        context.markDirty();
+    }
+}
+
+void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::string& mapId)
+{
+    if (mapId.empty()) {
+        return;
+    }
+
+    std::memset(assetId_.data(), 0, assetId_.size());
+    const std::size_t copyLen = std::min(mapId.size(), assetId_.size() - 1);
+    std::memcpy(assetId_.data(), mapId.data(), copyLen);
+
+    game::TileMap map;
+    std::string error;
+    const std::filesystem::path inputPath = context.assets.gameMapPath() / (mapId + ".admap");
+    if (!game::loadTileMap(inputPath, map, &error)) {
+        wallGuide_.clear();
+        wallGuideWidth_ = 0;
+        wallGuideHeight_ = 0;
+        wallGuideMapId_.clear();
+        status_ = "No wall guide loaded for " + mapId + ": " + error;
+        return;
+    }
+
+    wallGuideMapId_ = map.id;
+    wallGuideWidth_ = map.width;
+    wallGuideHeight_ = map.height;
+    wallGuide_.assign(static_cast<std::size_t>(wallGuideWidth_ * wallGuideHeight_), 0u);
+    for (int y = 0; y < wallGuideHeight_; ++y) {
+        for (int x = 0; x < wallGuideWidth_; ++x) {
+            const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(wallGuideWidth_) + static_cast<std::size_t>(x);
+            wallGuide_[index] = map.layers[1][index] == 0u ? 0u : 1u;
+        }
+    }
+
+    if (width_ != wallGuideWidth_ || height_ != wallGuideHeight_) {
+        resizeDocument(wallGuideWidth_, wallGuideHeight_);
+    }
+    showWallGuide_ = true;
+    activeLayer_ = ActiveLayer::Wall;
+    status_ = "Loaded wall guide from " + inputPath.generic_string() + ".";
+}
+
+bool WallFloorPaintPanel::saveForChapter(const EditorContext& context)
+{
+    return exportPngs(context);
 }
 
 void WallFloorPaintPanel::ensureDocument()
@@ -238,6 +288,10 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
     ImGui::SliderInt("Brush", &brushSize_, 1, 12);
     ImGui::SameLine();
     ImGui::Checkbox("Grid", &showGrid_);
+    if (!wallGuide_.empty()) {
+        ImGui::SameLine();
+        ImGui::Checkbox("Wall guide", &showWallGuide_);
+    }
     ImGui::SameLine();
     if (ImGui::Button("Undo")) {
         undo();
@@ -248,6 +302,9 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
     }
 
     ImGui::Text("Exports: %s", context.assets.rawTilesetPath().string().c_str());
+    if (!wallGuideMapId_.empty()) {
+        ImGui::Text("Wall guide: %s", wallGuideMapId_.c_str());
+    }
     ImGui::TextDisabled("Left mouse paints. Right mouse erases. Pick Floor for depth texture, Wall for foreground occluders.");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
@@ -343,6 +400,9 @@ void WallFloorPaintPanel::drawCanvas()
     if (wall_.visible) {
         drawLayerPixels(drawList, wall_, origin, pixelSize);
     }
+    if (showWallGuide_) {
+        drawWallGuide(drawList, origin, pixelSize);
+    }
     drawList->PopClipRect();
 
     if (showGrid_ && pixelSize >= 6.0f) {
@@ -357,6 +417,29 @@ void WallFloorPaintPanel::drawCanvas()
     }
 
     drawList->AddRect(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, IM_COL32(220, 220, 220, 255));
+}
+
+void WallFloorPaintPanel::drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const
+{
+    if (wallGuide_.empty() || wallGuideWidth_ <= 0 || wallGuideHeight_ <= 0) {
+        return;
+    }
+
+    const int drawWidth = std::min(width_, wallGuideWidth_);
+    const int drawHeight = std::min(height_, wallGuideHeight_);
+    for (int y = 0; y < drawHeight; ++y) {
+        for (int x = 0; x < drawWidth; ++x) {
+            const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(wallGuideWidth_) + static_cast<std::size_t>(x);
+            if (wallGuide_[index] == 0u) {
+                continue;
+            }
+
+            const ImVec2 min{origin.x + static_cast<float>(x) * pixelSize, origin.y + static_cast<float>(y) * pixelSize};
+            const ImVec2 max{min.x + pixelSize, min.y + pixelSize};
+            drawList->AddRectFilled(min, max, IM_COL32(255, 216, 64, 38));
+            drawList->AddRect(min, max, IM_COL32(255, 216, 64, 230), 0.0f, 0, 2.0f);
+        }
+    }
 }
 
 void WallFloorPaintPanel::drawParallaxPreview()
@@ -513,6 +596,7 @@ const PaintLayer& WallFloorPaintPanel::activeLayer() const
 
 void WallFloorPaintPanel::recordUndo()
 {
+    documentDirty_ = true;
     undoFloor_ = floor_.pixels;
     undoWall_ = wall_.pixels;
 }
@@ -678,33 +762,51 @@ std::vector<unsigned char> WallFloorPaintPanel::compositeRgba(bool parallaxPrevi
     return rgba;
 }
 
-void WallFloorPaintPanel::exportPngs(const EditorContext& context)
+bool WallFloorPaintPanel::exportPngs(const EditorContext& context)
 {
     const std::string id(assetId_.data());
     if (id.empty()) {
         status_ = "Asset id is empty.";
-        return;
+        return false;
     }
 
-    const std::filesystem::path outputDir = context.assets.rawTilesetPath();
+    const std::filesystem::path rawOutputDir = context.assets.rawTilesetPath();
+    const std::filesystem::path gameOutputDir = context.assets.gameTilesetPath();
     std::error_code error;
-    std::filesystem::create_directories(outputDir, error);
+    std::filesystem::create_directories(rawOutputDir, error);
     if (error) {
-        status_ = "Failed to create export directory: " + error.message();
-        return;
+        status_ = "Failed to create raw export directory: " + error.message();
+        return false;
+    }
+    std::filesystem::create_directories(gameOutputDir, error);
+    if (error) {
+        status_ = "Failed to create game export directory: " + error.message();
+        return false;
     }
 
-    const std::filesystem::path floorPath = outputDir / (id + "_floor.png");
-    const std::filesystem::path wallPath = outputDir / (id + "_wall.png");
-    const std::filesystem::path previewPath = outputDir / (id + "_preview.png");
-    if (!writePngRgba(floorPath, width_, height_, layerRgba(floor_)) ||
-        !writePngRgba(wallPath, width_, height_, layerRgba(wall_)) ||
-        !writePngRgba(previewPath, width_, height_, compositeRgba(true))) {
+    const std::vector<unsigned char> floorRgba = layerRgba(floor_);
+    const std::vector<unsigned char> wallRgba = layerRgba(wall_);
+    const std::vector<unsigned char> previewRgba = compositeRgba(true);
+
+    const std::filesystem::path rawFloorPath = rawOutputDir / (id + "_floor.png");
+    const std::filesystem::path rawWallPath = rawOutputDir / (id + "_wall.png");
+    const std::filesystem::path rawPreviewPath = rawOutputDir / (id + "_preview.png");
+    const std::filesystem::path gameFloorPath = gameOutputDir / (id + "_floor.png");
+    const std::filesystem::path gameWallPath = gameOutputDir / (id + "_wall.png");
+    const std::filesystem::path gamePreviewPath = gameOutputDir / (id + "_preview.png");
+    if (!writePngRgba(rawFloorPath, width_, height_, floorRgba) ||
+        !writePngRgba(rawWallPath, width_, height_, wallRgba) ||
+        !writePngRgba(rawPreviewPath, width_, height_, previewRgba) ||
+        !writePngRgba(gameFloorPath, width_, height_, floorRgba) ||
+        !writePngRgba(gameWallPath, width_, height_, wallRgba) ||
+        !writePngRgba(gamePreviewPath, width_, height_, previewRgba)) {
         status_ = "Failed to export one or more PNGs.";
-        return;
+        return false;
     }
 
-    status_ = "Exported floor, wall, and parallax preview PNGs for " + id + ".";
+    status_ = "Exported raw and game-ready floor, wall, and preview PNGs for " + id + ".";
+    documentDirty_ = false;
+    return true;
 }
 
 } // namespace adventure::editor

@@ -56,8 +56,12 @@ int main()
 
     adventure::editor::EditorApp editor;
 
-    while (!glfwWindowShouldClose(window)) {
+    while (!editor.exitAccepted()) {
         glfwPollEvents();
+        if (glfwWindowShouldClose(window)) {
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+            editor.requestExit();
+        }
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();

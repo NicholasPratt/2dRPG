@@ -68,6 +68,7 @@ public:
     void draw(EditorContext& context);
     void openSpriteReference(const std::filesystem::path& spriteReference);
     void openCharacterSpriteReference(const std::filesystem::path& spriteReference);
+    bool saveForChapter(const EditorContext& context);
     [[nodiscard]] std::filesystem::path spriteMetadataReference(const EditorContext& context) const;
 
 private:
@@ -107,6 +108,7 @@ private:
     SpriteClipboard clipboard_;
     std::vector<SpriteUndoState> undoStack_;
     bool strokeUndoCaptured_ = false;
+    bool documentDirty_ = false;
     std::string ioStatus_;
 
     void drawLeftRail();

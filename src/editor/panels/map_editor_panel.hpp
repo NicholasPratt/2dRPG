@@ -3,6 +3,8 @@
 #include "editor/editor_context.hpp"
 #include "game/tileset.hpp"
 
+#include "imgui.h"
+
 #include <array>
 #include <cstdint>
 #include <string>
@@ -13,6 +15,7 @@ namespace adventure::editor {
 class MapEditorPanel {
 public:
     void draw(EditorContext& context);
+    void openMapId(EditorContext& context, const std::string& mapId);
 
 private:
     enum class EditMode { Paint, Select, Paste };
@@ -53,7 +56,8 @@ private:
     void resizeMap(int width, int height);
     void drawToolbar(EditorContext& context);
     void drawTilesetPalette();
-    void drawGrid();
+    void drawGrid(EditorContext& context);
+    void drawWallOutlines(ImDrawList* drawList, ImVec2 origin) const;
     void drawTestGame();
     void startTestGame();
     void updateTestPlayer();

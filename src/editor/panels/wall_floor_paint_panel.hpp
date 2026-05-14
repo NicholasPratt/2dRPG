@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/editor_context.hpp"
+#include "game/map.hpp"
 
 #include "imgui.h"
 
@@ -22,6 +23,8 @@ struct PaintLayer {
 class WallFloorPaintPanel {
 public:
     void draw(EditorContext& context);
+    void openScreenGraphics(EditorContext& context, const std::string& mapId);
+    bool saveForChapter(const EditorContext& context);
 
 private:
     enum class ActiveLayer {
@@ -47,6 +50,11 @@ private:
     ActiveLayer activeLayer_ = ActiveLayer::Wall;
     PaintTool tool_ = PaintTool::Pencil;
     bool showGrid_ = true;
+    bool showWallGuide_ = true;
+    std::string wallGuideMapId_;
+    int wallGuideWidth_ = 0;
+    int wallGuideHeight_ = 0;
+    std::vector<std::uint8_t> wallGuide_;
     bool animatePreview_ = true;
     float previewScrollX_ = 0.0f;
     float previewScrollY_ = 0.0f;
@@ -65,6 +73,7 @@ private:
     PaintLayer wall_{"Wall", true, 1.0f};
     std::vector<std::uint32_t> undoFloor_;
     std::vector<std::uint32_t> undoWall_;
+    bool documentDirty_ = false;
     std::string status_;
 
     void ensureDocument();
@@ -73,6 +82,7 @@ private:
     void drawLayerControls();
     void drawPalette();
     void drawCanvas();
+    void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawParallaxPreview();
     void drawToolButton(const char* label, PaintTool tool);
     void drawLayerPixels(ImDrawList* drawList, const PaintLayer& layer, ImVec2 origin, float pixelSize, ImVec2 offset = {0.0f, 0.0f}, bool wrap = false) const;
@@ -92,7 +102,7 @@ private:
     void clearActiveLayer();
     std::vector<unsigned char> layerRgba(const PaintLayer& layer) const;
     std::vector<unsigned char> compositeRgba(bool parallaxPreview) const;
-    void exportPngs(const EditorContext& context);
+    bool exportPngs(const EditorContext& context);
 };
 
 } // namespace adventure::editor
