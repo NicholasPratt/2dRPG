@@ -213,6 +213,7 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
         }
     }
 
+    ensureDocument();
     if (width_ != wallGuideWidth_ || height_ != wallGuideHeight_) {
         resizeDocument(wallGuideWidth_, wallGuideHeight_);
     }
@@ -249,9 +250,12 @@ void WallFloorPaintPanel::resizeDocument(int width, int height)
         std::vector<std::uint32_t> resized(static_cast<std::size_t>(width * height), 0u);
         const int copyWidth = std::min(width_, width);
         const int copyHeight = std::min(height_, height);
-        for (int y = 0; y < copyHeight; ++y) {
-            for (int x = 0; x < copyWidth; ++x) {
-                resized[static_cast<std::size_t>(y * width + x)] = layer.pixels[static_cast<std::size_t>(y * width_ + x)];
+        const std::size_t expectedOldSize = static_cast<std::size_t>(width_ * height_);
+        if (layer.pixels.size() == expectedOldSize) {
+            for (int y = 0; y < copyHeight; ++y) {
+                for (int x = 0; x < copyWidth; ++x) {
+                    resized[static_cast<std::size_t>(y * width + x)] = layer.pixels[static_cast<std::size_t>(y * width_ + x)];
+                }
             }
         }
         layer.pixels = std::move(resized);
@@ -479,13 +483,14 @@ void WallFloorPaintPanel::drawParallaxPreview()
 
 void WallFloorPaintPanel::drawToolButton(const char* label, PaintTool tool)
 {
-    if (tool_ == tool) {
+    const bool selected = tool_ == tool;
+    if (selected) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.42f, 0.72f, 1.0f));
     }
     if (ImGui::Button(label, {76.0f, 0.0f})) {
         tool_ = tool;
     }
-    if (tool_ == tool) {
+    if (selected) {
         ImGui::PopStyleColor();
     }
 }
