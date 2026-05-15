@@ -162,6 +162,32 @@ void checkerboard(ImDrawList* drawList, ImVec2 min, ImVec2 max, float cellSize)
 void WallFloorPaintPanel::draw(EditorContext& context)
 {
     ensureDocument();
+
+    // Global keyboard shortcuts
+    if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+            undo();
+        }
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            if (tool_ == PaintTool::Select && selectionActive_) {
+                copyPixelSelection();
+            }
+        }
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+            if (hasPixelClipboard_) {
+                pasteMode_ = true;
+                tool_ = PaintTool::Select;
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            pasteMode_ = false;
+            if (tool_ == PaintTool::Select) {
+                selectionActive_ = false;
+                selectionDragging_ = false;
+            }
+        }
+    }
+
     drawToolbar(context);
     ImGui::Separator();
 
@@ -294,11 +320,6 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
     ImGui::SetNextItemWidth(80.0f);
     ImGui::SliderInt("Brush", &brushSize_, 1, 12);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(80.0f);
-    if (ImGui::InputInt("Tile px", &pixelsPerTile_)) {
-        pixelsPerTile_ = std::clamp(pixelsPerTile_, 1, 64);
-    }
-    ImGui::SameLine();
     ImGui::Checkbox("Grid", &showGrid_);
     if (!wallGuide_.empty()) {
         ImGui::SameLine();
@@ -309,6 +330,8 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
         undo();
     }
     ImGui::SameLine();
+    ImGui::TextDisabled("(%d)", static_cast<int>(undoStack_.size()));
+    ImGui::SameLine();
     if (ImGui::Button("Export PNGs")) {
         exportPngs(context);
     }
@@ -317,7 +340,7 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
     if (!wallGuideMapId_.empty()) {
         ImGui::Text("Wall guide: %s", wallGuideMapId_.c_str());
     }
-    ImGui::TextDisabled("Left mouse paints. Right mouse erases. Pick Floor for depth texture, Wall for foreground occluders.");
+    ImGui::TextDisabled("Left paints  Right erases  Ctrl+Z undo  Ctrl+C/V copy/paste  Esc cancel select");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
@@ -350,6 +373,42 @@ void WallFloorPaintPanel::drawLayerControls()
     drawToolButton("Line", PaintTool::Line);
     ImGui::SameLine();
     drawToolButton("Rect", PaintTool::Rect);
+    drawToolButton("Select", PaintTool::Select);
+    if (tool_ == PaintTool::Select) {
+        if (selectionActive_) {
+            ImGui::SameLine();
+            if (ImGui::Button("Copy")) {
+                copyPixelSelection();
+            }
+        }
+        if (hasPixelClipboard_) {
+            ImGui::SameLine();
+            if (ImGui::Button(pasteMode_ ? "Paste (click canvas)" : "Paste")) {
+                pasteMode_ = !pasteMode_;
+            }
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Brush shape");
+    drawBrushShapeButton("Square", BrushShape::Square);
+    ImGui::SameLine();
+    drawBrushShapeButton("Circle", BrushShape::Circle);
+    drawBrushShapeButton("Spray", BrushShape::Spray);
+    ImGui::SameLine();
+    drawBrushShapeButton("Dither", BrushShape::Dither);
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Snap");
+    int snapIndex = static_cast<int>(snapMode_);
+    ImGui::RadioButton("None##snap", &snapIndex, static_cast<int>(SnapMode::None));
+    ImGui::SameLine();
+    ImGui::RadioButton("Tile##snap", &snapIndex, static_cast<int>(SnapMode::Full));
+    ImGui::SameLine();
+    ImGui::RadioButton("1/2##snap", &snapIndex, static_cast<int>(SnapMode::Half));
+    ImGui::SameLine();
+    ImGui::RadioButton("1/4##snap", &snapIndex, static_cast<int>(SnapMode::Quarter));
+    snapMode_ = static_cast<SnapMode>(snapIndex);
 
     ImGui::Spacing();
     if (ImGui::Button("Clear active layer")) {
@@ -418,6 +477,50 @@ void WallFloorPaintPanel::drawCanvas()
     if (showWallGuide_) {
         drawWallGuide(drawList, origin, pixelSize);
     }
+
+    // Paste ghost preview
+    if (tool_ == PaintTool::Select && pasteMode_ && hasPixelClipboard_ && ImGui::IsItemHovered()) {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        int mx = static_cast<int>((mouse.x - origin.x) / pixelSize);
+        int my = static_cast<int>((mouse.y - origin.y) / pixelSize);
+        if (snapMode_ != SnapMode::None) { mx = snapCoord(mx); my = snapCoord(my); }
+        for (int cy = 0; cy < pixelClipboard_.height; ++cy) {
+            for (int cx = 0; cx < pixelClipboard_.width; ++cx) {
+                const int tx = mx + cx;
+                const int ty = my + cy;
+                if (tx < 0 || ty < 0 || tx >= width_ || ty >= height_) {
+                    continue;
+                }
+                const auto idx = static_cast<std::size_t>(cy * pixelClipboard_.width + cx);
+                const std::uint32_t fc = pixelClipboard_.floor[idx];
+                const std::uint32_t wc = pixelClipboard_.wall[idx];
+                const ImVec2 pMin{origin.x + static_cast<float>(tx) * pixelSize, origin.y + static_cast<float>(ty) * pixelSize};
+                const ImVec2 pMax{pMin.x + pixelSize, pMin.y + pixelSize};
+                if (alphaOf(fc) > 0u) {
+                    drawList->AddRectFilled(pMin, pMax,
+                        IM_COL32((fc >> 0) & 0xff, (fc >> 8) & 0xff, (fc >> 16) & 0xff, 120));
+                }
+                if (alphaOf(wc) > 0u) {
+                    drawList->AddRectFilled(pMin, pMax,
+                        IM_COL32((wc >> 0) & 0xff, (wc >> 8) & 0xff, (wc >> 16) & 0xff, 120));
+                }
+                drawList->AddRect(pMin, pMax, IM_COL32(200, 200, 255, 100));
+            }
+        }
+    }
+
+    // Selection overlay
+    if (tool_ == PaintTool::Select && (selectionActive_ || selectionDragging_)) {
+        const int sx0 = std::min(selX0_, selX1_);
+        const int sy0 = std::min(selY0_, selY1_);
+        const int sx1 = std::max(selX0_, selX1_);
+        const int sy1 = std::max(selY0_, selY1_);
+        const ImVec2 sMin{origin.x + static_cast<float>(sx0) * pixelSize, origin.y + static_cast<float>(sy0) * pixelSize};
+        const ImVec2 sMax{origin.x + static_cast<float>(sx1 + 1) * pixelSize, origin.y + static_cast<float>(sy1 + 1) * pixelSize};
+        drawList->AddRectFilled(sMin, sMax, IM_COL32(255, 216, 64, 28));
+        drawList->AddRect(sMin, sMax, IM_COL32(255, 216, 64, 220), 0.0f, 0, 1.5f);
+    }
+
     drawList->PopClipRect();
 
     if (showGrid_ && pixelSize >= 4.0f) {
@@ -431,7 +534,7 @@ void WallFloorPaintPanel::drawCanvas()
         }
     }
 
-    // Tile boundary grid — brighter lines every pixelsPerTile_ pixels
+    // Tile boundary grid
     if (pixelsPerTile_ > 1) {
         const float tileScreen = static_cast<float>(pixelsPerTile_) * pixelSize;
         const int tileCountX = width_ / pixelsPerTile_;
@@ -443,6 +546,38 @@ void WallFloorPaintPanel::drawCanvas()
         for (int y = 0; y <= tileCountY; ++y) {
             const float py = origin.y + static_cast<float>(y) * tileScreen;
             drawList->AddLine({origin.x, py}, {origin.x + canvasSize.x, py}, IM_COL32(255, 255, 255, 55));
+        }
+
+        // Half/quarter snap grid markers
+        if (snapMode_ == SnapMode::Half || snapMode_ == SnapMode::Quarter) {
+            const float halfScreen = tileScreen * 0.5f;
+            const int halfCountX = width_ * 2 / pixelsPerTile_;
+            const int halfCountY = height_ * 2 / pixelsPerTile_;
+            for (int x = 0; x <= halfCountX; ++x) {
+                if (x % 2 == 0) { continue; }
+                const float px = origin.x + static_cast<float>(x) * halfScreen;
+                drawList->AddLine({px, origin.y}, {px, origin.y + canvasSize.y}, IM_COL32(255, 255, 255, 28));
+            }
+            for (int y = 0; y <= halfCountY; ++y) {
+                if (y % 2 == 0) { continue; }
+                const float py = origin.y + static_cast<float>(y) * halfScreen;
+                drawList->AddLine({origin.x, py}, {origin.x + canvasSize.x, py}, IM_COL32(255, 255, 255, 28));
+            }
+        }
+        if (snapMode_ == SnapMode::Quarter) {
+            const float quarterScreen = tileScreen * 0.25f;
+            const int qCountX = width_ * 4 / pixelsPerTile_;
+            const int qCountY = height_ * 4 / pixelsPerTile_;
+            for (int x = 0; x <= qCountX; ++x) {
+                if (x % 4 == 0 || x % 2 == 0) { continue; }
+                const float px = origin.x + static_cast<float>(x) * quarterScreen;
+                drawList->AddLine({px, origin.y}, {px, origin.y + canvasSize.y}, IM_COL32(255, 255, 255, 14));
+            }
+            for (int y = 0; y <= qCountY; ++y) {
+                if (y % 4 == 0 || y % 2 == 0) { continue; }
+                const float py = origin.y + static_cast<float>(y) * quarterScreen;
+                drawList->AddLine({origin.x, py}, {origin.x + canvasSize.x, py}, IM_COL32(255, 255, 255, 14));
+            }
         }
     }
 
@@ -516,7 +651,24 @@ void WallFloorPaintPanel::drawToolButton(const char* label, PaintTool tool)
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.42f, 0.72f, 1.0f));
     }
     if (ImGui::Button(label, {76.0f, 0.0f})) {
+        if (tool_ != tool) {
+            pasteMode_ = false;
+        }
         tool_ = tool;
+    }
+    if (selected) {
+        ImGui::PopStyleColor();
+    }
+}
+
+void WallFloorPaintPanel::drawBrushShapeButton(const char* label, BrushShape shape)
+{
+    const bool selected = brushShape_ == shape;
+    if (selected) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.42f, 0.72f, 1.0f));
+    }
+    if (ImGui::Button(label, {76.0f, 0.0f})) {
+        brushShape_ = shape;
     }
     if (selected) {
         ImGui::PopStyleColor();
@@ -574,6 +726,39 @@ void WallFloorPaintPanel::handleCanvasInput(const ImVec2& origin, float pixelSiz
         return;
     }
 
+    if (snapMode_ != SnapMode::None) {
+        x = snapCoord(x);
+        y = snapCoord(y);
+    }
+
+    // Select tool handling
+    if (tool_ == PaintTool::Select) {
+        if (pasteMode_ && hasPixelClipboard_) {
+            ImGui::SetTooltip("Paste %dx%d  [%d,%d]", pixelClipboard_.width, pixelClipboard_.height, x, y);
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                recordUndo();
+                pastePixelClipboard(x, y);
+                status_ = "Pasted at [" + std::to_string(x) + "," + std::to_string(y) + "].";
+            }
+        } else {
+            ImGui::SetTooltip("[%d,%d]", x, y);
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                selX0_ = x; selY0_ = y;
+                selX1_ = x; selY1_ = y;
+                selectionDragging_ = true;
+                selectionActive_ = false;
+            }
+            if (selectionDragging_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                selX1_ = x; selY1_ = y;
+            }
+            if (selectionDragging_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                selectionDragging_ = false;
+                selectionActive_ = true;
+            }
+        }
+        return;
+    }
+
     ImGui::SetTooltip("%s [%d,%d]", activeLayer().name.c_str(), x, y);
     const bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
     const bool rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -617,6 +802,24 @@ bool WallFloorPaintPanel::canvasPixelAt(const ImVec2& origin, float pixelSize, i
     return x >= 0 && y >= 0 && x < width_ && y < height_;
 }
 
+int WallFloorPaintPanel::applySnap(int coord, int gridSize) const
+{
+    if (gridSize <= 1) {
+        return coord;
+    }
+    return (coord / gridSize) * gridSize;
+}
+
+int WallFloorPaintPanel::snapCoord(int coord) const
+{
+    switch (snapMode_) {
+        case SnapMode::Full:    return applySnap(coord, pixelsPerTile_);
+        case SnapMode::Half:    return applySnap(coord, std::max(1, pixelsPerTile_ / 2));
+        case SnapMode::Quarter: return applySnap(coord, std::max(1, pixelsPerTile_ / 4));
+        default:                return coord;
+    }
+}
+
 PaintLayer& WallFloorPaintPanel::activeLayer()
 {
     return activeLayer_ == ActiveLayer::Floor ? floor_ : wall_;
@@ -630,21 +833,23 @@ const PaintLayer& WallFloorPaintPanel::activeLayer() const
 void WallFloorPaintPanel::recordUndo()
 {
     documentDirty_ = true;
-    undoFloor_ = floor_.pixels;
-    undoWall_ = wall_.pixels;
+    undoStack_.push_back({floor_.pixels, wall_.pixels});
+    if (undoStack_.size() > static_cast<std::size_t>(kMaxUndoSteps)) {
+        undoStack_.erase(undoStack_.begin());
+    }
 }
 
 void WallFloorPaintPanel::undo()
 {
-    if (undoFloor_.empty() || undoWall_.empty()) {
+    if (undoStack_.empty()) {
         status_ = "Nothing to undo.";
         return;
     }
-    floor_.pixels = undoFloor_;
-    wall_.pixels = undoWall_;
-    undoFloor_.clear();
-    undoWall_.clear();
-    status_ = "Undid last paint operation.";
+    auto& state = undoStack_.back();
+    floor_.pixels = std::move(state.floor);
+    wall_.pixels = std::move(state.wall);
+    undoStack_.pop_back();
+    status_ = "Undone. (" + std::to_string(undoStack_.size()) + " steps left)";
 }
 
 void WallFloorPaintPanel::setPixel(PaintLayer& layer, int x, int y, std::uint32_t color)
@@ -658,10 +863,44 @@ void WallFloorPaintPanel::setPixel(PaintLayer& layer, int x, int y, std::uint32_
 void WallFloorPaintPanel::setBrushPixel(PaintLayer& layer, int x, int y, std::uint32_t color)
 {
     const int radius = std::max(0, brushSize_ - 1);
-    for (int py = y - radius; py <= y + radius; ++py) {
-        for (int px = x - radius; px <= x + radius; ++px) {
-            setPixel(layer, px, py, color);
+    switch (brushShape_) {
+        case BrushShape::Square:
+            for (int py = y - radius; py <= y + radius; ++py) {
+                for (int px = x - radius; px <= x + radius; ++px) {
+                    setPixel(layer, px, py, color);
+                }
+            }
+            break;
+        case BrushShape::Circle:
+            for (int py = y - radius; py <= y + radius; ++py) {
+                for (int px = x - radius; px <= x + radius; ++px) {
+                    if ((px - x) * (px - x) + (py - y) * (py - y) <= radius * radius + radius) {
+                        setPixel(layer, px, py, color);
+                    }
+                }
+            }
+            break;
+        case BrushShape::Spray: {
+            const int diameter = 2 * radius + 1;
+            const int count = std::max(1, diameter * diameter / 3);
+            for (int i = 0; i < count; ++i) {
+                spraySeed_ = spraySeed_ * 1664525u + 1013904223u;
+                const int rx = radius > 0 ? static_cast<int>(spraySeed_ % static_cast<std::uint32_t>(diameter)) - radius : 0;
+                spraySeed_ = spraySeed_ * 1664525u + 1013904223u;
+                const int ry = radius > 0 ? static_cast<int>(spraySeed_ % static_cast<std::uint32_t>(diameter)) - radius : 0;
+                setPixel(layer, x + rx, y + ry, color);
+            }
+            break;
         }
+        case BrushShape::Dither:
+            for (int py = y - radius; py <= y + radius; ++py) {
+                for (int px = x - radius; px <= x + radius; ++px) {
+                    if (((px + py) & 1) == 0) {
+                        setPixel(layer, px, py, color);
+                    }
+                }
+            }
+            break;
     }
 }
 
@@ -747,6 +986,45 @@ void WallFloorPaintPanel::clearActiveLayer()
     std::fill(activeLayer().pixels.begin(), activeLayer().pixels.end(), activeLayer_ == ActiveLayer::Floor ? 0xff243447u : 0u);
 }
 
+void WallFloorPaintPanel::copyPixelSelection()
+{
+    if (!selectionActive_) {
+        return;
+    }
+    const int x0 = std::min(selX0_, selX1_);
+    const int y0 = std::min(selY0_, selY1_);
+    const int x1 = std::max(selX0_, selX1_);
+    const int y1 = std::max(selY0_, selY1_);
+    pixelClipboard_.width = x1 - x0 + 1;
+    pixelClipboard_.height = y1 - y0 + 1;
+    pixelClipboard_.floor.resize(static_cast<std::size_t>(pixelClipboard_.width * pixelClipboard_.height));
+    pixelClipboard_.wall.resize(static_cast<std::size_t>(pixelClipboard_.width * pixelClipboard_.height));
+    for (int cy = 0; cy < pixelClipboard_.height; ++cy) {
+        for (int cx = 0; cx < pixelClipboard_.width; ++cx) {
+            const std::size_t dst = static_cast<std::size_t>(cy * pixelClipboard_.width + cx);
+            const std::size_t src = static_cast<std::size_t>((y0 + cy) * width_ + (x0 + cx));
+            pixelClipboard_.floor[dst] = floor_.pixels[src];
+            pixelClipboard_.wall[dst] = wall_.pixels[src];
+        }
+    }
+    hasPixelClipboard_ = true;
+    status_ = "Copied " + std::to_string(pixelClipboard_.width) + "x" + std::to_string(pixelClipboard_.height) + " pixels.";
+}
+
+void WallFloorPaintPanel::pastePixelClipboard(int x, int y)
+{
+    if (!hasPixelClipboard_) {
+        return;
+    }
+    for (int cy = 0; cy < pixelClipboard_.height; ++cy) {
+        for (int cx = 0; cx < pixelClipboard_.width; ++cx) {
+            const std::size_t idx = static_cast<std::size_t>(cy * pixelClipboard_.width + cx);
+            setPixel(floor_, x + cx, y + cy, pixelClipboard_.floor[idx]);
+            setPixel(wall_, x + cx, y + cy, pixelClipboard_.wall[idx]);
+        }
+    }
+}
+
 std::vector<unsigned char> WallFloorPaintPanel::layerRgba(const PaintLayer& layer) const
 {
     std::vector<unsigned char> rgba;
@@ -774,12 +1052,8 @@ std::vector<unsigned char> WallFloorPaintPanel::compositeRgba(bool parallaxPrevi
                     const float effectiveScrollX = previewScrollX_ + (animatePreview_ ? previewAnimationX_ : 0.0f);
                     fx = (x + static_cast<int>(effectiveScrollX * floorParallax_)) % width_;
                     fy = (y + static_cast<int>(previewScrollY_ * floorParallax_)) % height_;
-                    if (fx < 0) {
-                        fx += width_;
-                    }
-                    if (fy < 0) {
-                        fy += height_;
-                    }
+                    if (fx < 0) { fx += width_; }
+                    if (fy < 0) { fy += height_; }
                 }
                 color = blendOver(color, floor_.pixels[static_cast<std::size_t>(fy * width_ + fx)], floor_.opacity);
             }

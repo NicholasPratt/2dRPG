@@ -49,11 +49,20 @@ private:
     std::vector<uint16_t> clipboard_;
     int clipboardW_ = 0, clipboardH_ = 0;
 
+    // Undo stack
+    static constexpr int kMaxUndoSteps = 50;
+    struct MapUndoState {
+        std::array<std::vector<uint16_t>, 3> layers;
+    };
+    std::vector<MapUndoState> undoStack_;
+
     // Test-game state
     float testPlayerX_ = 16.0f;
     float testPlayerY_ = 16.0f;
 
     void resizeMap(int width, int height);
+    void recordUndo();
+    void undoMap();
     void drawToolbar(EditorContext& context);
     void drawTilesetPalette();
     void drawGrid(EditorContext& context);

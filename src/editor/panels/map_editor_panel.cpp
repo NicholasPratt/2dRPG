@@ -151,14 +151,22 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
     }
 
     if (ImGui::Button("Fill")) {
+        recordUndo();
         std::fill(layers_[activeLayer_].begin(), layers_[activeLayer_].end(), selectedTileId_);
         context.markDirty();
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear layer")) {
+        recordUndo();
         std::fill(layers_[activeLayer_].begin(), layers_[activeLayer_].end(), static_cast<uint16_t>(0u));
         context.markDirty();
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Undo")) {
+        undoMap();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d)", static_cast<int>(undoStack_.size()));
 
     // Copy / paste controls
     ImGui::SameLine();
@@ -212,9 +220,13 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
     ImGui::Text("Spawn: %d,%d   Active tile ID: %d   Editing: %s layer",
         spawnX_, spawnY_, static_cast<int>(selectedTileId_), kLayerNames[activeLayer_]);
     ImGui::Text("Map files: %s", context.assets.gameMapPath().string().c_str());
-    ImGui::TextDisabled("Left-click: paint   Right-click: erase   S+hover: set spawn   Select region for copy/paste");
+    ImGui::TextDisabled("Left-click: paint   Right-click: erase   S+hover: set spawn   Select region for copy/paste   Ctrl+Z undo");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
+    }
+
+    if (!ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        undoMap();
     }
 }
 
@@ -404,6 +416,7 @@ void MapEditorPanel::drawGrid(EditorContext& context)
             }
         }
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            recordUndo();
             for (int py = 0; py < clipboardH_; ++py) {
                 for (int px = 0; px < clipboardW_; ++px) {
                     const int tx = x + px;
@@ -445,8 +458,16 @@ void MapEditorPanel::drawGrid(EditorContext& context)
         spawnY_ = y;
         tileAt(x, y, activeLayer_) = 0u;
         context.markDirty();
+    } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        recordUndo();
+        tileAt(x, y, activeLayer_) = selectedTileId_;
+        context.markDirty();
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         tileAt(x, y, activeLayer_) = selectedTileId_;
+        context.markDirty();
+    } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        recordUndo();
+        tileAt(x, y, activeLayer_) = 0u;
         context.markDirty();
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
         tileAt(x, y, activeLayer_) = 0u;
@@ -756,6 +777,25 @@ uint16_t& MapEditorPanel::tileAt(int x, int y, int layer)
 const uint16_t& MapEditorPanel::tileAt(int x, int y, int layer) const
 {
     return layers_[static_cast<std::size_t>(layer)][static_cast<std::size_t>(y) * width_ + x];
+}
+
+void MapEditorPanel::recordUndo()
+{
+    undoStack_.push_back({layers_});
+    if (undoStack_.size() > static_cast<std::size_t>(kMaxUndoSteps)) {
+        undoStack_.erase(undoStack_.begin());
+    }
+}
+
+void MapEditorPanel::undoMap()
+{
+    if (undoStack_.empty()) {
+        status_ = "Nothing to undo.";
+        return;
+    }
+    layers_ = std::move(undoStack_.back().layers);
+    undoStack_.pop_back();
+    status_ = "Undone. (" + std::to_string(undoStack_.size()) + " steps left)";
 }
 
 } // namespace adventure::editor

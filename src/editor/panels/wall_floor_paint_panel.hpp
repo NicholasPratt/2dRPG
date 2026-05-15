@@ -27,17 +27,23 @@ public:
     bool saveForChapter(const EditorContext& context);
 
 private:
-    enum class ActiveLayer {
-        Floor = 0,
-        Wall = 1,
+    enum class ActiveLayer { Floor = 0, Wall = 1 };
+    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select };
+    enum class BrushShape { Square = 0, Circle, Spray, Dither };
+    enum class SnapMode { None = 0, Full, Half, Quarter };
+
+    static constexpr int kMaxUndoSteps = 50;
+
+    struct UndoState {
+        std::vector<std::uint32_t> floor;
+        std::vector<std::uint32_t> wall;
     };
 
-    enum class PaintTool {
-        Pencil = 0,
-        Eraser,
-        Fill,
-        Line,
-        Rect,
+    struct PixelClipboard {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint32_t> floor;
+        std::vector<std::uint32_t> wall;
     };
 
     std::array<char, 64> assetId_{'r', 'o', 'o', 'm', '_', 'p', 'a', 'i', 'n', 't', '\0'};
@@ -50,6 +56,8 @@ private:
     int resizeHeight_ = 36;
     ActiveLayer activeLayer_ = ActiveLayer::Wall;
     PaintTool tool_ = PaintTool::Pencil;
+    BrushShape brushShape_ = BrushShape::Square;
+    SnapMode snapMode_ = SnapMode::None;
     bool showGrid_ = true;
     bool showWallGuide_ = true;
     std::string wallGuideMapId_;
@@ -72,10 +80,20 @@ private:
     };
     PaintLayer floor_{"Floor", true, 1.0f};
     PaintLayer wall_{"Wall", true, 1.0f};
-    std::vector<std::uint32_t> undoFloor_;
-    std::vector<std::uint32_t> undoWall_;
+    std::vector<UndoState> undoStack_;
     bool documentDirty_ = false;
     std::string status_;
+
+    // Selection / copy-paste
+    bool selectionActive_ = false;
+    bool selectionDragging_ = false;
+    int selX0_ = 0, selY0_ = 0, selX1_ = 0, selY1_ = 0;
+    PixelClipboard pixelClipboard_;
+    bool hasPixelClipboard_ = false;
+    bool pasteMode_ = false;
+
+    // LCG seed for spray brush
+    std::uint32_t spraySeed_ = 12345u;
 
     void ensureDocument();
     void resizeDocument(int width, int height);
@@ -86,10 +104,13 @@ private:
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawParallaxPreview();
     void drawToolButton(const char* label, PaintTool tool);
+    void drawBrushShapeButton(const char* label, BrushShape shape);
     void drawLayerPixels(ImDrawList* drawList, const PaintLayer& layer, ImVec2 origin, float pixelSize, ImVec2 offset = {0.0f, 0.0f}, bool wrap = false) const;
     void drawCompositePixel(ImDrawList* drawList, ImVec2 min, ImVec2 max, std::uint32_t color, float layerOpacity) const;
     void handleCanvasInput(const ImVec2& origin, float pixelSize);
     bool canvasPixelAt(const ImVec2& origin, float pixelSize, int& x, int& y) const;
+    int applySnap(int coord, int gridSize) const;
+    int snapCoord(int coord) const;
     PaintLayer& activeLayer();
     const PaintLayer& activeLayer() const;
     void recordUndo();
@@ -101,6 +122,8 @@ private:
     void drawRect(PaintLayer& layer, int x0, int y0, int x1, int y1, std::uint32_t color);
     void floodFill(PaintLayer& layer, int startX, int startY, std::uint32_t color);
     void clearActiveLayer();
+    void copyPixelSelection();
+    void pastePixelClipboard(int x, int y);
     std::vector<unsigned char> layerRgba(const PaintLayer& layer) const;
     std::vector<unsigned char> compositeRgba(bool parallaxPreview) const;
     bool exportPngs(const EditorContext& context);
