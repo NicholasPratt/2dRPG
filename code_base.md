@@ -266,9 +266,12 @@ Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 - Two-layer pixel painter: Floor and Wall.
 - Tools: pencil, eraser, fill, line, rect.
 - Palette, brush size, layer visibility/opacity controls.
-- Parallax preview: animated scroll showing floor parallax behind wall layer.
-- When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay.
-- The wall guide resizes the paint document to the selected map's dimensions and sets the asset id to the map id.
+- **Pixel-scale canvas:** when opened from `Edit Screen Graphics`, the canvas is sized at `mapWidth × pixelsPerTile` by `mapHeight × pixelsPerTile` pixels so each canvas pixel is one actual output pixel. `pixelsPerTile` defaults to 16 and is adjustable in the toolbar (range 1–64).
+- **Tile boundary grid:** a subtle white overlay marks tile boundaries on the canvas to aid alignment.
+- **Scrollable canvas:** the canvas region is a fixed-height (500 px) scrollable child window with a horizontal scrollbar, supporting large canvases comfortably.
+- Zoom range 1–16 (opens at zoom 2 when loaded from a screen).
+- When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay; guide cells are scaled to `pixelsPerTile × pixelsPerTile` canvas pixels each.
+- Parallax preview: animated floor scroll at a subtle ±4 px range behind the wall layer.
 - Undo with one level of history.
 - Export: writes floor, wall, and parallax-preview PNGs to both `assets/raw/tilesets/` and `assets/game/tilesets/`.
 - Chapter save calls this export path so the current paint document has game-ready PNGs for runtime use.

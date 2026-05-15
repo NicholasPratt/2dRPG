@@ -45,6 +45,7 @@ private:
     int height_ = 36;
     int zoom_ = 10;
     int brushSize_ = 1;
+    int pixelsPerTile_ = 16;
     int resizeWidth_ = 64;
     int resizeHeight_ = 36;
     ActiveLayer activeLayer_ = ActiveLayer::Wall;

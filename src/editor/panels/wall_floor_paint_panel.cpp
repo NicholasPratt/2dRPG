@@ -11,7 +11,7 @@ namespace adventure::editor {
 namespace {
 
 constexpr int kMinCanvasSize = 4;
-constexpr int kMaxCanvasSize = 256;
+constexpr int kMaxCanvasSize = 1024;
 constexpr unsigned char kPngSignature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
 
 ImU32 packedColor(std::uint32_t color)
@@ -213,10 +213,13 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
         }
     }
 
+    const int pixelWidth = wallGuideWidth_ * pixelsPerTile_;
+    const int pixelHeight = wallGuideHeight_ * pixelsPerTile_;
     ensureDocument();
-    if (width_ != wallGuideWidth_ || height_ != wallGuideHeight_) {
-        resizeDocument(wallGuideWidth_, wallGuideHeight_);
+    if (width_ != pixelWidth || height_ != pixelHeight) {
+        resizeDocument(pixelWidth, pixelHeight);
     }
+    zoom_ = 2;
     showWallGuide_ = true;
     activeLayer_ = ActiveLayer::Wall;
     status_ = "Loaded wall guide from " + inputPath.generic_string() + ".";
@@ -285,11 +288,16 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
         resizeDocument(resizeWidth_, resizeHeight_);
     }
 
-    ImGui::SetNextItemWidth(110.0f);
-    ImGui::SliderInt("Zoom", &zoom_, 4, 24);
+    ImGui::SetNextItemWidth(80.0f);
+    ImGui::SliderInt("Zoom", &zoom_, 1, 16);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SetNextItemWidth(80.0f);
     ImGui::SliderInt("Brush", &brushSize_, 1, 12);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80.0f);
+    if (ImGui::InputInt("Tile px", &pixelsPerTile_)) {
+        pixelsPerTile_ = std::clamp(pixelsPerTile_, 1, 64);
+    }
     ImGui::SameLine();
     ImGui::Checkbox("Grid", &showGrid_);
     if (!wallGuide_.empty()) {
@@ -390,8 +398,11 @@ void WallFloorPaintPanel::drawPalette()
 void WallFloorPaintPanel::drawCanvas()
 {
     const float pixelSize = static_cast<float>(zoom_);
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 canvasSize{static_cast<float>(width_) * pixelSize, static_cast<float>(height_) * pixelSize};
+
+    ImGui::BeginChild("WallFloorCanvasScroll", ImVec2(0.0f, 500.0f), false,
+        ImGuiWindowFlags_HorizontalScrollbar);
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("WallFloorCanvas", canvasSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     handleCanvasInput(origin, pixelSize);
 
@@ -409,18 +420,34 @@ void WallFloorPaintPanel::drawCanvas()
     }
     drawList->PopClipRect();
 
-    if (showGrid_ && pixelSize >= 6.0f) {
+    if (showGrid_ && pixelSize >= 4.0f) {
         for (int x = 0; x <= width_; ++x) {
             const float px = origin.x + static_cast<float>(x) * pixelSize;
-            drawList->AddLine({px, origin.y}, {px, origin.y + canvasSize.y}, IM_COL32(0, 0, 0, 70));
+            drawList->AddLine({px, origin.y}, {px, origin.y + canvasSize.y}, IM_COL32(0, 0, 0, 60));
         }
         for (int y = 0; y <= height_; ++y) {
             const float py = origin.y + static_cast<float>(y) * pixelSize;
-            drawList->AddLine({origin.x, py}, {origin.x + canvasSize.x, py}, IM_COL32(0, 0, 0, 70));
+            drawList->AddLine({origin.x, py}, {origin.x + canvasSize.x, py}, IM_COL32(0, 0, 0, 60));
+        }
+    }
+
+    // Tile boundary grid — brighter lines every pixelsPerTile_ pixels
+    if (pixelsPerTile_ > 1) {
+        const float tileScreen = static_cast<float>(pixelsPerTile_) * pixelSize;
+        const int tileCountX = width_ / pixelsPerTile_;
+        const int tileCountY = height_ / pixelsPerTile_;
+        for (int x = 0; x <= tileCountX; ++x) {
+            const float px = origin.x + static_cast<float>(x) * tileScreen;
+            drawList->AddLine({px, origin.y}, {px, origin.y + canvasSize.y}, IM_COL32(255, 255, 255, 55));
+        }
+        for (int y = 0; y <= tileCountY; ++y) {
+            const float py = origin.y + static_cast<float>(y) * tileScreen;
+            drawList->AddLine({origin.x, py}, {origin.x + canvasSize.x, py}, IM_COL32(255, 255, 255, 55));
         }
     }
 
     drawList->AddRect(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, IM_COL32(220, 220, 220, 255));
+    ImGui::EndChild();
 }
 
 void WallFloorPaintPanel::drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const
@@ -429,8 +456,9 @@ void WallFloorPaintPanel::drawWallGuide(ImDrawList* drawList, ImVec2 origin, flo
         return;
     }
 
-    const int drawWidth = std::min(width_, wallGuideWidth_);
-    const int drawHeight = std::min(height_, wallGuideHeight_);
+    const int drawWidth = std::min(width_ / pixelsPerTile_, wallGuideWidth_);
+    const int drawHeight = std::min(height_ / pixelsPerTile_, wallGuideHeight_);
+    const float tileScreen = static_cast<float>(pixelsPerTile_) * pixelSize;
     for (int y = 0; y < drawHeight; ++y) {
         for (int x = 0; x < drawWidth; ++x) {
             const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(wallGuideWidth_) + static_cast<std::size_t>(x);
@@ -438,8 +466,8 @@ void WallFloorPaintPanel::drawWallGuide(ImDrawList* drawList, ImVec2 origin, flo
                 continue;
             }
 
-            const ImVec2 min{origin.x + static_cast<float>(x) * pixelSize, origin.y + static_cast<float>(y) * pixelSize};
-            const ImVec2 max{min.x + pixelSize, min.y + pixelSize};
+            const ImVec2 min{origin.x + static_cast<float>(x) * tileScreen, origin.y + static_cast<float>(y) * tileScreen};
+            const ImVec2 max{min.x + tileScreen, min.y + tileScreen};
             drawList->AddRectFilled(min, max, IM_COL32(255, 216, 64, 38));
             drawList->AddRect(min, max, IM_COL32(255, 216, 64, 230), 0.0f, 0, 2.0f);
         }
@@ -459,12 +487,12 @@ void WallFloorPaintPanel::drawParallaxPreview()
     ImGui::SetNextItemWidth(150.0f);
     ImGui::SliderFloat("Floor factor", &floorParallax_, 0.0f, 1.0f);
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::SliderFloat("Scroll X", &previewScrollX_, -256.0f, 256.0f);
+    ImGui::SliderFloat("Scroll X", &previewScrollX_, -4.0f, 4.0f);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::SliderFloat("Scroll Y", &previewScrollY_, -256.0f, 256.0f);
+    ImGui::SliderFloat("Scroll Y", &previewScrollY_, -4.0f, 4.0f);
 
-    const float previewScale = std::max(3.0f, std::min(8.0f, 520.0f / static_cast<float>(std::max(width_, height_))));
+    const float previewScale = std::max(1.0f, std::min(8.0f, 520.0f / static_cast<float>(std::max(width_, height_))));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 size{static_cast<float>(width_) * previewScale, static_cast<float>(height_) * previewScale};
     ImGui::InvisibleButton("WallFloorParallaxPreview", size);
