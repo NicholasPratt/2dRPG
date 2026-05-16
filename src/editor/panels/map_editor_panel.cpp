@@ -14,7 +14,7 @@ constexpr int kMinMapSize = 1;
 constexpr int kMaxMapSize = 128;
 constexpr int kMinTileSize = 8;
 constexpr int kMaxTileSize = 48;
-constexpr int kWorldTileSize = 16;
+constexpr int kWorldTileSize = game::kTileSize;
 constexpr float kPlayerSize = 32.0f;
 constexpr float kPlayerSpeed = 96.0f;
 

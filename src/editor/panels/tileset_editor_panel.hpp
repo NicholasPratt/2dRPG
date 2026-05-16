@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/editor_context.hpp"
+#include "game/constants.hpp"
 #include "game/tileset.hpp"
 
 #include <array>
@@ -15,8 +16,8 @@ public:
 private:
     std::array<char, 64>  tilesetId_{'n', 'e', 'w', '_', 't', 'i', 'l', 'e', 's', 'e', 't', '\0'};
     std::array<char, 256> sourcePath_{'\0'};
-    int tileWidthPx_ = 16;
-    int tileHeightPx_ = 16;
+    int tileWidthPx_ = game::kTileSize;
+    int tileHeightPx_ = game::kTileSize;
     int cols_ = 8;
     int rows_ = 8;
     game::TilesetDef tileset_;

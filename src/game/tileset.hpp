@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/constants.hpp"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -15,8 +17,8 @@ struct TileDef {
 struct TilesetDef {
     std::string id;
     std::string sourcePath; // relative to project root, e.g. "assets/raw/tilesets/overworld.png"
-    int tileWidth = 16;
-    int tileHeight = 16;
+    int tileWidth = kTileSize;
+    int tileHeight = kTileSize;
     std::vector<TileDef> tiles;
 
     // Returns nullptr if the id is out of range.

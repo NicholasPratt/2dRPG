@@ -21,6 +21,7 @@ public:
     void createChapter(EditorContext& context, const std::string& chapterId);
     [[nodiscard]] bool saveCurrentChapter(EditorContext& context);
     [[nodiscard]] const game::Chapter& chapter() const { return chapter_; }
+    void saveDirtyMaps(EditorContext& context);
 
 private:
     game::Chapter chapter_;
@@ -44,7 +45,6 @@ private:
     void addConnectedScreen(EditorContext& context, const char* direction, int dx, int dy);
     void deleteSelectedScreen();
     [[nodiscard]] game::TileMap& ensureMapLoaded(EditorContext& context, const std::string& mapId);
-    void saveDirtyMaps(EditorContext& context);
     [[nodiscard]] game::ChapterScreen* screenAt(int gridX, int gridY);
     [[nodiscard]] game::ChapterScreen* screenById(const std::string& screenId);
     [[nodiscard]] std::string nextScreenId() const;

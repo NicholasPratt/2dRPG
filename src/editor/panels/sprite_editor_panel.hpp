@@ -1,12 +1,14 @@
 #pragma once
 
 #include "editor/editor_context.hpp"
+#include "game/constants.hpp"
 
 #include "imgui.h"
 
 #include <array>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace adventure::editor {
@@ -14,8 +16,8 @@ namespace adventure::editor {
 struct SpriteFrame {
     int x = 0;
     int y = 0;
-    int width = 16;
-    int height = 16;
+    int width = game::kTileSize;
+    int height = game::kTileSize;
     int durationMs = 100;
 };
 
@@ -38,9 +40,9 @@ struct SpriteClipboard {
 struct SpriteDocument {
     std::string id = "new_sprite";
     std::filesystem::path sourcePng;
-    std::array<int, 2> canvasSize{16, 16};
-    std::array<int, 2> gridSize{16, 16};
-    std::array<int, 2> pivot{8, 8};
+    std::array<int, 2> canvasSize{game::kTileSize, game::kTileSize};
+    std::array<int, 2> gridSize{game::kTileSize, game::kTileSize};
+    std::array<int, 2> pivot{game::kTileSize / 2, game::kTileSize / 2};
     std::vector<SpriteFrame> frames{{}};
     std::vector<SpriteLayer> layers{{}};
     std::vector<std::string> tags{"idle"};
@@ -50,7 +52,7 @@ struct SpriteDocument {
 
 struct SpriteUndoState {
     SpriteDocument document;
-    std::array<int, 2> trackedCanvasSize{16, 16};
+    std::array<int, 2> trackedCanvasSize{game::kTileSize, game::kTileSize};
     std::array<int, 4> selectionBounds{0, 0, 0, 0};
     int selectedFrame = 0;
     int selectedLayer = 0;
@@ -69,10 +71,17 @@ public:
     void openSpriteReference(const std::filesystem::path& spriteReference);
     void openCharacterSpriteReference(const std::filesystem::path& spriteReference);
     bool saveForChapter(const EditorContext& context);
+    void resetDocumentBuffers();
     [[nodiscard]] std::filesystem::path spriteMetadataReference(const EditorContext& context) const;
 
 private:
+    struct SpriteDocumentBuffer {
+        SpriteDocument document;
+        bool dirty = false;
+    };
+
     SpriteDocument document_;
+    std::unordered_map<std::string, SpriteDocumentBuffer> documentBuffers_;
     bool showGrid_ = true;
     bool onionSkin_ = false;
     int zoom_ = 8;
@@ -85,9 +94,9 @@ private:
     int playbackFps_ = 12;
     bool runAnimationPreview_ = false;
     float previewTimeSeconds_ = 0.0f;
-    std::array<int, 2> trackedCanvasSize_{16, 16};
-    std::array<int, 2> newSpriteSize_{16, 16};
-    std::array<int, 2> resizeSpriteSize_{16, 16};
+    std::array<int, 2> trackedCanvasSize_{game::kTileSize, game::kTileSize};
+    std::array<int, 2> newSpriteSize_{game::kTileSize, game::kTileSize};
+    std::array<int, 2> resizeSpriteSize_{game::kTileSize, game::kTileSize};
     std::array<int, 2> resizeSelectionSize_{1, 1};
     std::array<int, 2> dragStartPixel_{0, 0};
     std::array<int, 2> lastPaintPixel_{-1, -1};
@@ -123,6 +132,8 @@ private:
     void drawLayers();
     void drawPalette(EditorContext& context);
     void drawExport(EditorContext& context);
+    bool loadDocumentFromMetadata(const std::filesystem::path& metadataPath);
+    bool importSheetPixels(const std::filesystem::path& inputPath);
     void saveSpriteMetadata(const EditorContext& context) const;
     void exportSingleFramePng(const EditorContext& context);
     void exportSpriteSheetPng(const EditorContext& context);

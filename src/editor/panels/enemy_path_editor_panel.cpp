@@ -1,6 +1,8 @@
 #include "editor/panels/enemy_path_editor_panel.hpp"
 
+#include "game/constants.hpp"
 #include "game/map.hpp"
+#include "game/path.hpp"
 #include "imgui.h"
 
 #include <algorithm>
@@ -12,9 +14,9 @@
 namespace adventure::editor {
 namespace {
 
-constexpr float kWorldTileSize = 16.0f;
-constexpr int kDefaultWorldTilesW = 24;
-constexpr int kDefaultWorldTilesH = 16;
+constexpr float kWorldTileSize = static_cast<float>(game::kTileSize);
+constexpr int kDefaultWorldTilesW = game::kScreenTilesW;
+constexpr int kDefaultWorldTilesH = game::kScreenTilesH;
 constexpr float kWaypointRadius = 6.0f;
 constexpr float kHitRadius = 12.0f; // canvas pixels for waypoint hit detection
 
@@ -404,19 +406,21 @@ void EnemyPathEditorPanel::loadBgMap(EditorContext& context)
 
 void EnemyPathEditorPanel::savePath(EditorContext& context)
 {
-    const std::string id(pathId_.data());
-    const std::string mapId(mapId_.data());
-
-    std::vector<std::pair<float, float>> pts;
-    pts.reserve(waypoints_.size());
+    game::EnemyPath path;
+    path.id = pathId_.data();
+    path.mapId = mapId_.data();
+    path.behavior = static_cast<game::PathBehavior>(static_cast<int>(behavior_));
+    path.speed = speed_;
+    path.loop = loop_;
+    path.respawn = respawn_;
+    path.waypoints.reserve(waypoints_.size());
     for (const auto& wp : waypoints_) {
-        pts.emplace_back(wp.x, wp.y);
+        path.waypoints.push_back({wp.x, wp.y});
     }
 
     std::string error;
-    const std::filesystem::path outputPath = context.assets.gamePathPath() / (id + ".adpath");
-    if (savePathFile(outputPath, id, mapId, static_cast<int>(behavior_),
-            speed_, loop_, respawn_, pts, &error)) {
+    const std::filesystem::path outputPath = context.assets.gamePathPath() / (path.id + ".adpath");
+    if (game::saveEnemyPath(outputPath, path, &error)) {
         status_ = "Saved path: " + outputPath.generic_string();
     } else {
         status_ = "Failed to save path: " + error;
@@ -428,38 +432,31 @@ void EnemyPathEditorPanel::loadPath(EditorContext& context)
     const std::string id(pathId_.data());
     const std::filesystem::path inputPath = context.assets.gamePathPath() / (id + ".adpath");
 
-    std::string loadedId;
-    std::string loadedMapId;
-    int behaviorInt = 1;
-    float speed = 64.0f;
-    bool loop = true;
-    bool respawn = false;
-    std::vector<std::pair<float, float>> pts;
-
+    game::EnemyPath path;
     std::string error;
-    if (!loadPathFile(inputPath, loadedId, loadedMapId, behaviorInt, speed, loop, respawn, pts, &error)) {
+    if (!game::loadEnemyPath(inputPath, path, &error)) {
         status_ = "Failed to load path: " + error;
         return;
     }
 
     // Apply loaded data
-    const std::size_t idLen = std::min(loadedId.size(), pathId_.size() - 1);
+    const std::size_t idLen = std::min(path.id.size(), pathId_.size() - 1);
     std::memset(pathId_.data(), 0, pathId_.size());
-    std::memcpy(pathId_.data(), loadedId.data(), idLen);
+    std::memcpy(pathId_.data(), path.id.data(), idLen);
 
-    const std::size_t mapLen = std::min(loadedMapId.size(), mapId_.size() - 1);
+    const std::size_t mapLen = std::min(path.mapId.size(), mapId_.size() - 1);
     std::memset(mapId_.data(), 0, mapId_.size());
-    std::memcpy(mapId_.data(), loadedMapId.data(), mapLen);
+    std::memcpy(mapId_.data(), path.mapId.data(), mapLen);
 
-    behavior_ = static_cast<Behavior>(std::clamp(behaviorInt, 0, 2));
-    speed_ = std::clamp(speed, 16.0f, 256.0f);
-    loop_ = loop;
-    respawn_ = respawn;
+    behavior_ = static_cast<Behavior>(std::clamp(static_cast<int>(path.behavior), 0, 2));
+    speed_ = std::clamp(path.speed, 16.0f, 256.0f);
+    loop_ = path.loop;
+    respawn_ = path.respawn;
 
     waypoints_.clear();
-    waypoints_.reserve(pts.size());
-    for (const auto& [x, y] : pts) {
-        waypoints_.push_back({x, y});
+    waypoints_.reserve(path.waypoints.size());
+    for (const game::PathWaypoint& wp : path.waypoints) {
+        waypoints_.push_back({wp.x, wp.y});
     }
     selectedWaypoint_ = -1;
 

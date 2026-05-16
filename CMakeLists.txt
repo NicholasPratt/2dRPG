@@ -19,7 +19,9 @@ target_include_directories(imgui PUBLIC
 
 add_library(adventure_game STATIC
     src/game/chapter.cpp
+    src/game/path.cpp
     src/game/map.cpp
+    src/game/sprite.cpp
     src/game/tileset.cpp
 )
 
@@ -74,6 +76,31 @@ if(OpenGL_FOUND AND PkgConfig_FOUND)
 endif()
 
 if(OpenGL_FOUND AND GLFW3_FOUND)
+    add_executable(adventure_game_window
+        src/app/main_game.cpp
+        src/game/engine.cpp
+        src/editor/stb_image_impl.cpp
+    )
+
+    target_include_directories(adventure_game_window PRIVATE
+        external/stb
+        ${GLFW3_INCLUDE_DIRS}
+    )
+
+    target_compile_options(adventure_game_window PRIVATE
+        ${GLFW3_CFLAGS_OTHER}
+    )
+
+    target_link_directories(adventure_game_window PRIVATE
+        ${GLFW3_LIBRARY_DIRS}
+    )
+
+    target_link_libraries(adventure_game_window PRIVATE
+        adventure_game
+        OpenGL::GL
+        ${GLFW3_LIBRARIES}
+    )
+
     add_executable(adventure_editor_window
         src/app/main_editor.cpp
         external/imgui/backends/imgui_impl_glfw.cpp

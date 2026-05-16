@@ -61,7 +61,10 @@ ImU32 dimColor(ImU32 color, float factor)
 void LayoutEditorPanel::draw(EditorContext& context)
 {
     if (chapter_.screens.empty()) {
-        chapter_.screens.push_back(game::ChapterScreen{});
+        addScreen();
+        if (chapter_.startScreenId.empty()) {
+            chapter_.startScreenId = chapter_.screens.front().id;
+        }
     }
     selectedScreen_ = std::clamp(selectedScreen_, 0, static_cast<int>(chapter_.screens.size()) - 1);
     if (selectedScreenValid()) {
@@ -642,8 +645,11 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
 {
     chapter_ = game::Chapter{};
     chapter_.id = chapterId.empty() ? "chapter_1" : chapterId;
-    chapter_.startScreenId = "screen_1";
-    chapter_.screens.assign(1, game::ChapterScreen{});
+    game::ChapterScreen firstScreen;
+    firstScreen.id = "screen_1";
+    firstScreen.mapId = "screen_1_map";
+    chapter_.screens = {std::move(firstScreen)};
+    chapter_.startScreenId = chapter_.screens.front().id;
     selectedScreen_ = 0;
     syncChapterIdBuffer();
     context.currentChapterId = chapter_.id;

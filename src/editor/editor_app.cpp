@@ -45,6 +45,7 @@ void EditorApp::draw()
     if (context_.requestEditScreenGraphics) {
         context_.requestEditScreenGraphics = false;
         if (!context_.selectedScreenMapId.empty()) {
+            layoutEditor_.saveDirtyMaps(context_);
             wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
         }
         screenGraphicsMode_ = false;
@@ -272,6 +273,8 @@ void EditorApp::drawUnsavedChangesModal()
 void EditorApp::chooseChapter(const std::string& chapterId)
 {
     if (layoutEditor_.loadChapterById(context_, chapterId)) {
+        wallFloorPaint_.resetScreenBuffers();
+        spriteEditor_.resetDocumentBuffers();
         startupChapterChosen_ = true;
         screenGraphicsMode_ = false;
         requestedTab_ = MainTab::Layout;
@@ -282,6 +285,8 @@ void EditorApp::chooseChapter(const std::string& chapterId)
 void EditorApp::createChapter()
 {
     layoutEditor_.createChapter(context_, newChapterId_.data());
+    wallFloorPaint_.resetScreenBuffers();
+    spriteEditor_.resetDocumentBuffers();
     startupChapterChosen_ = true;
     screenGraphicsMode_ = false;
     requestedTab_ = MainTab::Layout;

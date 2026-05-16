@@ -41,13 +41,7 @@ void TilesetEditorPanel::drawToolbar(EditorContext& context)
     ImGui::SameLine();
     ImGui::TextDisabled("(relative to project root)");
 
-    ImGui::SetNextItemWidth(80.0f);
-    ImGui::InputInt("Tile W px", &tileWidthPx_);
-    tileWidthPx_ = std::clamp(tileWidthPx_, 1, 256);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(80.0f);
-    ImGui::InputInt("Tile H px", &tileHeightPx_);
-    tileHeightPx_ = std::clamp(tileHeightPx_, 1, 256);
+    ImGui::Text("Tile  %dx%d px", game::kTileSize, game::kTileSize);
 
     ImGui::SetNextItemWidth(80.0f);
     ImGui::InputInt("Cols", &cols_);

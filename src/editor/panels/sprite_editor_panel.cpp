@@ -1,5 +1,7 @@
 #include "editor/panels/sprite_editor_panel.hpp"
 
+#include "game/sprite.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -447,19 +449,49 @@ void SpriteEditorPanel::openSpriteReference(const std::filesystem::path& spriteR
     }
 
     const std::filesystem::path filename = spriteReference.filename();
-    std::string id = filename.string();
+    std::string newId = filename.string();
     constexpr const char* kSpriteMetadataSuffix = ".sprite.json";
-    if (id.size() > std::char_traits<char>::length(kSpriteMetadataSuffix) &&
-        id.compare(id.size() - std::char_traits<char>::length(kSpriteMetadataSuffix), std::char_traits<char>::length(kSpriteMetadataSuffix), kSpriteMetadataSuffix) == 0) {
-        id.erase(id.size() - std::char_traits<char>::length(kSpriteMetadataSuffix));
+    if (newId.size() > std::char_traits<char>::length(kSpriteMetadataSuffix) &&
+        newId.compare(newId.size() - std::char_traits<char>::length(kSpriteMetadataSuffix), std::char_traits<char>::length(kSpriteMetadataSuffix), kSpriteMetadataSuffix) == 0) {
+        newId.erase(newId.size() - std::char_traits<char>::length(kSpriteMetadataSuffix));
     } else if (filename.has_stem()) {
-        id = filename.stem().string();
+        newId = filename.stem().string();
     }
 
-    if (!id.empty()) {
-        document_.id = id;
+    if (newId.empty()) {
+        return;
     }
 
+    // Stash current document when switching to a different sprite
+    if (!document_.id.empty() && document_.id != newId) {
+        auto& buf = documentBuffers_[document_.id];
+        buf.document = document_;
+        buf.dirty = buf.dirty || documentDirty_;
+        documentDirty_ = false;
+        undoStack_.clear();
+    }
+
+    // Restore from in-memory buffer if available
+    auto it = documentBuffers_.find(newId);
+    if (it != documentBuffers_.end()) {
+        document_ = it->second.document;
+        documentDirty_ = it->second.dirty;
+        if (spriteReference.extension() == ".png") {
+            document_.sourcePng = spriteReference;
+        }
+        return;
+    }
+
+    if (spriteReference.extension() == ".json" && loadDocumentFromMetadata(spriteReference)) {
+        documentDirty_ = false;
+        undoStack_.clear();
+        selectedFrame_ = 0;
+        selectedLayer_ = 0;
+        return;
+    }
+
+    // New sprite: set ID and sourcePng (existing behaviour)
+    document_.id = newId;
     if (spriteReference.extension() == ".png") {
         document_.sourcePng = spriteReference;
     }
@@ -477,10 +509,10 @@ void SpriteEditorPanel::openCharacterSpriteReference(const std::filesystem::path
         });
     });
 
-    newSpriteSize_ = {32, 32};
-    resizeSpriteSize_ = {32, 32};
-    if (blankDocument && document_.canvasSize != std::array<int, 2>{32, 32}) {
-        createBlankSprite(32, 32);
+    newSpriteSize_ = {game::kTileSize, game::kTileSize};
+    resizeSpriteSize_ = {game::kTileSize, game::kTileSize};
+    if (blankDocument && document_.canvasSize != std::array<int, 2>{game::kTileSize, game::kTileSize}) {
+        createBlankSprite(game::kTileSize, game::kTileSize);
         openSpriteReference(spriteReference);
     }
 }
@@ -492,10 +524,48 @@ std::filesystem::path SpriteEditorPanel::spriteMetadataReference(const EditorCon
 
 bool SpriteEditorPanel::saveForChapter(const EditorContext& context)
 {
-    saveSpriteMetadata(context);
-    exportSpriteSheetPng(context);
+    // Flush current document into the buffer map
+    if (!document_.id.empty()) {
+        auto& buf = documentBuffers_[document_.id];
+        buf.document = document_;
+        buf.dirty = buf.dirty || documentDirty_;
+    }
+
+    // Save every dirty document by temporarily making it the active document
+    for (auto& [id, buf] : documentBuffers_) {
+        if (!buf.dirty) {
+            continue;
+        }
+        SpriteDocument live = std::move(document_);
+        document_ = buf.document;
+        saveSpriteMetadata(context);
+        exportSpriteSheetPng(context);
+        buf.document = document_;  // capture updated sourcePng
+        buf.dirty = false;
+        document_ = std::move(live);
+    }
+
+    // Re-sync live document's sourcePng from its buffer (updated by exportSpriteSheetPng above)
+    if (!document_.id.empty()) {
+        auto it = documentBuffers_.find(document_.id);
+        if (it != documentBuffers_.end()) {
+            document_.sourcePng = it->second.document.sourcePng;
+        }
+    }
+
     documentDirty_ = false;
     return !document_.id.empty();
+}
+
+void SpriteEditorPanel::resetDocumentBuffers()
+{
+    documentBuffers_.clear();
+    document_ = SpriteDocument{};
+    documentDirty_ = false;
+    undoStack_.clear();
+    selectedFrame_ = 0;
+    selectedLayer_ = 0;
+    trackedCanvasSize_ = {game::kTileSize, game::kTileSize};
 }
 
 void SpriteEditorPanel::drawTopBar()
@@ -528,15 +598,11 @@ void SpriteEditorPanel::drawTopBar()
     }
 
     if (ImGui::BeginPopupModal("New Sprite", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        int size[2]{newSpriteSize_[0], newSpriteSize_[1]};
-        if (ImGui::InputInt2("Dimensions", size)) {
-            newSpriteSize_[0] = clampDimension(size[0]);
-            newSpriteSize_[1] = clampDimension(size[1]);
-        }
+        ImGui::Text("Dimensions  %dx%d", game::kTileSize, game::kTileSize);
 
         if (ImGui::Button("Create", ImVec2(120.0f, 0.0f))) {
             recordUndoState();
-            createBlankSprite(newSpriteSize_[0], newSpriteSize_[1]);
+            createBlankSprite(game::kTileSize, game::kTileSize);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -552,17 +618,12 @@ void SpriteEditorPanel::drawTopBar()
     }
 
     if (ImGui::BeginPopupModal("Resize Sprite", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        int size[2]{resizeSpriteSize_[0], resizeSpriteSize_[1]};
-        if (ImGui::InputInt2("Dimensions", size)) {
-            resizeSpriteSize_[0] = clampDimension(size[0]);
-            resizeSpriteSize_[1] = clampDimension(size[1]);
-        }
-
+        ImGui::Text("Dimensions  %dx%d", game::kTileSize, game::kTileSize);
         ImGui::TextUnformatted("Resizes all frames and layers using nearest-neighbor scaling.");
 
         if (ImGui::Button("Resize", ImVec2(120.0f, 0.0f))) {
             recordUndoState();
-            resizeSprite(resizeSpriteSize_[0], resizeSpriteSize_[1]);
+            resizeSprite(game::kTileSize, game::kTileSize);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -740,19 +801,9 @@ void SpriteEditorPanel::drawToolButton(const char* label, const char* tooltip, i
 
 void SpriteEditorPanel::drawCenterWorkspace()
 {
-    int canvasSize[2]{document_.canvasSize[0], document_.canvasSize[1]};
-    if (ImGui::InputInt2("Canvas", canvasSize)) {
-        document_.canvasSize[0] = clampDimension(canvasSize[0]);
-        document_.canvasSize[1] = clampDimension(canvasSize[1]);
-        ensureDocumentState();
-    }
-
+    ImGui::Text("Canvas  %dx%d", document_.canvasSize[0], document_.canvasSize[1]);
     ImGui::SameLine();
-    int gridSize[2]{document_.gridSize[0], document_.gridSize[1]};
-    if (ImGui::InputInt2("Grid", gridSize)) {
-        document_.gridSize[0] = std::clamp(gridSize[0], 1, document_.canvasSize[0]);
-        document_.gridSize[1] = std::clamp(gridSize[1], 1, document_.canvasSize[1]);
-    }
+    ImGui::Text("Grid  %dx%d", document_.gridSize[0], document_.gridSize[1]);
 
     ImGui::SameLine();
     int pivot[2]{document_.pivot[0], document_.pivot[1]};
@@ -1077,35 +1128,95 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
     }
 }
 
-void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
+bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& metadataPath)
 {
-    ensureDirectory(context.assets.gameSpritePath());
-    const std::filesystem::path outputPath = context.assets.gameSpritePath() / (document_.id + ".sprite.json");
-    std::ofstream output(outputPath);
-    if (!output) {
-        return;
+    game::SpriteMetadata metadata;
+    std::string error;
+    if (!game::loadSpriteMetadata(metadataPath, metadata, &error)) {
+        ioStatus_ = "Failed to load sprite metadata: " + error;
+        return false;
     }
 
-    output << "{\n";
-    output << "  \"id\": \"" << document_.id << "\",\n";
-    output << "  \"source\": \"" << document_.sourcePng.generic_string() << "\",\n";
-    output << "  \"canvasSize\": [" << document_.canvasSize[0] << ", " << document_.canvasSize[1] << "],\n";
-    output << "  \"gridSize\": [" << document_.gridSize[0] << ", " << document_.gridSize[1] << "],\n";
-    output << "  \"pivot\": [" << document_.pivot[0] << ", " << document_.pivot[1] << "],\n";
-    output << "  \"frames\": [\n";
-    for (std::size_t i = 0; i < document_.frames.size(); ++i) {
-        const SpriteFrame& frame = document_.frames[i];
-        output << "    {\"rect\": [" << frame.x << ", " << frame.y << ", " << frame.width << ", " << frame.height
-               << "], \"durationMs\": " << frame.durationMs << "}";
-        output << (i + 1 == document_.frames.size() ? "\n" : ",\n");
+    document_ = SpriteDocument{};
+    document_.id = metadata.id;
+    document_.sourcePng = metadata.source;
+    document_.canvasSize = metadata.canvasSize;
+    document_.gridSize = metadata.gridSize;
+    document_.pivot = metadata.pivot;
+    document_.frames.clear();
+    document_.frames.reserve(metadata.frames.size());
+    for (const game::SpriteFrameDef& frame : metadata.frames) {
+        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs});
     }
-    output << "  ],\n";
-    output << "  \"tags\": [";
-    for (std::size_t i = 0; i < document_.tags.size(); ++i) {
-        output << "\"" << document_.tags[i] << "\"" << (i + 1 == document_.tags.size() ? "" : ", ");
+    document_.tags = metadata.tags;
+    document_.layers.assign(1, SpriteLayer{});
+    document_.cels.assign(document_.frames.size(), std::vector<SpriteCel>(1));
+    trackedCanvasSize_ = document_.canvasSize;
+    resizeSpriteSize_ = document_.canvasSize;
+    newSpriteSize_ = document_.canvasSize;
+    clearSelection();
+    resizeCanvasStorage(document_.canvasSize[0], document_.canvasSize[1], document_.canvasSize[0], document_.canvasSize[1]);
+
+    if (!document_.sourcePng.empty()) {
+        (void)importSheetPixels(document_.sourcePng);
     }
-    output << "]\n";
-    output << "}\n";
+
+    ensureDocumentState();
+    ioStatus_ = "Loaded sprite metadata: " + metadataPath.generic_string();
+    return true;
+}
+
+bool SpriteEditorPanel::importSheetPixels(const std::filesystem::path& inputPath)
+{
+    int width = 0;
+    int height = 0;
+    std::vector<unsigned char> rgba;
+    if (!readEditorPngRgba(inputPath, width, height, rgba)) {
+        return false;
+    }
+
+    const int frameWidth = document_.canvasSize[0];
+    const int frameHeight = document_.canvasSize[1];
+    if (frameWidth <= 0 || frameHeight <= 0 || height != frameHeight || width < frameWidth) {
+        return false;
+    }
+
+    const int availableFrames = std::max(1, width / frameWidth);
+    const int frameCount = std::min(availableFrames, static_cast<int>(document_.frames.size()));
+    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+        SpriteCel& cel = document_.cels[static_cast<std::size_t>(frameIndex)][0];
+        cel.pixels.assign(static_cast<std::size_t>(frameWidth * frameHeight), 0u);
+        for (int y = 0; y < frameHeight; ++y) {
+            for (int x = 0; x < frameWidth; ++x) {
+                const std::size_t srcIndex = (static_cast<std::size_t>(y) * width + static_cast<std::size_t>(frameIndex * frameWidth + x)) * 4u;
+                cel.pixels[static_cast<std::size_t>(y) * frameWidth + x] =
+                    (static_cast<unsigned int>(rgba[srcIndex + 3]) << 24) |
+                    (static_cast<unsigned int>(rgba[srcIndex + 2]) << 16) |
+                    (static_cast<unsigned int>(rgba[srcIndex + 1]) << 8) |
+                    static_cast<unsigned int>(rgba[srcIndex + 0]);
+            }
+        }
+    }
+    return true;
+}
+
+void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
+{
+    game::SpriteMetadata metadata;
+    metadata.id = document_.id;
+    metadata.source = document_.sourcePng;
+    metadata.canvasSize = document_.canvasSize;
+    metadata.gridSize = document_.gridSize;
+    metadata.pivot = document_.pivot;
+    metadata.tags = document_.tags;
+    metadata.frames.clear();
+    metadata.frames.reserve(document_.frames.size());
+    for (const SpriteFrame& frame : document_.frames) {
+        metadata.frames.push_back({frame.x, frame.y, frame.width, frame.height, frame.durationMs});
+    }
+
+    std::string ignoredError;
+    (void)game::saveSpriteMetadata(context.assets.gameSpritePath() / (document_.id + ".sprite.json"), metadata, &ignoredError);
 }
 
 void SpriteEditorPanel::exportSpriteSheetPng(const EditorContext& context)

@@ -33,6 +33,7 @@ The main architectural rule is that the editor creates data the game can load. R
   src/
     app/
       main_editor.cpp               # windowed editor executable
+      main_game.cpp                 # windowed runtime executable
       main_editor_smoke.cpp         # headless ImGui editor smoke test
       main_game_smoke.cpp           # runtime map + chapter loader smoke test
     editor/
@@ -50,7 +51,10 @@ The main architectural rule is that the editor creates data the game can load. R
         wall_floor_paint_panel.hpp/.cpp
     game/
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink types and .adchapter load/save
+      engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision
       map.hpp/.cpp                  # TileMap type and .admap load/save
+      path.hpp/.cpp                 # EnemyPath type and .adpath load/save
+      sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
 ```
 
@@ -58,10 +62,11 @@ The main architectural rule is that the editor creates data the game can load. R
 
 ```text
 imgui                    Static Dear ImGui library.
-adventure_game           Runtime-facing game/data code (chapter, map, tileset).
+adventure_game           Runtime-facing game/data code (chapter, map, path, sprite metadata, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads an .admap and .adchapter through runtime code.
+adventure_game_smoke     Loads .admap, .adchapter, .sprite.json, and round-trips .adpath through runtime code.
+adventure_game_window    GLFW/OpenGL runtime game window (built when OpenGL + GLFW found).
 adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
 
@@ -74,13 +79,15 @@ cmake --build build --parallel
 ./build/adventure_game_smoke
 ./build/adventure_game_smoke assets/game/maps/new_map.admap assets/game/chapters/chapter_1.adchapter
 ./build/adventure_editor_smoke
+./build/adventure_game_window
 ./build/adventure_editor_window   # macOS: emits OpenGL deprecation warnings, harmless
 ```
 
 ## Dependency Direction
 
 ```text
-window executable  →  adventure_editor  →  adventure_game
+editor window      →  adventure_editor  →  adventure_game
+game window        →  runtime engine    →  adventure_game
 editor_smoke       →  adventure_editor  →  adventure_game
 game_smoke                             →  adventure_game
 ```
@@ -96,11 +103,11 @@ On startup, `EditorApp` opens a chapter selector modal. The user must load an ex
 | Tab | Panel | Purpose |
 |-----|-------|---------|
 | Characters | `CharacterEditorPanel` | Character sheets with sprite references |
-| Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor |
+| Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor with `.sprite.json` round-trip |
 | Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
 | Wall/Floor Paint | `WallFloorPaintPanel` | Pixel paint tool for room art with selected-screen wall guide and parallax preview |
-| Enemy Paths | `EnemyPathEditorPanel` | Waypoint/spline editor for enemy patrol paths |
+| Enemy Paths | `EnemyPathEditorPanel` | Waypoint editor for enemy patrol paths |
 | Assets | *(inline)* | Asset directory listing |
 
 ---
@@ -235,6 +242,32 @@ Editor generates tile definitions from a source PNG grid.
 
 ---
 
+## Runtime Engine
+
+Implemented in `src/game/engine.*` and `src/app/main_game.cpp`. Built as `adventure_game_window` when OpenGL and GLFW are available.
+
+Runtime behavior:
+
+- Initializes a GLFW/OpenGL window and runs a fixed 60 Hz update loop.
+- Loads the selected chapter, resolves `Chapter::startScreenId`, then loads the active screen's `.admap`.
+- Uses `ChapterScreen::mapId` as the screen asset key for `.admap`, wall/floor PNGs, and `.adpath` map references.
+- Renders pre-baked screen art from `assets/game/tilesets/<mapId>_floor.png` and `<mapId>_wall.png`.
+- Falls back to debug-color rendering when screen PNGs are missing.
+- Moves a placeholder player with WASD/arrow keys.
+- Collides against nonzero cells in `.admap` layer 1.
+- Detects screen-boundary crossings and follows north/south/east/west `ScreenLink` references.
+- Runs a simple sliding screen transition after loading the linked screen.
+- Loads `.adpath` files matching the active screen's `mapId` and advances runtime path entities along their waypoints.
+
+Current limitations:
+
+- Rendering uses fixed-pipeline OpenGL for speed of implementation; a shader/core-profile renderer is planned.
+- Runtime sprites are not yet rendered from `.sprite.json` metadata.
+- Enemy defeat persistence is not implemented yet.
+- Collision is binary: nonzero mid-layer tile means solid.
+
+---
+
 ## Sprite Editor
 
 Implemented in `src/editor/panels/sprite_editor_panel.*`.
@@ -247,6 +280,30 @@ Implemented in `src/editor/panels/sprite_editor_panel.*`.
 - Clipboard: copy/paste selections.
 - OS-aware shortcuts: `Cmd+Z/C/V` (macOS), `Ctrl+Z/C/V` (other).
 - Snapshot-based undo for drawing, transforms, paste, resize, frame/layer changes, import.
+- Opening an existing `.sprite.json` parses metadata through `src/game/sprite.*` and imports the referenced sheet pixels when available.
+
+### Per-sprite dirty buffer system
+
+`SpriteEditorPanel` holds a `std::unordered_map<std::string, SpriteDocumentBuffer> documentBuffers_` keyed by sprite ID. When `openSpriteReference` switches to a different sprite the current `SpriteDocument` is stashed into the map with its dirty flag. Switching back restores from the map. On chapter save (`saveForChapter`) every dirty entry is flushed: each document is temporarily swapped in as the active document, written with `saveSpriteMetadata` + `exportSpriteSheetPng`, then swapped back out. `resetDocumentBuffers()` (called on chapter switch) clears all buffers so stale documents from a previous chapter never bleed through.
+
+Sprite metadata is runtime-facing and implemented in `src/game/sprite.hpp/.cpp`:
+
+```cpp
+struct SpriteFrameDef {
+    int x, y, width, height;
+    int durationMs;
+};
+
+struct SpriteMetadata {
+    std::string id;
+    std::filesystem::path source;
+    std::array<int, 2> canvasSize;
+    std::array<int, 2> gridSize;
+    std::array<int, 2> pivot;
+    std::vector<SpriteFrameDef> frames;
+    std::vector<std::string> tags;
+};
+```
 
 Export/import paths:
 
@@ -264,36 +321,43 @@ Export/import paths:
 Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 
 - Two-layer pixel painter: Floor and Wall.
-- Tools: pencil, eraser, fill, line, rect.
+- Canvas is fixed at `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (384 × 256 px). Resize controls have been removed — the size is locked to the screen constants.
+- Tools: Pencil, Eraser, Fill, Line, Rect, Select, **TileStamp**, **TileErase**.
+- Brush shapes: Square, Circle, Spray, Dither.
+- Snap modes: None, Full tile, Half tile, Quarter tile.
 - Palette, brush size, layer visibility/opacity controls.
-- **Pixel-scale canvas:** when opened from `Edit Screen Graphics`, the canvas is sized at `mapWidth × pixelsPerTile` by `mapHeight × pixelsPerTile` pixels so each canvas pixel is one actual output pixel. `pixelsPerTile` defaults to 16 and is adjustable in the toolbar (range 1–64).
-- **Tile boundary grid:** a subtle white overlay marks tile boundaries on the canvas to aid alignment.
-- **Scrollable canvas:** the canvas region is a fixed-height (500 px) scrollable child window with a horizontal scrollbar, supporting large canvases comfortably.
+- **Tile boundary grid:** a subtle overlay marks tile boundaries on the canvas.
 - Zoom range 1–16 (opens at zoom 2 when loaded from a screen).
-- When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay; guide cells are scaled to `pixelsPerTile × pixelsPerTile` canvas pixels each.
-- Parallax preview: animated floor scroll at a subtle ±4 px range behind the wall layer.
-- Undo with one level of history.
-- Export: writes floor, wall, and parallax-preview PNGs to both `assets/raw/tilesets/` and `assets/game/tilesets/`.
-- Chapter save calls this export path so the current paint document has game-ready PNGs for runtime use.
+- When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay.
+- Parallax preview: animated floor scroll behind the wall layer.
+- Undo stack (up to 50 steps).
 
-Exported paint files:
+### Tile palette system
+
+In Select mode, a region can be snapped to the tile grid and added to the chapter-wide tile palette (`EditorContext::tilePalette`, a `std::vector<TilePaletteEntry>`). Each entry stores the floor and wall pixel data for the selected tile region. The **TileStamp** tool picks an entry from the palette and stamps it onto any screen; **TileErase** clears whole tile cells (makes them transparent) without affecting other pixels.
+
+### Per-screen dirty buffer system
+
+`WallFloorPaintPanel` holds a `std::unordered_map<std::string, ScreenGraphicsBuffer> screenBuffers_` keyed by `mapId`. When `openScreenGraphics` switches to a different screen, the current canvas is stashed into the map with a dirty flag. Switching back restores the in-memory buffer first; if the screen is new to the session it falls back to loading from the previously exported PNGs on disk (via stb_image), and if those are absent it starts a blank canvas. On chapter save (`saveForChapter`) every dirty entry is flushed by `exportScreenPngs`. `resetScreenBuffers()` (called on chapter switch) clears all buffers.
+
+Exported paint files (one set per screen, `<id>` = `mapId`):
 
 | File | Purpose |
 |------|---------|
-| `assets/raw/tilesets/<id>_floor.png` | Editable/source floor art export |
-| `assets/raw/tilesets/<id>_wall.png` | Editable/source wall art export |
+| `assets/raw/tilesets/<id>_floor.png` | Editable/source floor art |
+| `assets/raw/tilesets/<id>_wall.png` | Editable/source wall art |
 | `assets/raw/tilesets/<id>_preview.png` | Editable/source composite preview |
 | `assets/game/tilesets/<id>_floor.png` | Game-ready floor art |
 | `assets/game/tilesets/<id>_wall.png` | Game-ready wall/overhead art |
-| `assets/game/tilesets/<id>_preview.png` | Game-ready preview/debug composite |
+| `assets/game/tilesets/<id>_preview.png` | Game-ready composite preview |
 
 ---
 
 ## Enemy Path Editor
 
-Implemented in `src/editor/panels/enemy_path_editor_panel.*`.
+Implemented in `src/game/path.*` and `src/editor/panels/enemy_path_editor_panel.*`.
 
-Addresses spec §4.4 (movement splines / state definition).
+Addresses spec §4.4 (waypoint paths / state definition).
 
 ### Data model
 
@@ -302,6 +366,8 @@ struct Waypoint { float x, y; };  // world pixels
 enum class Behavior { Idle, Patrol, Aggro };
 // Fields: id, mapId (ref), behavior, speed (px/s), loop, respawn, waypoints
 ```
+
+The editor saves and loads through `game::saveEnemyPath` / `game::loadEnemyPath`, so editor and runtime share one parser.
 
 ### `.adpath` format (v1)
 
@@ -365,34 +431,38 @@ The project manifest at `assets/game/project.json` mirrors these roots.
 
 | Spec section | Status |
 |---|---|
-| §3.1 Chapters / Screens / Screen-Flip links | ✅ Data model + editor (no runtime transition yet) |
-| §3.1 Parallax / pseudo-3D | ✅ Editor preview in Wall/Floor Paint (no runtime renderer yet) |
-| §3.2 Real-time combat / timed mechanics | ❌ Not yet |
-| §3.2 Enemy respawn flag | ✅ `respawnEnemies` on `ChapterScreen` |
+| §3.1 Chapters / Screens / Screen-Flip links | ✅ Data model + editor + basic runtime transition |
+| §3.1 Parallax / pseudo-3D | ✅ Editor preview + runtime floor/wall pre-baked PNG render |
+| §3.2 Display & tile dimensions locked to constants | ✅ All editors use `kTileSize`, `kScreenTilesW/H` from `constants.hpp` |
+| §3.3 Real-time combat / timed mechanics | ❌ Not yet |
+| §3.3 Enemy respawn flag | ✅ `respawnEnemies` on `ChapterScreen` |
 | §4.1 Layout editor (macro view, screen management) | ✅ |
 | §4.2 3-layer tile maps (floor / mid / ceiling) | ✅ |
 | §4.2 Copy/paste tiles | ✅ |
-| §4.2 Pixel painting | ✅ Wall/Floor Paint panel with selected-screen wall guide |
-| §4.3 Sprite & animation editor | ✅ |
-| §4.4 Enemy paths / splines | ✅ `.adpath` format + editor |
-| §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data |
+| §4.3 Pixel painting — per-screen isolation & dirty buffers | ✅ Each screen has its own in-memory buffer; PNGs written only on chapter save |
+| §4.3 Pixel painting — tile palette & stamp tool | ✅ Select → Add to palette → TileStamp / TileErase across all screens |
+| §4.3 Sprite & animation editor — per-sprite dirty buffers | ✅ Each sprite stashed/restored independently; saved only on chapter save |
+| §4.3 Sprite metadata round-trip | ✅ Runtime-facing `.sprite.json` parser plus editor import from metadata |
+| §4.3 Sprite & animation editor — tools & transforms | ✅ |
+| §4.4 Enemy waypoint paths | ✅ Shared `.adpath` format + editor + runtime path followers |
+| §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data; runtime currently moves non-idle paths |
 | §5 Save/load (JSON, text formats) | ✅ |
-| §6 Runtime game engine (rendering, screen-flip) | ❌ Not yet |
-| §6 Runtime collision | ✅ Test-game mode in map editor |
+| §6 Runtime game engine (rendering, screen-flip) | ✅ Basic GLFW/OpenGL runtime shell |
+| §6 Runtime collision | ✅ Tile collision against `.admap` mid layer |
 
 ## Near-Term Priorities
 
-1. Runtime game window: load a chapter, render the start screen's `.admap` mid layer, basic player movement.
-2. Screen-flip transitions: when player reaches a screen edge with a link, load and render the linked screen.
-3. Full `.sprite.json` round-trip (currently write-only from editor).
-4. Character save/load format.
-5. Enemy runtime: load `.adpath` and drive a simple entity along the waypoints.
-6. Parallax rendering in the runtime using `assets/game/tilesets/<mapId>_floor.png` and `<mapId>_wall.png`.
+1. Character save/load format.
+2. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
+3. Add runtime animation playback from loaded `.sprite.json` metadata.
+4. Persist defeated-enemy state per chapter/screen according to the respawn flags.
+5. Extend collision beyond nonzero-mid-layer solid tiles only when design needs require transparent/interaction flags.
 
 ## Engineering Notes
 
 - Keep editor UI state out of `src/game`.
-- File format parsing belongs in runtime-facing modules when the game needs to load that format.
+- File format parsing belongs in runtime-facing modules when the game needs to load that format. Current shared parsers: chapter, map, path, sprite metadata, tileset.
 - Prefer readable text formats while the project is small.
-- Collision is currently tile-based on the mid layer only. Pixel-perfect collision is a future concern.
+- Collision is currently tile-based on the mid layer only. Pixel-perfect collision and transparent-object flags are future concerns.
 - The sprite editor undo stack snapshots whole state. Command-based undo should replace it once documents become large.
+- Both `WallFloorPaintPanel` and `SpriteEditorPanel` follow the same dirty-buffer pattern: in-memory maps keyed by asset ID hold unsaved state across the session; chapter save flushes dirty entries; chapter switch calls `reset*Buffers()` to clear stale data.

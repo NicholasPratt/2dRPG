@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/editor_context.hpp"
+#include "game/constants.hpp"
 #include "game/map.hpp"
 
 #include "imgui.h"
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace adventure::editor {
@@ -25,10 +27,11 @@ public:
     void draw(EditorContext& context);
     void openScreenGraphics(EditorContext& context, const std::string& mapId);
     bool saveForChapter(const EditorContext& context);
+    void resetScreenBuffers();
 
 private:
     enum class ActiveLayer { Floor = 0, Wall = 1 };
-    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select };
+    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select, TileStamp, TileErase };
     enum class BrushShape { Square = 0, Circle, Spray, Dither };
     enum class SnapMode { None = 0, Full, Half, Quarter };
 
@@ -46,14 +49,18 @@ private:
         std::vector<std::uint32_t> wall;
     };
 
+    struct ScreenGraphicsBuffer {
+        std::vector<std::uint32_t> floor;
+        std::vector<std::uint32_t> wall;
+        bool dirty = false;
+    };
+
     std::array<char, 64> assetId_{'r', 'o', 'o', 'm', '_', 'p', 'a', 'i', 'n', 't', '\0'};
-    int width_ = 64;
-    int height_ = 36;
+    int width_ = game::kScreenTilesW * game::kTileSize;
+    int height_ = game::kScreenTilesH * game::kTileSize;
     int zoom_ = 10;
     int brushSize_ = 1;
-    int pixelsPerTile_ = 16;
-    int resizeWidth_ = 64;
-    int resizeHeight_ = 36;
+    int pixelsPerTile_ = game::kTileSize;
     ActiveLayer activeLayer_ = ActiveLayer::Wall;
     PaintTool tool_ = PaintTool::Pencil;
     BrushShape brushShape_ = BrushShape::Square;
@@ -92,22 +99,33 @@ private:
     bool hasPixelClipboard_ = false;
     bool pasteMode_ = false;
 
+    // Tile stamp
+    int stampTileIndex_ = -1;
+
+    // Per-screen graphics buffers
+    std::string currentScreenId_;
+    std::unordered_map<std::string, ScreenGraphicsBuffer> screenBuffers_;
+
     // LCG seed for spray brush
     std::uint32_t spraySeed_ = 12345u;
 
     void ensureDocument();
     void resizeDocument(int width, int height);
     void drawToolbar(EditorContext& context);
-    void drawLayerControls();
+    void drawLayerControls(EditorContext& context);
     void drawPalette();
-    void drawCanvas();
+    void drawTilePalette(EditorContext& context);
+    void addToTilePalette(EditorContext& context);
+    void stampTile(int x, int y, const TilePaletteEntry& tile);
+    void eraseTile(int x, int y);
+    void drawCanvas(EditorContext& context);
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawParallaxPreview();
     void drawToolButton(const char* label, PaintTool tool);
     void drawBrushShapeButton(const char* label, BrushShape shape);
     void drawLayerPixels(ImDrawList* drawList, const PaintLayer& layer, ImVec2 origin, float pixelSize, ImVec2 offset = {0.0f, 0.0f}, bool wrap = false) const;
     void drawCompositePixel(ImDrawList* drawList, ImVec2 min, ImVec2 max, std::uint32_t color, float layerOpacity) const;
-    void handleCanvasInput(const ImVec2& origin, float pixelSize);
+    void handleCanvasInput(EditorContext& context, const ImVec2& origin, float pixelSize);
     bool canvasPixelAt(const ImVec2& origin, float pixelSize, int& x, int& y) const;
     int applySnap(int coord, int gridSize) const;
     int snapCoord(int coord) const;
@@ -127,6 +145,7 @@ private:
     std::vector<unsigned char> layerRgba(const PaintLayer& layer) const;
     std::vector<unsigned char> compositeRgba(bool parallaxPreview) const;
     bool exportPngs(const EditorContext& context);
+    bool exportScreenPngs(const EditorContext& context, const std::string& id, const ScreenGraphicsBuffer& buf);
 };
 
 } // namespace adventure::editor

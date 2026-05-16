@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/editor_context.hpp"
+#include "game/constants.hpp"
 #include "game/tileset.hpp"
 
 #include "imgui.h"
@@ -20,22 +21,22 @@ public:
 private:
     enum class EditMode { Paint, Select, Paste };
 
-    int width_ = 24;
-    int height_ = 16;
-    int tileSize_ = 16;
+    int width_ = game::kScreenTilesW;
+    int height_ = game::kScreenTilesH;
+    int tileSize_ = game::kTileSize;
     int spawnX_ = 1;
     int spawnY_ = 1;
     int activeLayer_ = 1; // 0=floor, 1=mid, 2=ceiling
     bool testMode_ = false;
-    float playerX_ = 16.0f;
-    float playerY_ = 16.0f;
+    float playerX_ = static_cast<float>(game::kTileSize);
+    float playerY_ = static_cast<float>(game::kTileSize);
     uint16_t selectedTileId_ = 1;
     std::array<char, 64> mapId_{'n', 'e', 'w', '_', 'm', 'a', 'p', '\0'};
     std::array<char, 64> tilesetId_{'\0'};
     std::array<std::vector<uint16_t>, 3> layers_ = {
-        std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
-        std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
-        std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
+        std::vector<uint16_t>(static_cast<std::size_t>(game::kScreenTilesW * game::kScreenTilesH), 0u),
+        std::vector<uint16_t>(static_cast<std::size_t>(game::kScreenTilesW * game::kScreenTilesH), 0u),
+        std::vector<uint16_t>(static_cast<std::size_t>(game::kScreenTilesW * game::kScreenTilesH), 0u),
     };
     game::TilesetDef loadedTileset_;
     bool tilesetLoaded_ = false;
