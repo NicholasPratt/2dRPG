@@ -4,6 +4,8 @@ This project is a C++ 2D RPG engine and integrated editor scaffold targeting a S
 
 The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
+The current asset architecture separates reusable game-library assets from chapter usage. Reusable assets such as characters live in `assets/game/characters/` and are indexed by `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
+
 ## Current Layout
 
 ```text
@@ -17,12 +19,13 @@ The main architectural rule is that the editor creates data the game can load. R
       character_sprites/            # raw character sprite PNGs
       tilesets/                     # raw map tileset images
     game/
-      project.json                  # asset root manifest
+      project.json                  # legacy/simple asset root manifest
+      project.adgame                # game-library manifest: character ids + default playable character
       chapters/                     # .adchapter chapter files
       maps/                         # .admap tile maps
       sprites/                      # .sprite.json metadata
       character_sprites/            # game-ready character sprite assets
-      characters/                   # planned character data
+      characters/                   # .adcharacter reusable character sheets
       animations/                   # planned animation data
       palettes/                     # planned palette data
       paths/                        # .adpath enemy waypoint paths
@@ -54,6 +57,7 @@ The main architectural rule is that the editor creates data the game can load. R
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision
       map.hpp/.cpp                  # TileMap type and .admap load/save
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save
+      project.hpp/.cpp              # GameProject type and .adgame load/save
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
 ```
@@ -62,7 +66,7 @@ The main architectural rule is that the editor creates data the game can load. R
 
 ```text
 imgui                    Static Dear ImGui library.
-adventure_game           Runtime-facing game/data code (chapter, map, path, sprite metadata, tileset).
+adventure_game           Runtime-facing game/data code (chapter, project, map, path, sprite metadata, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
 adventure_game_smoke     Loads .admap, .adchapter, .sprite.json, and round-trips .adpath through runtime code.
@@ -82,6 +86,8 @@ cmake --build build --parallel
 ./build/adventure_game_window
 ./build/adventure_editor_window   # macOS: emits OpenGL deprecation warnings, harmless
 ```
+
+From the editor, `Chapter > Save and Play Game` saves the current game/chapter data and launches `adventure_game_window` as a separate runtime process. Escape closes the game window.
 
 ## Dependency Direction
 
@@ -106,11 +112,50 @@ On startup, `EditorApp` opens a chapter selector modal. The user must load an ex
 | Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor with `.sprite.json` round-trip |
 | Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
-| Wall/Floor Paint | `WallFloorPaintPanel` | Pixel paint tool for room art with selected-screen wall guide and parallax preview |
 | Enemy Paths | `EnemyPathEditorPanel` | Waypoint editor for enemy patrol paths |
 | Assets | *(inline)* | Asset directory listing |
 
+`WallFloorPaintPanel` is not a standalone top-level tab anymore. It is opened contextually from the Screens tab via `Edit Screen Graphics` and includes a Back to Screens button.
+
 ---
+
+## Game Project Library
+
+Implemented in `src/game/project.hpp/.cpp`.
+
+`assets/game/project.adgame` is the project-level game-library manifest. It currently stores:
+
+```cpp
+struct GameProject {
+    std::string id;
+    std::string playableCharacterId;
+    std::vector<std::string> characterIds;
+};
+```
+
+Format:
+
+```text
+ADGAME 1
+id game
+playable hero
+characters 2
+character hero
+character shopkeeper
+end
+```
+
+Editor behavior:
+
+- `CharacterEditorPanel::saveForChapter` saves reusable character documents and writes `project.adgame`.
+- Character documents remain reusable library assets under `assets/game/characters/`.
+- Chapters import character ids from the current character library and store the chapter playable character id.
+
+Runtime behavior:
+
+- `Engine::loadPlayableCharacter` first resolves `Chapter::playableCharacterId`.
+- If the chapter has no playable id, it falls back to `project.adgame`.
+- A legacy scan of `.adcharacter` files remains as a fallback.
 
 ## Chapter System
 
@@ -132,16 +177,21 @@ struct ChapterScreen {
 struct Chapter {
     std::string id;
     std::string startScreenId;
+    std::string playableCharacterId;
+    std::vector<std::string> importedCharacterIds;
     std::vector<ChapterScreen> screens;
 };
 ```
 
-### `.adchapter` format (v2)
+### `.adchapter` format (v3)
 
 ```text
-ADCHAPTER 2
+ADCHAPTER 3
 id chapter_1
 start screen_1
+playable hero
+characters 1
+character hero
 screens 2
 screen screen_1 new_map 0 0
 links - screen_2 - -
@@ -152,7 +202,7 @@ respawn 1
 end
 ```
 
-v1 files (no `respawn` per screen) load with `respawnEnemies = false`.
+v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds chapter-level character imports and playable character id.
 
 ### Layout Editor
 
@@ -162,7 +212,8 @@ v1 files (no `respawn` per screen) load with `respawnEnemies = false`.
 - Directional buttons create or select connected screens north/south/east/west and write reciprocal screen links.
 - Screen list sidebar and inspector edit id, mapId, grid position, links, respawn flag, and deletion.
 - Save/load from `assets/game/chapters/<id>.adchapter`. Chapter save also saves dirty `.admap` files edited in the Screens tab.
-- `Edit Screen Graphics` opens `Wall/Floor Paint` for the selected screen's map id.
+- `Edit Screen Graphics` opens the context-aware `WallFloorPaintPanel` subview for the selected screen's map id.
+- Screen layout can show scaled graphics previews from `<mapId>_preview.png` behind the structural tile overlay.
 
 ---
 
@@ -250,19 +301,21 @@ Runtime behavior:
 
 - Initializes a GLFW/OpenGL window and runs a fixed 60 Hz update loop.
 - Loads the selected chapter, resolves `Chapter::startScreenId`, then loads the active screen's `.admap`.
+- Resolves the playable character from the active chapter/project library and loads its assigned idle frame PNG as the player texture.
 - Uses `ChapterScreen::mapId` as the screen asset key for `.admap`, wall/floor PNGs, and `.adpath` map references.
 - Renders pre-baked screen art from `assets/game/tilesets/<mapId>_floor.png` and `<mapId>_wall.png`.
 - Falls back to debug-color rendering when screen PNGs are missing.
-- Moves a placeholder player with WASD/arrow keys.
+- Moves the playable character with WASD/arrow keys.
 - Collides against nonzero cells in `.admap` layer 1.
-- Detects screen-boundary crossings and follows north/south/east/west `ScreenLink` references.
-- Runs a simple sliding screen transition after loading the linked screen.
+- Spawns the player at the center of the start screen by default, falling back to the map spawn tile if the center is blocked.
+- Detects screen-boundary crossings when 30% of the player sprite has moved past an edge and follows north/south/east/west `ScreenLink` references.
+- Runs a sliding screen transition after validating the linked screen exists and the destination entry point is not blocked.
 - Loads `.adpath` files matching the active screen's `mapId` and advances runtime path entities along their waypoints.
 
 Current limitations:
 
 - Rendering uses fixed-pipeline OpenGL for speed of implementation; a shader/core-profile renderer is planned.
-- Runtime sprites are not yet rendered from `.sprite.json` metadata.
+- Runtime player animation is not yet advanced over time; the current player texture is the selected idle frame image.
 - Enemy defeat persistence is not implemented yet.
 - Collision is binary: nonzero mid-layer tile means solid.
 
@@ -292,6 +345,7 @@ Sprite metadata is runtime-facing and implemented in `src/game/sprite.hpp/.cpp`:
 struct SpriteFrameDef {
     int x, y, width, height;
     int durationMs;
+    std::string type;
 };
 
 struct SpriteMetadata {
@@ -311,6 +365,7 @@ Export/import paths:
 |-----------|------|
 | Save metadata | `assets/game/sprites/<id>.sprite.json` |
 | Export single frame | `assets/raw/sprites/<id>_frame_<n>.png` |
+| Export all frame PNGs | `assets/raw/sprites/<id>_frame_<n>.png` |
 | Export sprite sheet | `assets/raw/sprites/<id>_sheet.png` |
 | Import PNG | per Source PNG field |
 
@@ -423,7 +478,7 @@ Files saved to `assets/game/paths/<id>.adpath`.
 | `gamePalettes` | `assets/game/palettes` |
 | `gamePaths` | `assets/game/paths` |
 
-The project manifest at `assets/game/project.json` mirrors these roots.
+`assets/game/project.json` is the legacy simple asset-root manifest. Runtime/editor gameplay asset indexing now lives in `assets/game/project.adgame`.
 
 ---
 
@@ -452,9 +507,9 @@ The project manifest at `assets/game/project.json` mirrors these roots.
 
 ## Near-Term Priorities
 
-1. Character save/load format.
-2. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
-3. Add runtime animation playback from loaded `.sprite.json` metadata.
+1. Add enemy/item game-library documents plus chapter import and placement UI.
+2. Add runtime animation playback over assigned character frame states.
+3. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
 4. Persist defeated-enemy state per chapter/screen according to the respawn flags.
 5. Extend collision beyond nonzero-mid-layer solid tiles only when design needs require transparent/interaction flags.
 
