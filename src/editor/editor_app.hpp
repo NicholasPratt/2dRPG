@@ -50,6 +50,7 @@ private:
     bool exitAccepted_ = false;
     bool pendingChapterSwitch_ = false;
     std::string pendingChapterId_;
+    std::string playStatus_;
     std::array<char, 64> newChapterId_{'c', 'h', 'a', 'p', 't', 'e', 'r', '_', '1', '\0'};
     std::vector<std::string> chapterIds_;
 
@@ -62,6 +63,7 @@ private:
     void requestChapterSwitch(const std::string& chapterId);
     void completeChapterSwitch(bool saveFirst);
     void saveCurrentChapterAndExports();
+    void launchGame();
 };
 
 } // namespace adventure::editor

@@ -19,6 +19,7 @@ struct SpriteFrame {
     int width = game::kTileSize;
     int height = game::kTileSize;
     int durationMs = 100;
+    std::string type = "idle";
 };
 
 struct SpriteLayer {
@@ -136,6 +137,7 @@ private:
     bool importSheetPixels(const std::filesystem::path& inputPath);
     void saveSpriteMetadata(const EditorContext& context) const;
     void exportSingleFramePng(const EditorContext& context);
+    void exportFramePngs(const EditorContext& context);
     void exportSpriteSheetPng(const EditorContext& context);
     void importPng(const EditorContext& context);
     [[nodiscard]] std::vector<unsigned char> compositeFrameRgba(int frameIndex) const;

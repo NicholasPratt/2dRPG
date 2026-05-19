@@ -46,6 +46,7 @@ private:
     TileMap activeMap_;
     Texture floorTexture_;
     Texture wallTexture_;
+    Texture playerTexture_;
     std::vector<RuntimePathEntity> pathEntities_;
     float playerX_ = 0.0f;
     float playerY_ = 0.0f;
@@ -60,13 +61,16 @@ private:
     [[nodiscard]] bool loadScreen(const std::string& screenId, std::string* errorMessage);
     [[nodiscard]] bool loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage);
     void destroyTexture(Texture& texture);
+    void loadPlayableCharacter();
     void loadPathEntities();
     void update(float dt);
     void updatePlayer(float dt);
     void updatePaths(float dt);
-    void beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY);
+    [[nodiscard]] bool beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY);
     [[nodiscard]] bool playerCanOccupy(float x, float y) const;
     [[nodiscard]] bool solidAtPixel(float x, float y) const;
+    [[nodiscard]] bool playerCanOccupyInMap(const TileMap& map, float x, float y) const;
+    [[nodiscard]] bool solidAtPixelInMap(const TileMap& map, float x, float y) const;
     [[nodiscard]] float screenWidthPx() const;
     [[nodiscard]] float screenHeightPx() const;
     void render();

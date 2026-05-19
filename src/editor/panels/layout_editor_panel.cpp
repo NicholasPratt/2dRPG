@@ -1,6 +1,7 @@
 #include "editor/panels/layout_editor_panel.hpp"
 
 #include "imgui.h"
+#include "stb_image.h"
 
 #include <algorithm>
 #include <cstring>
@@ -56,6 +57,22 @@ ImU32 dimColor(ImU32 color, float factor)
     return IM_COL32(r, g, b, 255);
 }
 
+ImU32 packedColor(std::uint32_t color, float opacity = 1.0f)
+{
+    const int alpha = static_cast<int>(static_cast<float>((color >> 24u) & 0xffu) * std::clamp(opacity, 0.0f, 1.0f));
+    return IM_COL32((color >> 0u) & 0xffu, (color >> 8u) & 0xffu, (color >> 16u) & 0xffu, alpha);
+}
+
+std::filesystem::path previewPathForMap(const EditorContext& context, const std::string& mapId)
+{
+    const std::filesystem::path gamePath = context.assets.gameTilesetPath() / (mapId + "_preview.png");
+    std::error_code error;
+    if (std::filesystem::exists(gamePath, error)) {
+        return gamePath;
+    }
+    return context.assets.rawTilesetPath() / (mapId + "_preview.png");
+}
+
 } // namespace
 
 void LayoutEditorPanel::draw(EditorContext& context)
@@ -73,6 +90,7 @@ void LayoutEditorPanel::draw(EditorContext& context)
         context.selectedScreenId = screen.id;
         context.selectedScreenMapId = screen.mapId;
     }
+    syncContextScreens(context);
 
     drawToolbar(context);
     ImGui::Separator();
@@ -109,11 +127,18 @@ void LayoutEditorPanel::drawToolbar(EditorContext& context)
     ImGui::SameLine();
     if (ImGui::Button("New screen")) {
         addScreen();
+        syncContextScreens(context);
         context.markDirty();
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete screen")) {
         deleteSelectedScreen();
+        if (selectedScreenValid()) {
+            const game::ChapterScreen& screen = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
+            context.selectedScreenId = screen.id;
+            context.selectedScreenMapId = screen.mapId;
+        }
+        syncContextScreens(context);
         context.markDirty();
     }
     ImGui::SameLine();
@@ -177,6 +202,13 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
     ImGui::SameLine();
     if (ImGui::Button("Save changed maps")) {
         saveDirtyMaps(context);
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Graphics preview", &showGraphicsPreview_);
+    if (showGraphicsPreview_) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(96.0f);
+        ImGui::SliderFloat("Preview alpha", &graphicsPreviewOpacity_, 0.15f, 1.0f, "%.2f");
     }
     ImGui::Separator();
 
@@ -259,14 +291,95 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
 void LayoutEditorPanel::drawScreenTileLayout(EditorContext& context, ImDrawList* drawList, const game::ChapterScreen& screen, ImVec2 min, float tileSize, bool selected)
 {
     game::TileMap& map = ensureMapLoaded(context, screen.mapId);
+    if (showGraphicsPreview_) {
+        drawGraphicsPreview(context, drawList, map, min, tileSize);
+    }
     drawMapTiles(drawList, map, min, tileSize, selected);
     drawWallOutlines(drawList, map, min, tileSize, selected ? IM_COL32(255, 226, 96, 245) : IM_COL32(255, 226, 96, 190));
+}
+
+void LayoutEditorPanel::drawGraphicsPreview(EditorContext& context, ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize)
+{
+    if (map.width <= 0 || map.height <= 0) {
+        return;
+    }
+
+    GraphicsPreview& preview = graphicsPreviews_[map.id];
+    const std::filesystem::path path = previewPathForMap(context, map.id);
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    const std::filesystem::file_time_type lastWrite = exists ? std::filesystem::last_write_time(path, error) : std::filesystem::file_time_type{};
+
+    if (preview.path != path || preview.lastWrite != lastWrite ||
+        preview.mapWidth != map.width || preview.mapHeight != map.height) {
+        preview = GraphicsPreview{};
+        preview.path = path;
+        preview.lastWrite = lastWrite;
+        preview.mapWidth = map.width;
+        preview.mapHeight = map.height;
+
+        if (exists && !error) {
+            int imageW = 0;
+            int imageH = 0;
+            int channels = 0;
+            unsigned char* data = stbi_load(path.string().c_str(), &imageW, &imageH, &channels, 4);
+            if (data != nullptr && imageW > 0 && imageH > 0) {
+                preview.tileColors.assign(static_cast<std::size_t>(map.width * map.height), 0u);
+                for (int tileY = 0; tileY < map.height; ++tileY) {
+                    for (int tileX = 0; tileX < map.width; ++tileX) {
+                        const int x0 = tileX * imageW / map.width;
+                        const int x1 = std::max(x0 + 1, (tileX + 1) * imageW / map.width);
+                        const int y0 = tileY * imageH / map.height;
+                        const int y1 = std::max(y0 + 1, (tileY + 1) * imageH / map.height);
+                        std::uint32_t r = 0;
+                        std::uint32_t g = 0;
+                        std::uint32_t b = 0;
+                        std::uint32_t a = 0;
+                        std::uint32_t samples = 0;
+                        for (int y = y0; y < std::min(y1, imageH); ++y) {
+                            for (int x = x0; x < std::min(x1, imageW); ++x) {
+                                const int i = (y * imageW + x) * 4;
+                                r += data[i + 0];
+                                g += data[i + 1];
+                                b += data[i + 2];
+                                a += data[i + 3];
+                                ++samples;
+                            }
+                        }
+                        if (samples > 0u) {
+                            preview.tileColors[static_cast<std::size_t>(tileY * map.width + tileX)] =
+                                ((a / samples) << 24u) | ((b / samples) << 16u) | ((g / samples) << 8u) | (r / samples);
+                        }
+                    }
+                }
+                preview.loaded = true;
+            }
+            stbi_image_free(data);
+        }
+    }
+
+    if (!preview.loaded || preview.tileColors.size() != static_cast<std::size_t>(map.width * map.height)) {
+        return;
+    }
+
+    for (int y = 0; y < map.height; ++y) {
+        for (int x = 0; x < map.width; ++x) {
+            const std::uint32_t color = preview.tileColors[static_cast<std::size_t>(y * map.width + x)];
+            if (((color >> 24u) & 0xffu) == 0u) {
+                continue;
+            }
+            const ImVec2 tileMin{min.x + static_cast<float>(x) * tileSize, min.y + static_cast<float>(y) * tileSize};
+            drawList->AddRectFilled(tileMin, {tileMin.x + tileSize, tileMin.y + tileSize}, packedColor(color, graphicsPreviewOpacity_));
+        }
+    }
 }
 
 void LayoutEditorPanel::drawMapTiles(ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize, bool selected) const
 {
     const ImVec2 max{min.x + static_cast<float>(map.width) * tileSize, min.y + static_cast<float>(map.height) * tileSize};
-    drawList->AddRectFilled(min, max, IM_COL32(13, 16, 20, 255));
+    if (!showGraphicsPreview_) {
+        drawList->AddRectFilled(min, max, IM_COL32(13, 16, 20, 255));
+    }
 
     if (selected) {
         for (int layer = 0; layer < 3; ++layer) {
@@ -342,10 +455,14 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         if (chapter_.startScreenId.empty() || game::findScreen(chapter_, chapter_.startScreenId) == nullptr) {
             chapter_.startScreenId = screen.id;
         }
+        context.selectedScreenId = screen.id;
+        syncContextScreens(context);
         context.markDirty();
     }
     ImGui::SetNextItemWidth(-1.0f);
     if (inputString("Map id", screen.mapId)) {
+        context.selectedScreenMapId = screen.mapId;
+        syncContextScreens(context);
         context.markDirty();
     }
 
@@ -354,6 +471,7 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
     if (ImGui::InputInt2("Grid", grid)) {
         screen.gridX = std::clamp(grid[0], -512, 512);
         screen.gridY = std::clamp(grid[1], -512, 512);
+        syncContextScreens(context);
         context.markDirty();
     }
 
@@ -365,6 +483,12 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
     ImGui::Text("Start: %s", chapter_.startScreenId.c_str());
     if (ImGui::Button("Delete This Screen", ImVec2(-1.0f, 30.0f))) {
         deleteSelectedScreen();
+        if (selectedScreenValid()) {
+            const game::ChapterScreen& selected = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
+            context.selectedScreenId = selected.id;
+            context.selectedScreenMapId = selected.mapId;
+        }
+        syncContextScreens(context);
         context.markDirty();
         return;
     }
@@ -487,6 +611,7 @@ void LayoutEditorPanel::addConnectedScreen(EditorContext& context, const char* d
 
     context.selectedScreenId = target->id;
     context.selectedScreenMapId = target->mapId;
+    syncContextScreens(context);
     context.markDirty();
 }
 
@@ -600,6 +725,8 @@ bool LayoutEditorPanel::saveCurrentChapter(EditorContext& context)
     saveDirtyMaps(context);
 
     chapter_.id = chapterId_.data();
+    chapter_.importedCharacterIds = context.importedCharacterIds;
+    chapter_.playableCharacterId = context.playableCharacterId;
     if (game::findScreen(chapter_, chapter_.startScreenId) == nullptr && !chapter_.screens.empty()) {
         chapter_.startScreenId = chapter_.screens.front().id;
     }
@@ -609,6 +736,7 @@ bool LayoutEditorPanel::saveCurrentChapter(EditorContext& context)
     if (game::saveChapter(outputPath, chapter_, &error)) {
         status_ = "Saved chapter: " + outputPath.generic_string();
         context.currentChapterId = chapter_.id;
+        syncContextScreens(context);
         context.dirty = false;
         return true;
     } else {
@@ -632,10 +760,13 @@ bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::strin
     selectedScreen_ = 0;
     syncChapterIdBuffer();
     context.currentChapterId = chapter_.id;
+    context.importedCharacterIds = chapter_.importedCharacterIds;
+    context.playableCharacterId = chapter_.playableCharacterId;
     if (!chapter_.screens.empty()) {
         context.selectedScreenId = chapter_.screens.front().id;
         context.selectedScreenMapId = chapter_.screens.front().mapId;
     }
+    syncContextScreens(context);
     context.dirty = false;
     status_ = "Loaded chapter: " + inputPath.generic_string();
     return true;
@@ -653,10 +784,22 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
     selectedScreen_ = 0;
     syncChapterIdBuffer();
     context.currentChapterId = chapter_.id;
+    context.importedCharacterIds.clear();
+    context.playableCharacterId.clear();
     context.selectedScreenId = chapter_.screens.front().id;
     context.selectedScreenMapId = chapter_.screens.front().mapId;
+    syncContextScreens(context);
     context.markDirty();
     status_ = "Created new chapter: " + chapter_.id;
+}
+
+void LayoutEditorPanel::syncContextScreens(EditorContext& context) const
+{
+    context.chapterScreens.clear();
+    context.chapterScreens.reserve(chapter_.screens.size());
+    for (const game::ChapterScreen& screen : chapter_.screens) {
+        context.chapterScreens.push_back({screen.id, screen.mapId, screen.gridX, screen.gridY});
+    }
 }
 
 void LayoutEditorPanel::syncChapterIdBuffer()

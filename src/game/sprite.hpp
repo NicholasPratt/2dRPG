@@ -13,6 +13,7 @@ struct SpriteFrameDef {
     int width = 16;
     int height = 16;
     int durationMs = 100;
+    std::string type = "idle";
 };
 
 struct SpriteMetadata {

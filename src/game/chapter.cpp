@@ -88,9 +88,14 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 2\n";
+    output << "ADCHAPTER 3\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
+    output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
+    output << "characters " << chapter.importedCharacterIds.size() << "\n";
+    for (const std::string& id : chapter.importedCharacterIds) {
+        output << "character " << id << "\n";
+    }
     output << "screens " << chapter.screens.size() << "\n";
     for (const ChapterScreen& screen : chapter.screens) {
         output << "screen " << screen.id << ' ' << screen.mapId << ' ' << screen.gridX << ' ' << screen.gridY << "\n";
@@ -122,7 +127,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 2) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 3) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -143,6 +148,35 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
         return false;
     }
     input >> loaded.startScreenId;
+
+    if (version >= 3) {
+        input >> key >> loaded.playableCharacterId;
+        if (key != "playable") {
+            setError(errorMessage, "Expected playable character.");
+            return false;
+        }
+        if (loaded.playableCharacterId == "-") {
+            loaded.playableCharacterId.clear();
+        }
+
+        int characterCount = 0;
+        input >> key >> characterCount;
+        if (key != "characters" || characterCount < 0) {
+            setError(errorMessage, "Expected character import count.");
+            return false;
+        }
+        loaded.importedCharacterIds.clear();
+        loaded.importedCharacterIds.reserve(static_cast<std::size_t>(characterCount));
+        for (int i = 0; i < characterCount; ++i) {
+            std::string characterId;
+            input >> key >> characterId;
+            if (key != "character" || characterId.empty()) {
+                setError(errorMessage, "Expected character import.");
+                return false;
+            }
+            loaded.importedCharacterIds.push_back(characterId);
+        }
+    }
 
     int screenCount = 0;
     input >> key >> screenCount;

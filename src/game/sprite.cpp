@@ -195,6 +195,10 @@ bool readFrame(const std::string& s, std::size_t& pos, SpriteFrameDef& frame)
             if (!readJsonInt(s, pos, frame.durationMs)) {
                 return false;
             }
+        } else if (key == "type") {
+            if (!expect(s, pos, '"') || !readJsonString(s, pos, frame.type)) {
+                return false;
+            }
         } else {
             skipJsonValue(s, pos);
         }
@@ -283,7 +287,7 @@ bool saveSpriteMetadata(const std::filesystem::path& path, const SpriteMetadata&
     for (std::size_t i = 0; i < metadata.frames.size(); ++i) {
         const SpriteFrameDef& frame = metadata.frames[i];
         output << "    {\"rect\": [" << frame.x << ", " << frame.y << ", " << frame.width << ", " << frame.height
-               << "], \"durationMs\": " << frame.durationMs << "}";
+               << "], \"durationMs\": " << frame.durationMs << ", \"type\": \"" << jsonEscape(frame.type) << "\"}";
         output << (i + 1 == metadata.frames.size() ? "\n" : ",\n");
     }
     output << "  ],\n";
@@ -386,6 +390,11 @@ bool loadSpriteMetadata(const std::filesystem::path& path, SpriteMetadata& metad
     }
     if (loaded.tags.empty()) {
         loaded.tags.push_back("idle");
+    }
+    for (SpriteFrameDef& frame : loaded.frames) {
+        if (frame.type.empty()) {
+            frame.type = loaded.tags.empty() ? "idle" : loaded.tags.front();
+        }
     }
     loaded.canvasSize[0] = std::max(1, loaded.canvasSize[0]);
     loaded.canvasSize[1] = std::max(1, loaded.canvasSize[1]);

@@ -178,6 +178,9 @@ std::vector<std::uint32_t> rgbaToPixels(const unsigned char* rgba, int width, in
 void WallFloorPaintPanel::draw(EditorContext& context)
 {
     ensureDocument();
+    if (!context.selectedScreenMapId.empty() && currentScreenId_ != context.selectedScreenMapId) {
+        openScreenGraphics(context, context.selectedScreenMapId);
+    }
 
     // Global keyboard shortcuts
     if (!ImGui::GetIO().WantTextInput) {
@@ -205,6 +208,7 @@ void WallFloorPaintPanel::draw(EditorContext& context)
     }
 
     drawToolbar(context);
+    drawScreenNavigator(context);
     ImGui::Separator();
 
     const float availH = ImGui::GetContentRegionAvail().y;
@@ -277,6 +281,16 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
     }
 
     currentScreenId_ = mapId;
+    context.selectedScreenMapId = mapId;
+    for (const ChapterScreenEntry& screen : context.chapterScreens) {
+        if (screen.mapId == mapId) {
+            context.selectedScreenId = screen.id;
+            break;
+        }
+    }
+    selectionActive_ = false;
+    selectionDragging_ = false;
+    pasteMode_ = false;
 
     // Restore from in-memory buffer (highest priority)
     const auto expected = static_cast<std::size_t>(pw * ph);
@@ -406,6 +420,66 @@ void WallFloorPaintPanel::resizeDocument(int width, int height)
     resizeLayer(wall_);
     width_ = width;
     height_ = height;
+}
+
+void WallFloorPaintPanel::drawScreenNavigator(EditorContext& context)
+{
+    if (context.chapterScreens.empty()) {
+        ImGui::TextDisabled("No chapter screens loaded.");
+        return;
+    }
+
+    int selectedIndex = -1;
+    for (int i = 0; i < static_cast<int>(context.chapterScreens.size()); ++i) {
+        if (context.chapterScreens[static_cast<std::size_t>(i)].mapId == currentScreenId_ ||
+            context.chapterScreens[static_cast<std::size_t>(i)].id == context.selectedScreenId) {
+            selectedIndex = i;
+            break;
+        }
+    }
+    if (selectedIndex < 0) {
+        selectedIndex = 0;
+    }
+
+    auto openIndex = [&](int index) {
+        if (index < 0 || index >= static_cast<int>(context.chapterScreens.size())) {
+            return;
+        }
+        const ChapterScreenEntry& screen = context.chapterScreens[static_cast<std::size_t>(index)];
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        openScreenGraphics(context, screen.mapId);
+    };
+
+    ImGui::TextUnformatted("Screen");
+    ImGui::SameLine();
+    if (ImGui::Button("<") && selectedIndex > 0) {
+        openIndex(selectedIndex - 1);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(">") && selectedIndex + 1 < static_cast<int>(context.chapterScreens.size())) {
+        openIndex(selectedIndex + 1);
+    }
+    ImGui::SameLine();
+
+    const ChapterScreenEntry& selected = context.chapterScreens[static_cast<std::size_t>(selectedIndex)];
+    const std::string preview = selected.id + " -> " + selected.mapId;
+    ImGui::SetNextItemWidth(320.0f);
+    if (ImGui::BeginCombo("##ScreenGraphicsSelector", preview.c_str())) {
+        for (int i = 0; i < static_cast<int>(context.chapterScreens.size()); ++i) {
+            const ChapterScreenEntry& screen = context.chapterScreens[static_cast<std::size_t>(i)];
+            const bool selectedItem = i == selectedIndex;
+            const std::string label = screen.id + " [" + std::to_string(screen.gridX) + "," +
+                std::to_string(screen.gridY) + "] -> " + screen.mapId;
+            if (ImGui::Selectable(label.c_str(), selectedItem)) {
+                openIndex(i);
+            }
+            if (selectedItem) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
 }
 
 void WallFloorPaintPanel::drawToolbar(EditorContext& context)

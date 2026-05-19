@@ -25,6 +25,8 @@ struct ChapterScreen {
 struct Chapter {
     std::string id = "chapter_1";
     std::string startScreenId = "screen_1";
+    std::string playableCharacterId;
+    std::vector<std::string> importedCharacterIds;
     std::vector<ChapterScreen> screens{{}};
 };
 

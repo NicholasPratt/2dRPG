@@ -3,10 +3,39 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <vector>
 #include <system_error>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
 namespace adventure::editor {
+namespace {
+
+std::filesystem::path runningExecutableDirectory()
+{
+#if defined(__APPLE__)
+    std::vector<char> buffer(1024);
+    std::uint32_t size = static_cast<std::uint32_t>(buffer.size());
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+        buffer.resize(size);
+        if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+            return {};
+        }
+    }
+    std::error_code error;
+    return std::filesystem::weakly_canonical(std::filesystem::path(buffer.data()), error).parent_path();
+#else
+    return {};
+#endif
+}
+
+} // namespace
 
 void EditorApp::draw()
 {
@@ -48,8 +77,8 @@ void EditorApp::draw()
             layoutEditor_.saveDirtyMaps(context_);
             wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
         }
-        screenGraphicsMode_ = false;
-        requestedTab_ = MainTab::WallFloorPaint;
+        screenGraphicsMode_ = true;
+        requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
         spriteEditorLaunchedFromCharacter_ = false;
     }
@@ -62,7 +91,6 @@ void EditorApp::draw()
             }
             if (auto spriteToOpen = characterEditor_.draw(context_)) {
                 spriteEditor_.openCharacterSpriteReference(*spriteToOpen);
-                characterEditor_.setSelectedSpriteReference(spriteEditor_.spriteMetadataReference(context_));
                 spriteEditorLaunchedFromCharacter_ = true;
                 requestedTab_ = MainTab::Sprites;
                 hasRequestedTab_ = true;
@@ -75,10 +103,19 @@ void EditorApp::draw()
             if (spriteTabFlags != 0) {
                 hasRequestedTab_ = false;
             }
-            spriteEditor_.draw(context_);
             if (spriteEditorLaunchedFromCharacter_) {
-                characterEditor_.setSelectedSpriteReference(spriteEditor_.spriteMetadataReference(context_));
+                if (ImGui::Button("< Return to Character", ImVec2(190.0f, 30.0f))) {
+                    spriteEditor_.saveForChapter(context_);
+                    characterEditor_.setSelectedSpriteReference(context_, spriteEditor_.spriteMetadataReference(context_));
+                    spriteEditorLaunchedFromCharacter_ = false;
+                    requestedTab_ = MainTab::Characters;
+                    hasRequestedTab_ = true;
+                }
+                ImGui::SameLine();
+                ImGui::TextUnformatted("Editing character sprite");
+                ImGui::Separator();
             }
+            spriteEditor_.draw(context_);
             ImGui::EndTabItem();
         }
 
@@ -88,7 +125,17 @@ void EditorApp::draw()
                 hasRequestedTab_ = false;
             }
             spriteEditorLaunchedFromCharacter_ = false;
-            layoutEditor_.draw(context_);
+            if (screenGraphicsMode_) {
+                if (ImGui::Button("< Back to Screens", ImVec2(180.0f, 30.0f))) {
+                    screenGraphicsMode_ = false;
+                }
+                ImGui::SameLine();
+                ImGui::Text("Editing graphics for %s", context_.selectedScreenId.empty() ? context_.selectedScreenMapId.c_str() : context_.selectedScreenId.c_str());
+                ImGui::Separator();
+                wallFloorPaint_.draw(context_);
+            } else {
+                layoutEditor_.draw(context_);
+            }
             ImGui::EndTabItem();
         }
 
@@ -99,16 +146,6 @@ void EditorApp::draw()
             }
             spriteEditorLaunchedFromCharacter_ = false;
             tilesetEditor_.draw(context_);
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags wallFloorTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::WallFloorPaint ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Wall/Floor Paint", nullptr, wallFloorTabFlags)) {
-            if (wallFloorTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            spriteEditorLaunchedFromCharacter_ = false;
-            wallFloorPaint_.draw(context_);
             ImGui::EndTabItem();
         }
 
@@ -187,8 +224,14 @@ void EditorApp::drawChapterMenu()
             if (ImGui::MenuItem("Save")) {
                 saveCurrentChapterAndExports();
             }
+            if (ImGui::MenuItem("Save and Play Game")) {
+                launchGame();
+            }
             if (ImGui::MenuItem("Refresh list")) {
                 refreshChapterList();
+            }
+            if (!playStatus_.empty()) {
+                ImGui::TextDisabled("%s", playStatus_.c_str());
             }
             ImGui::Separator();
             for (const std::string& chapterId : chapterIds_) {
@@ -321,10 +364,83 @@ void EditorApp::completeChapterSwitch(bool saveFirst)
 
 void EditorApp::saveCurrentChapterAndExports()
 {
+    const bool charactersSaved = characterEditor_.saveForChapter(context_);
     spriteEditor_.saveForChapter(context_);
-    wallFloorPaint_.saveForChapter(context_);
+    const bool graphicsSaved = wallFloorPaint_.saveForChapter(context_);
     (void)layoutEditor_.saveCurrentChapter(context_);
+    if (!charactersSaved || !graphicsSaved) {
+        context_.markDirty();
+    }
     refreshChapterList();
+}
+
+void EditorApp::launchGame()
+{
+    saveCurrentChapterAndExports();
+    if (context_.currentChapterId.empty()) {
+        playStatus_ = "No chapter selected.";
+        return;
+    }
+
+    std::error_code error;
+    const std::filesystem::path cwd = std::filesystem::current_path(error);
+    const std::filesystem::path executableDir = runningExecutableDirectory();
+    std::filesystem::path projectRoot = std::filesystem::absolute(context_.assets.projectRoot, error);
+    if (!std::filesystem::exists(projectRoot / "assets", error) && std::filesystem::exists(cwd / "assets", error)) {
+        projectRoot = cwd;
+    }
+    if (!std::filesystem::exists(projectRoot / "assets", error) && std::filesystem::exists(cwd.parent_path() / "assets", error)) {
+        projectRoot = cwd.parent_path();
+    }
+    if (!executableDir.empty() && !std::filesystem::exists(projectRoot / "assets", error) &&
+        std::filesystem::exists(executableDir.parent_path() / "assets", error)) {
+        projectRoot = executableDir.parent_path();
+    }
+
+    const std::vector<std::filesystem::path> executableCandidates = {
+        executableDir / "adventure_game_window",
+        executableDir / "build" / "adventure_game_window",
+        executableDir.parent_path() / "build" / "adventure_game_window",
+        projectRoot / "build" / "adventure_game_window",
+        cwd / "build" / "adventure_game_window",
+        cwd / "adventure_game_window",
+        cwd.parent_path() / "build" / "adventure_game_window",
+    };
+
+    std::filesystem::path executable;
+    for (const std::filesystem::path& candidate : executableCandidates) {
+        if (std::filesystem::exists(candidate, error)) {
+            executable = std::filesystem::absolute(candidate, error);
+            break;
+        }
+    }
+
+    if (executable.empty()) {
+        playStatus_ = "Game executable not found. Build first: cmake --build build";
+        return;
+    }
+
+    const std::filesystem::path chapterPath = std::filesystem::absolute(
+        projectRoot / context_.assets.gameChapters / (context_.currentChapterId + ".adchapter"),
+        error);
+    if (!std::filesystem::exists(chapterPath, error)) {
+        playStatus_ = "Chapter file not found: " + chapterPath.string();
+        return;
+    }
+
+    const std::filesystem::path logPath = projectRoot / "build" / "adventure_game_window.log";
+    const std::string command =
+        "cd \"" + projectRoot.string() + "\" && \"" +
+        executable.string() + "\" \"" +
+        chapterPath.string() + "\" > \"" +
+        logPath.string() + "\" 2>&1 &";
+
+    const int result = std::system(command.c_str());
+    if (result == 0) {
+        playStatus_ = "Launched game: " + executable.filename().string() + " (Esc closes it)";
+    } else {
+        playStatus_ = "Failed to launch game. See build/adventure_game_window.log";
+    }
 }
 
 } // namespace adventure::editor

@@ -20,6 +20,7 @@ target_include_directories(imgui PUBLIC
 add_library(adventure_game STATIC
     src/game/chapter.cpp
     src/game/path.cpp
+    src/game/project.cpp
     src/game/map.cpp
     src/game/sprite.cpp
     src/game/tileset.cpp

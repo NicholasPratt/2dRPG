@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <system_error>
 #include <utility>
 
@@ -67,6 +68,29 @@ void sectionHeader(const char* label)
     ImGui::Spacing();
     ImGui::TextUnformatted(label);
     ImGui::Separator();
+}
+
+std::filesystem::path projectRootFromSpriteMetadataPath(const std::filesystem::path& metadataPath)
+{
+    std::error_code error;
+    std::filesystem::path absolute = std::filesystem::absolute(metadataPath, error);
+    if (absolute.empty()) {
+        absolute = metadataPath;
+    }
+
+    std::filesystem::path current = absolute.parent_path();
+    for (int i = 0; i < 5 && !current.empty(); ++i) {
+        if (std::filesystem::exists(current / "assets", error)) {
+            return current;
+        }
+        current = current.parent_path();
+    }
+    return std::filesystem::current_path(error);
+}
+
+std::filesystem::path resolveAgainstProjectRoot(const std::filesystem::path& projectRoot, const std::filesystem::path& path)
+{
+    return path.is_absolute() ? path : projectRoot / path;
 }
 
 int clampDimension(int value)
@@ -539,6 +563,7 @@ bool SpriteEditorPanel::saveForChapter(const EditorContext& context)
         SpriteDocument live = std::move(document_);
         document_ = buf.document;
         saveSpriteMetadata(context);
+        exportFramePngs(context);
         exportSpriteSheetPng(context);
         buf.document = document_;  // capture updated sourcePng
         buf.dirty = false;
@@ -989,6 +1014,36 @@ void SpriteEditorPanel::drawPreview(const ImVec2& availableSize)
 
 void SpriteEditorPanel::drawFrames()
 {
+    constexpr const char* kFrameTypes[] = {
+        "idle",
+        "walk",
+        "run",
+        "attack_1",
+        "attack_2",
+        "attack_3",
+        "cast",
+        "hit_react",
+        "guard",
+        "interact",
+        "conversation",
+        "death",
+        "fall",
+        "sleep",
+        "jump",
+        "land",
+        "pickup",
+        "use_item",
+        "hurt_loop",
+        "stunned",
+        "victory",
+        "emote",
+        "climb",
+        "swim",
+        "dash",
+        "block_break",
+        "revive",
+    };
+
     if (ImGui::Button("Add frame")) {
         recordUndoState();
         document_.frames.push_back(document_.frames[selectedFrame_]);
@@ -1014,7 +1069,8 @@ void SpriteEditorPanel::drawFrames()
 
     for (int i = 0; i < static_cast<int>(document_.frames.size()); ++i) {
         ImGui::PushID(i);
-        if (ImGui::Selectable(("Frame " + std::to_string(i + 1)).c_str(), selectedFrame_ == i)) {
+        const std::string frameLabel = "Frame " + std::to_string(i + 1) + "  [" + document_.frames[i].type + "]";
+        if (ImGui::Selectable(frameLabel.c_str(), selectedFrame_ == i)) {
             selectedFrame_ = i;
         }
         if (selectedFrame_ == i) {
@@ -1023,6 +1079,33 @@ void SpriteEditorPanel::drawFrames()
             ImGui::InputInt("Width", &document_.frames[i].width);
             ImGui::InputInt("Height", &document_.frames[i].height);
             ImGui::InputInt("Duration ms", &document_.frames[i].durationMs);
+            int selectedType = -1;
+            for (int typeIndex = 0; typeIndex < static_cast<int>(std::size(kFrameTypes)); ++typeIndex) {
+                if (document_.frames[i].type == kFrameTypes[typeIndex]) {
+                    selectedType = typeIndex;
+                    break;
+                }
+            }
+            const char* preview = selectedType >= 0 ? kFrameTypes[selectedType] : document_.frames[i].type.c_str();
+            if (ImGui::BeginCombo("Frame type", preview)) {
+                for (int typeIndex = 0; typeIndex < static_cast<int>(std::size(kFrameTypes)); ++typeIndex) {
+                    const bool selected = selectedType == typeIndex;
+                    if (ImGui::Selectable(kFrameTypes[typeIndex], selected)) {
+                        recordUndoState();
+                        document_.frames[i].type = kFrameTypes[typeIndex];
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            char typeBuffer[64]{};
+            std::copy_n(document_.frames[i].type.c_str(), std::min(document_.frames[i].type.size(), sizeof(typeBuffer) - 1), typeBuffer);
+            if (ImGui::InputText("Custom type", typeBuffer, sizeof(typeBuffer))) {
+                document_.frames[i].type = typeBuffer;
+                documentDirty_ = true;
+            }
         }
         ImGui::PopID();
     }
@@ -1116,6 +1199,9 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
     if (ImGui::Button("Export single frame PNG")) {
         exportSingleFramePng(context);
     }
+    if (ImGui::Button("Export all frame PNGs")) {
+        exportFramePngs(context);
+    }
     if (ImGui::Button("Export sprite sheet PNG")) {
         exportSpriteSheetPng(context);
     }
@@ -1130,6 +1216,7 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
 
 bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& metadataPath)
 {
+    const std::filesystem::path projectRoot = projectRootFromSpriteMetadataPath(metadataPath);
     game::SpriteMetadata metadata;
     std::string error;
     if (!game::loadSpriteMetadata(metadataPath, metadata, &error)) {
@@ -1146,7 +1233,7 @@ bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& me
     document_.frames.clear();
     document_.frames.reserve(metadata.frames.size());
     for (const game::SpriteFrameDef& frame : metadata.frames) {
-        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs});
+        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs, frame.type});
     }
     document_.tags = metadata.tags;
     document_.layers.assign(1, SpriteLayer{});
@@ -1158,7 +1245,7 @@ bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& me
     resizeCanvasStorage(document_.canvasSize[0], document_.canvasSize[1], document_.canvasSize[0], document_.canvasSize[1]);
 
     if (!document_.sourcePng.empty()) {
-        (void)importSheetPixels(document_.sourcePng);
+        (void)importSheetPixels(resolveAgainstProjectRoot(projectRoot, document_.sourcePng));
     }
 
     ensureDocumentState();
@@ -1212,7 +1299,7 @@ void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
     metadata.frames.clear();
     metadata.frames.reserve(document_.frames.size());
     for (const SpriteFrame& frame : document_.frames) {
-        metadata.frames.push_back({frame.x, frame.y, frame.width, frame.height, frame.durationMs});
+        metadata.frames.push_back({frame.x, frame.y, frame.width, frame.height, frame.durationMs, frame.type});
     }
 
     std::string ignoredError;
@@ -1271,6 +1358,27 @@ void SpriteEditorPanel::exportSingleFramePng(const EditorContext& context)
     } else {
         ioStatus_ = "Failed to export single-frame PNG.";
     }
+}
+
+void SpriteEditorPanel::exportFramePngs(const EditorContext& context)
+{
+    ensureDirectory(context.assets.rawSpritePath());
+    const int frameCount = static_cast<int>(document_.frames.size());
+    if (document_.canvasSize[0] <= 0 || document_.canvasSize[1] <= 0 || frameCount <= 0) {
+        ioStatus_ = "No frames available for PNG export.";
+        return;
+    }
+
+    int exported = 0;
+    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+        const std::filesystem::path outputPath = context.assets.rawSpritePath() /
+            (document_.id + "_frame_" + std::to_string(frameIndex + 1) + ".png");
+        if (writePngRgba(outputPath, document_.canvasSize[0], document_.canvasSize[1], compositeFrameRgba(frameIndex))) {
+            ++exported;
+        }
+    }
+
+    ioStatus_ = "Exported " + std::to_string(exported) + " separate frame PNG(s).";
 }
 
 void SpriteEditorPanel::importPng(const EditorContext& context)

@@ -16,6 +16,13 @@ struct TilePaletteEntry {
     std::vector<std::uint32_t> wall;
 };
 
+struct ChapterScreenEntry {
+    std::string id;
+    std::string mapId;
+    int gridX = 0;
+    int gridY = 0;
+};
+
 struct EditorContext {
     AssetDirectories assets;
     std::string currentChapterId;
@@ -26,6 +33,9 @@ struct EditorContext {
     bool requestEditScreenGraphics = false;
     bool requestChapterSwitch = false;
     std::vector<TilePaletteEntry> tilePalette;
+    std::vector<ChapterScreenEntry> chapterScreens;
+    std::vector<std::string> importedCharacterIds;
+    std::string playableCharacterId;
 
     void markDirty() { dirty = true; }
 };

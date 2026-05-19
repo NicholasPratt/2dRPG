@@ -1,6 +1,7 @@
 #include "game/engine.hpp"
 
 #include "game/constants.hpp"
+#include "game/project.hpp"
 
 #include "stb_image.h"
 
@@ -8,6 +9,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <system_error>
 
@@ -17,6 +20,7 @@ namespace {
 constexpr float kFixedStepSeconds = 1.0f / 60.0f;
 constexpr float kPlayerSpeedPxPerSecond = 96.0f;
 constexpr float kPlayerSizePx = 12.0f;
+constexpr float kScreenTransitionExitRatio = 0.30f;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -41,6 +45,7 @@ Engine::~Engine()
 {
     destroyTexture(floorTexture_);
     destroyTexture(wallTexture_);
+    destroyTexture(playerTexture_);
     if (window_ != nullptr) {
         glfwDestroyWindow(window_);
         window_ = nullptr;
@@ -55,8 +60,13 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
         return false;
     }
 
+#if defined(__APPLE__)
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#endif
     window_ = glfwCreateWindow(kScreenTilesW * kTileSize * 2, kScreenTilesH * kTileSize * 2, "Adventure Runtime", nullptr, nullptr);
     if (window_ == nullptr) {
         setError(errorMessage, "Failed to create runtime window.");
@@ -75,8 +85,16 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
         setError(errorMessage, error);
         return false;
     }
-    playerX_ = static_cast<float>(activeMap_.spawnX * kTileSize + kTileSize / 2);
-    playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
+    loadPlayableCharacter();
+    const float centerX = screenWidthPx() * 0.5f;
+    const float centerY = screenHeightPx() * 0.5f;
+    if (playerCanOccupy(centerX, centerY)) {
+        playerX_ = centerX;
+        playerY_ = centerY;
+    } else {
+        playerX_ = static_cast<float>(activeMap_.spawnX * kTileSize + kTileSize / 2);
+        playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
+    }
     return true;
 }
 
@@ -203,6 +221,114 @@ void Engine::loadPathEntities()
     }
 }
 
+void Engine::loadPlayableCharacter()
+{
+    destroyTexture(playerTexture_);
+    const std::filesystem::path characterDir = assetPath(projectRoot_, "assets/game/characters");
+    std::error_code ec;
+    if (!std::filesystem::exists(characterDir, ec)) {
+        return;
+    }
+
+    auto frameForCharacter = [&](const std::filesystem::path& path, bool* playableOut) -> std::filesystem::path {
+        if (playableOut != nullptr) {
+            *playableOut = false;
+        }
+        std::ifstream input(path);
+        if (!input) {
+            return {};
+        }
+
+        std::string key;
+        input >> key;
+        if (key != "ADCHARACTER") {
+            return {};
+        }
+        int version = 0;
+        input >> version;
+
+        bool playable = false;
+        std::filesystem::path idleFrame;
+        std::filesystem::path firstFrame;
+        while (input >> key) {
+            if (key == "playable") {
+                int value = 0;
+                input >> value;
+                playable = value != 0;
+                if (playableOut != nullptr) {
+                    *playableOut = playable;
+                }
+            } else if (key == "frame") {
+                int frameIndex = 0;
+                std::string state;
+                std::string image;
+                if (input >> frameIndex >> std::quoted(state) >> std::quoted(image)) {
+                    if (firstFrame.empty()) {
+                        firstFrame = image;
+                    }
+                    if (idleFrame.empty() && state == "idle") {
+                        idleFrame = image;
+                    }
+                }
+            } else if (key == "end") {
+                break;
+            } else if (key == "name" || key == "bio" || key == "sprite") {
+                std::string ignored;
+                input >> std::quoted(ignored);
+            } else if (key == "animations" || key == "frames") {
+                std::size_t ignored = 0;
+                input >> ignored;
+            } else if (key == "anim") {
+                std::string ignoredA;
+                std::string ignoredB;
+                input >> std::quoted(ignoredA) >> std::quoted(ignoredB);
+            }
+        }
+
+        return idleFrame.empty() ? firstFrame : idleFrame;
+    };
+
+    auto loadFrame = [&](const std::filesystem::path& frame) -> bool {
+        if (frame.empty()) {
+            return false;
+        }
+        const std::filesystem::path framePath = frame.is_absolute() ? frame : projectRoot_ / frame;
+        return loadTexture(framePath, playerTexture_, nullptr);
+    };
+
+    if (!chapter_.playableCharacterId.empty()) {
+        if (loadFrame(frameForCharacter(characterDir / (chapter_.playableCharacterId + ".adcharacter"), nullptr))) {
+            return;
+        }
+    }
+
+    GameProject project;
+    if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr) &&
+        !project.playableCharacterId.empty()) {
+        if (loadFrame(frameForCharacter(characterDir / (project.playableCharacterId + ".adcharacter"), nullptr))) {
+            return;
+        }
+    }
+
+    std::filesystem::path fallbackFrame;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(characterDir, ec)) {
+        if (ec || !entry.is_regular_file(ec) || entry.path().extension() != ".adcharacter") {
+            continue;
+        }
+
+        bool playable = false;
+        const std::filesystem::path selectedFrame = frameForCharacter(entry.path(), &playable);
+        if (!selectedFrame.empty() && fallbackFrame.empty()) {
+            fallbackFrame = selectedFrame;
+        }
+        if (playable && loadFrame(selectedFrame)) {
+            return;
+        }
+    }
+
+    (void)loadFrame(fallbackFrame);
+}
+
 void Engine::update(float dt)
 {
     if (transitionState_ == TransitionState::Sliding) {
@@ -249,17 +375,44 @@ void Engine::updatePlayer(float dt)
     if (activeScreen_ == nullptr) {
         return;
     }
-    if (playerX_ < 0.0f && !activeScreen_->links.west.empty()) {
-        beginScreenTransition(activeScreen_->links.west, width - kTileSize, playerY_, -width, 0.0f);
-    } else if (playerX_ > width && !activeScreen_->links.east.empty()) {
-        beginScreenTransition(activeScreen_->links.east, kTileSize, playerY_, width, 0.0f);
-    } else if (playerY_ < 0.0f && !activeScreen_->links.north.empty()) {
-        beginScreenTransition(activeScreen_->links.north, playerX_, height - kTileSize, 0.0f, -height);
-    } else if (playerY_ > height && !activeScreen_->links.south.empty()) {
-        beginScreenTransition(activeScreen_->links.south, playerX_, kTileSize, 0.0f, height);
-    } else {
-        playerX_ = std::clamp(playerX_, kPlayerSizePx * 0.5f, width - kPlayerSizePx * 0.5f);
-        playerY_ = std::clamp(playerY_, kPlayerSizePx * 0.5f, height - kPlayerSizePx * 0.5f);
+
+    const float half = kPlayerSizePx * 0.5f;
+    const float exitDistance = kPlayerSizePx * kScreenTransitionExitRatio;
+    const bool crossedWest = playerX_ - half <= -exitDistance;
+    const bool crossedEast = playerX_ + half >= width + exitDistance;
+    const bool crossedNorth = playerY_ - half <= -exitDistance;
+    const bool crossedSouth = playerY_ + half >= height + exitDistance;
+
+    bool transitioned = false;
+    if (crossedWest && !activeScreen_->links.west.empty()) {
+        transitioned = beginScreenTransition(activeScreen_->links.west, width - half, playerY_, -width, 0.0f);
+    } else if (crossedEast && !activeScreen_->links.east.empty()) {
+        transitioned = beginScreenTransition(activeScreen_->links.east, half, playerY_, width, 0.0f);
+    } else if (crossedNorth && !activeScreen_->links.north.empty()) {
+        transitioned = beginScreenTransition(activeScreen_->links.north, playerX_, height - half, 0.0f, -height);
+    } else if (crossedSouth && !activeScreen_->links.south.empty()) {
+        transitioned = beginScreenTransition(activeScreen_->links.south, playerX_, half, 0.0f, height);
+    }
+
+    if (transitioned) {
+        return;
+    }
+
+    const bool canLeaveWest = !activeScreen_->links.west.empty();
+    const bool canLeaveEast = !activeScreen_->links.east.empty();
+    const bool canLeaveNorth = !activeScreen_->links.north.empty();
+    const bool canLeaveSouth = !activeScreen_->links.south.empty();
+    if (!canLeaveWest || crossedWest) {
+        playerX_ = std::max(playerX_, half);
+    }
+    if (!canLeaveEast || crossedEast) {
+        playerX_ = std::min(playerX_, width - half);
+    }
+    if (!canLeaveNorth || crossedNorth) {
+        playerY_ = std::max(playerY_, half);
+    }
+    if (!canLeaveSouth || crossedSouth) {
+        playerY_ = std::min(playerY_, height - half);
     }
 }
 
@@ -287,21 +440,44 @@ void Engine::updatePaths(float dt)
     }
 }
 
-void Engine::beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY)
+bool Engine::beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY)
 {
+    const ChapterScreen* targetScreen = findScreen(chapter_, targetScreenId);
+    if (targetScreen == nullptr) {
+        std::cerr << "Screen not found: " << targetScreenId << "\n";
+        return false;
+    }
+
+    TileMap targetMap;
     std::string error;
+    const std::filesystem::path mapPath = assetPath(projectRoot_, "assets/game/maps") / (targetScreen->mapId + ".admap");
+    if (!loadTileMap(mapPath, targetMap, &error)) {
+        std::cerr << "Failed to load map for screen " << targetScreenId << ": " << error << "\n";
+        return false;
+    }
+
+    const float half = kPlayerSizePx * 0.5f;
+    const float targetWidth = static_cast<float>(targetMap.width * kTileSize);
+    const float targetHeight = static_cast<float>(targetMap.height * kTileSize);
+    spawnX = std::clamp(spawnX, half, targetWidth - half);
+    spawnY = std::clamp(spawnY, half, targetHeight - half);
+    if (!playerCanOccupyInMap(targetMap, spawnX, spawnY)) {
+        return false;
+    }
+
     if (!loadScreen(targetScreenId, &error)) {
         std::cerr << error << "\n";
-        return;
+        return false;
     }
-    playerX_ = std::clamp(spawnX, kPlayerSizePx * 0.5f, screenWidthPx() - kPlayerSizePx * 0.5f);
-    playerY_ = std::clamp(spawnY, kPlayerSizePx * 0.5f, screenHeightPx() - kPlayerSizePx * 0.5f);
+    playerX_ = spawnX;
+    playerY_ = spawnY;
     transitionState_ = TransitionState::Sliding;
     transitionTime_ = 0.0f;
     transitionFromX_ = fromX;
     transitionFromY_ = fromY;
     transitionToX_ = 0.0f;
     transitionToY_ = 0.0f;
+    return true;
 }
 
 bool Engine::playerCanOccupy(float x, float y) const
@@ -315,13 +491,29 @@ bool Engine::playerCanOccupy(float x, float y) const
 
 bool Engine::solidAtPixel(float x, float y) const
 {
-    if (x < 0.0f || y < 0.0f || x >= screenWidthPx() || y >= screenHeightPx()) {
+    return solidAtPixelInMap(activeMap_, x, y);
+}
+
+bool Engine::playerCanOccupyInMap(const TileMap& map, float x, float y) const
+{
+    const float half = kPlayerSizePx * 0.5f;
+    return !solidAtPixelInMap(map, x - half, y - half) &&
+        !solidAtPixelInMap(map, x + half, y - half) &&
+        !solidAtPixelInMap(map, x - half, y + half) &&
+        !solidAtPixelInMap(map, x + half, y + half);
+}
+
+bool Engine::solidAtPixelInMap(const TileMap& map, float x, float y) const
+{
+    const float width = static_cast<float>(map.width * kTileSize);
+    const float height = static_cast<float>(map.height * kTileSize);
+    if (x < 0.0f || y < 0.0f || x >= width || y >= height) {
         return false;
     }
-    const int tileX = std::clamp(static_cast<int>(x) / kTileSize, 0, activeMap_.width - 1);
-    const int tileY = std::clamp(static_cast<int>(y) / kTileSize, 0, activeMap_.height - 1);
-    const std::size_t index = static_cast<std::size_t>(tileY) * static_cast<std::size_t>(activeMap_.width) + static_cast<std::size_t>(tileX);
-    return activeMap_.layers[1][index] != 0u;
+    const int tileX = std::clamp(static_cast<int>(x) / kTileSize, 0, map.width - 1);
+    const int tileY = std::clamp(static_cast<int>(y) / kTileSize, 0, map.height - 1);
+    const std::size_t index = static_cast<std::size_t>(tileY) * static_cast<std::size_t>(map.width) + static_cast<std::size_t>(tileX);
+    return map.layers[1][index] != 0u;
 }
 
 float Engine::screenWidthPx() const
@@ -382,8 +574,14 @@ void Engine::render()
         renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, 1.0f);
     }
 
-    renderFilledRect(playerX_ - kPlayerSizePx * 0.5f, playerY_ - kPlayerSizePx * 0.5f,
-        kPlayerSizePx, kPlayerSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
+    if (playerTexture_.id != 0) {
+        const float drawW = static_cast<float>(playerTexture_.width);
+        const float drawH = static_cast<float>(playerTexture_.height);
+        renderTexture(playerTexture_, playerX_ - drawW * 0.5f, playerY_ - drawH * 0.5f, drawW, drawH);
+    } else {
+        renderFilledRect(playerX_ - kPlayerSizePx * 0.5f, playerY_ - kPlayerSizePx * 0.5f,
+            kPlayerSizePx, kPlayerSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
+    }
 
     if (wallTexture_.id != 0) {
         renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());

@@ -111,6 +111,7 @@ private:
 
     void ensureDocument();
     void resizeDocument(int width, int height);
+    void drawScreenNavigator(EditorContext& context);
     void drawToolbar(EditorContext& context);
     void drawLayerControls(EditorContext& context);
     void drawPalette();
