@@ -6,6 +6,8 @@
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <unistd.h>
 #endif
 
 namespace {
@@ -23,6 +25,9 @@ std::filesystem::path executableDirectory()
     }
     std::error_code error;
     return std::filesystem::weakly_canonical(std::filesystem::path(buffer.data()), error).parent_path();
+#elif defined(__linux__)
+    std::error_code error;
+    return std::filesystem::weakly_canonical("/proc/self/exe", error).parent_path();
 #else
     return std::filesystem::current_path();
 #endif
