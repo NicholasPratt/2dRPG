@@ -93,6 +93,22 @@ std::filesystem::path resolveAgainstProjectRoot(const std::filesystem::path& pro
     return path.is_absolute() ? path : projectRoot / path;
 }
 
+std::filesystem::path portableProjectPath(const std::filesystem::path& projectRoot, const std::filesystem::path& path)
+{
+    if (path.empty() || !path.is_absolute()) {
+        return path;
+    }
+
+    std::error_code error;
+    const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(projectRoot, error);
+    const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path, error);
+    const std::filesystem::path relative = std::filesystem::relative(canonicalPath, canonicalRoot, error);
+    if (!error && !relative.empty() && relative.native().find("..") != 0) {
+        return relative;
+    }
+    return path;
+}
+
 int clampDimension(int value)
 {
     return std::clamp(value, kMinCanvasSize, kMaxCanvasSize);
@@ -1291,7 +1307,7 @@ void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
 {
     game::SpriteMetadata metadata;
     metadata.id = document_.id;
-    metadata.source = document_.sourcePng;
+    metadata.source = portableProjectPath(context.assets.projectRoot, document_.sourcePng);
     metadata.canvasSize = document_.canvasSize;
     metadata.gridSize = document_.gridSize;
     metadata.pivot = document_.pivot;

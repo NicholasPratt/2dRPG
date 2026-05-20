@@ -32,6 +32,23 @@ std::string textOf(const char* text)
     return text == nullptr ? std::string{} : std::string{text};
 }
 
+std::string portableProjectPath(const std::filesystem::path& projectRoot, const char* path)
+{
+    const std::filesystem::path imagePath = textOf(path);
+    if (imagePath.empty() || !imagePath.is_absolute()) {
+        return imagePath.generic_string();
+    }
+
+    std::error_code error;
+    const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(projectRoot, error);
+    const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(imagePath, error);
+    const std::filesystem::path relative = std::filesystem::relative(canonicalPath, canonicalRoot, error);
+    if (!error && !relative.empty() && relative.native().find("..") != 0) {
+        return relative.generic_string();
+    }
+    return imagePath.generic_string();
+}
+
 std::string characterId(const CharacterSheet& character)
 {
     std::string id = character.name[0] == '\0' ? "character" : character.name.data();
@@ -384,7 +401,7 @@ bool CharacterEditorPanel::saveCharacter(const EditorContext& context, const Cha
     for (const CharacterFrameAssignment& assignment : character.frameAssignments) {
         output << "frame " << assignment.frameIndex << ' '
                << std::quoted(textOf(assignment.state.data())) << ' '
-               << std::quoted(textOf(assignment.frameImage.data())) << "\n";
+               << std::quoted(portableProjectPath(context.assets.projectRoot, assignment.frameImage.data())) << "\n";
     }
     output << "end\n";
     return static_cast<bool>(output);

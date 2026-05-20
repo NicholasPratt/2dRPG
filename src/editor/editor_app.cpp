@@ -36,7 +36,37 @@ std::filesystem::path runningExecutableDirectory()
 #endif
 }
 
+std::filesystem::path findProjectRoot()
+{
+    std::error_code error;
+    const std::filesystem::path cwd = std::filesystem::current_path(error);
+    const std::filesystem::path executableDir = runningExecutableDirectory();
+    const std::vector<std::filesystem::path> candidates = {
+        cwd,
+        cwd.parent_path(),
+        executableDir,
+        executableDir.parent_path(),
+        executableDir.parent_path().parent_path(),
+    };
+
+    for (const std::filesystem::path& candidate : candidates) {
+        if (candidate.empty()) {
+            continue;
+        }
+        if (std::filesystem::exists(candidate / "assets", error)) {
+            return std::filesystem::weakly_canonical(candidate, error);
+        }
+    }
+
+    return cwd.empty() ? std::filesystem::path(".") : cwd;
+}
+
 } // namespace
+
+EditorApp::EditorApp()
+{
+    context_.assets.projectRoot = findProjectRoot();
+}
 
 void EditorApp::draw()
 {

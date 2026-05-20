@@ -18,6 +18,8 @@ namespace adventure::editor {
 
 class EditorApp {
 public:
+    EditorApp();
+
     void draw();
     void requestExit();
     [[nodiscard]] bool exitAccepted() const { return exitAccepted_; }

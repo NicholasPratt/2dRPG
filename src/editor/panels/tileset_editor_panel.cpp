@@ -22,6 +22,23 @@ ImU32 colorForTileId(uint16_t id)
     return IM_COL32(r, g, b, 255);
 }
 
+std::string portableProjectPath(const std::filesystem::path& projectRoot, const std::string& path)
+{
+    const std::filesystem::path sourcePath(path);
+    if (sourcePath.empty() || !sourcePath.is_absolute()) {
+        return path;
+    }
+
+    std::error_code error;
+    const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(projectRoot, error);
+    const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(sourcePath, error);
+    const std::filesystem::path relative = std::filesystem::relative(canonicalPath, canonicalRoot, error);
+    if (!error && !relative.empty() && relative.native().find("..") != 0) {
+        return relative.generic_string();
+    }
+    return path;
+}
+
 } // namespace
 
 void TilesetEditorPanel::draw(EditorContext& context)
@@ -177,7 +194,7 @@ void TilesetEditorPanel::generateTiles()
 void TilesetEditorPanel::saveTileset(EditorContext& context)
 {
     tileset_.id = std::string(tilesetId_.data());
-    tileset_.sourcePath = std::string(sourcePath_.data());
+    tileset_.sourcePath = portableProjectPath(context.assets.projectRoot, std::string(sourcePath_.data()));
     tileset_.tileWidth = tileWidthPx_;
     tileset_.tileHeight = tileHeightPx_;
 
