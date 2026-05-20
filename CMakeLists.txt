@@ -33,6 +33,7 @@ target_include_directories(adventure_game PUBLIC
 add_library(adventure_editor STATIC
     src/editor/asset_directories.cpp
     src/editor/editor_app.cpp
+    src/editor/editor_state.cpp
     src/editor/stb_image_impl.cpp
     src/editor/panels/character_editor_panel.cpp
     src/editor/panels/enemy_path_editor_panel.cpp

@@ -28,6 +28,8 @@ public:
     void openScreenGraphics(EditorContext& context, const std::string& mapId);
     bool saveForChapter(const EditorContext& context);
     void resetScreenBuffers();
+    [[nodiscard]] const std::vector<std::uint32_t>& getPalette() const { return palette_; }
+    void setPalette(std::vector<std::uint32_t> palette) { palette_ = std::move(palette); }
 
 private:
     enum class ActiveLayer { Floor = 0, Wall = 1 };

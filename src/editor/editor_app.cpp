@@ -1,4 +1,5 @@
 #include "editor/editor_app.hpp"
+#include "editor/editor_state.hpp"
 
 #include "imgui.h"
 
@@ -322,6 +323,18 @@ void EditorApp::chooseChapter(const std::string& chapterId)
         screenGraphicsMode_ = false;
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
+
+        const std::filesystem::path statePath = context_.assets.gameChapterPath() / (chapterId + ".adeditor");
+        EditorState editorState;
+        if (loadEditorState(statePath, editorState)) {
+            if (!editorState.selectedScreenId.empty()) {
+                context_.selectedScreenId = editorState.selectedScreenId;
+            }
+            context_.tilePalette = std::move(editorState.tilePalette);
+            if (!editorState.paintPalette.empty()) {
+                wallFloorPaint_.setPalette(std::move(editorState.paintPalette));
+            }
+        }
     }
 }
 
@@ -371,6 +384,16 @@ void EditorApp::saveCurrentChapterAndExports()
     if (!charactersSaved || !graphicsSaved) {
         context_.markDirty();
     }
+
+    if (!context_.currentChapterId.empty()) {
+        const std::filesystem::path statePath = context_.assets.gameChapterPath() / (context_.currentChapterId + ".adeditor");
+        EditorState editorState;
+        editorState.selectedScreenId = context_.selectedScreenId;
+        editorState.tilePalette = context_.tilePalette;
+        editorState.paintPalette = wallFloorPaint_.getPalette();
+        saveEditorState(statePath, editorState);
+    }
+
     refreshChapterList();
 }
 
