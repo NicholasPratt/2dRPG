@@ -44,6 +44,7 @@ struct EditorContext {
     std::vector<TilePaletteEntry> tilePalette;
     std::vector<ChapterScreenEntry> chapterScreens;
     std::vector<game::EnemyPlacement> selectedScreenEnemies;
+    std::string selectedScreenEnemiesOwnerId;
     std::vector<game::EnemyType> enemyTypes;
     std::vector<std::string> importedCharacterIds;
     std::string playableCharacterId;

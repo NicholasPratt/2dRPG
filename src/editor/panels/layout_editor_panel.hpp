@@ -25,6 +25,7 @@ public:
     [[nodiscard]] const game::Chapter& chapter() const { return chapter_; }
     void saveDirtyMaps(EditorContext& context);
     void applyContextSelectedScreenData(EditorContext& context);
+    bool selectScreenById(EditorContext& context, const std::string& screenId);
 
 private:
     game::Chapter chapter_;
@@ -49,7 +50,7 @@ private:
     std::unordered_map<std::string, GraphicsPreview> graphicsPreviews_;
 
     void drawToolbar(EditorContext& context);
-    void drawScreenList();
+    void drawScreenList(EditorContext& context);
     void drawMacroView(EditorContext& context);
     void drawScreenTileLayout(EditorContext& context, ImDrawList* drawList, const game::ChapterScreen& screen, ImVec2 min, float tileSize, bool selected);
     void drawGraphicsPreview(EditorContext& context, ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize);
@@ -64,7 +65,7 @@ private:
     [[nodiscard]] game::ChapterScreen* screenById(const std::string& screenId);
     [[nodiscard]] std::string nextScreenId() const;
     void syncContextScreens(EditorContext& context) const;
-    void syncSelectedScreenEnemiesToContext(EditorContext& context) const;
+    void syncSelectedScreenToContext(EditorContext& context) const;
     void syncChapterIdBuffer();
     [[nodiscard]] bool selectedScreenValid() const;
 };

@@ -211,6 +211,9 @@ void EditorApp::draw()
                 hasRequestedTab_ = false;
             }
             spriteEditorLaunchedFromCharacter_ = false;
+            if (!context_.selectedScreenId.empty()) {
+                layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+            }
             enemyPathEditor_.draw(context_);
             ImGui::EndTabItem();
         }
@@ -394,7 +397,7 @@ void EditorApp::chooseChapter(const std::string& chapterId)
         EditorState editorState;
         if (loadEditorState(statePath, editorState)) {
             if (!editorState.selectedScreenId.empty()) {
-                context_.selectedScreenId = editorState.selectedScreenId;
+                layoutEditor_.selectScreenById(context_, editorState.selectedScreenId);
             }
             context_.tilePalette = std::move(editorState.tilePalette);
             if (!editorState.paintPalette.empty()) {

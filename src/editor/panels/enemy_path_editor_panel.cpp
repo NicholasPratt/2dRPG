@@ -147,18 +147,8 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
         }
     }
 
-    ImGui::SetNextItemWidth(180.0f);
-    ImGui::InputText("Map id (screen ref)", mapId_.data(), mapId_.size());
-    ImGui::SameLine();
-    if (ImGui::Button("Use selected screen")) {
-        const std::string mapId = context.selectedScreenMapId;
-        if (!mapId.empty()) {
-            copyToBuffer(mapId_, mapId);
-            loadBgMap(context);
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Load map bg")) {
+    if (ImGui::Button("Reload screen background")) {
+        copyToBuffer(mapId_, context.selectedScreenMapId);
         loadBgMap(context);
     }
 

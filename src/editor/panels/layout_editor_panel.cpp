@@ -85,13 +85,11 @@ void LayoutEditorPanel::draw(EditorContext& context)
         }
     }
     selectedScreen_ = std::clamp(selectedScreen_, 0, static_cast<int>(chapter_.screens.size()) - 1);
-    if (selectedScreenValid()) {
-        const game::ChapterScreen& screen = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
-        context.currentChapterId = chapter_.id;
-        context.selectedScreenId = screen.id;
-        context.selectedScreenMapId = screen.mapId;
-        context.selectedScreenEnemies = screen.enemies;
+    if (!context.selectedScreenId.empty() && selectedScreenValid() &&
+        chapter_.screens[static_cast<std::size_t>(selectedScreen_)].id != context.selectedScreenId) {
+        (void)selectScreenById(context, context.selectedScreenId);
     }
+    syncSelectedScreenToContext(context);
     syncContextScreens(context);
 
     drawToolbar(context);
@@ -103,7 +101,7 @@ void LayoutEditorPanel::draw(EditorContext& context)
     const float centerWidth = std::max(280.0f, available.x - leftWidth - rightWidth - 16.0f);
 
     ImGui::BeginChild("LayoutScreenList", ImVec2(leftWidth, 0.0f), true);
-    drawScreenList();
+    drawScreenList(context);
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -160,7 +158,7 @@ void LayoutEditorPanel::drawToolbar(EditorContext& context)
     }
 }
 
-void LayoutEditorPanel::drawScreenList()
+void LayoutEditorPanel::drawScreenList(EditorContext& context)
 {
     ImGui::TextUnformatted("Screens");
     ImGui::Separator();
@@ -174,7 +172,7 @@ void LayoutEditorPanel::drawScreenList()
             label += "  start";
         }
         if (ImGui::Selectable(label.c_str(), selectedScreen_ == i, 0, ImVec2(0.0f, 32.0f))) {
-            selectedScreen_ = i;
+            (void)selectScreenById(context, screen.id);
         }
         ImGui::PopID();
     }
@@ -266,7 +264,7 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         ImGui::PushID(i);
         ImGui::InvisibleButton("ScreenHit", screenSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         if (!selected && ImGui::IsItemClicked()) {
-            selectedScreen_ = i;
+            (void)selectScreenById(context, screen.id);
         }
         if (selected && ImGui::IsItemHovered()) {
             const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -486,9 +484,7 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
     if (ImGui::Button("Delete This Screen", ImVec2(-1.0f, 30.0f))) {
         deleteSelectedScreen();
         if (selectedScreenValid()) {
-            const game::ChapterScreen& selected = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
-            context.selectedScreenId = selected.id;
-            context.selectedScreenMapId = selected.mapId;
+            syncSelectedScreenToContext(context);
         }
         syncContextScreens(context);
         context.markDirty();
@@ -611,8 +607,7 @@ void LayoutEditorPanel::addConnectedScreen(EditorContext& context, const char* d
         target->links.east = source->id;
     }
 
-    context.selectedScreenId = target->id;
-    context.selectedScreenMapId = target->mapId;
+    syncSelectedScreenToContext(context);
     syncContextScreens(context);
     context.markDirty();
 }
@@ -750,14 +745,30 @@ bool LayoutEditorPanel::saveCurrentChapter(EditorContext& context)
 
 void LayoutEditorPanel::applyContextSelectedScreenData(EditorContext& context)
 {
-    if (context.selectedScreenId.empty()) {
+    const std::string ownerId = context.selectedScreenEnemiesOwnerId.empty()
+        ? context.selectedScreenId
+        : context.selectedScreenEnemiesOwnerId;
+    if (ownerId.empty()) {
         return;
     }
-    game::ChapterScreen* screen = screenById(context.selectedScreenId);
+    game::ChapterScreen* screen = screenById(ownerId);
     if (screen == nullptr) {
         return;
     }
     screen->enemies = context.selectedScreenEnemies;
+}
+
+bool LayoutEditorPanel::selectScreenById(EditorContext& context, const std::string& screenId)
+{
+    applyContextSelectedScreenData(context);
+    for (int i = 0; i < static_cast<int>(chapter_.screens.size()); ++i) {
+        if (chapter_.screens[static_cast<std::size_t>(i)].id == screenId) {
+            selectedScreen_ = i;
+            syncSelectedScreenToContext(context);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::string& chapterId)
@@ -781,6 +792,7 @@ bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::strin
         context.selectedScreenId = chapter_.screens.front().id;
         context.selectedScreenMapId = chapter_.screens.front().mapId;
         context.selectedScreenEnemies = chapter_.screens.front().enemies;
+        context.selectedScreenEnemiesOwnerId = chapter_.screens.front().id;
     }
     syncContextScreens(context);
     context.dirty = false;
@@ -805,6 +817,7 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
     context.selectedScreenId = chapter_.screens.front().id;
     context.selectedScreenMapId = chapter_.screens.front().mapId;
     context.selectedScreenEnemies = chapter_.screens.front().enemies;
+    context.selectedScreenEnemiesOwnerId = chapter_.screens.front().id;
     syncContextScreens(context);
     context.markDirty();
     status_ = "Created new chapter: " + chapter_.id;
@@ -819,13 +832,21 @@ void LayoutEditorPanel::syncContextScreens(EditorContext& context) const
     }
 }
 
-void LayoutEditorPanel::syncSelectedScreenEnemiesToContext(EditorContext& context) const
+void LayoutEditorPanel::syncSelectedScreenToContext(EditorContext& context) const
 {
     if (!selectedScreenValid()) {
+        context.selectedScreenId.clear();
+        context.selectedScreenMapId.clear();
         context.selectedScreenEnemies.clear();
+        context.selectedScreenEnemiesOwnerId.clear();
         return;
     }
-    context.selectedScreenEnemies = chapter_.screens[static_cast<std::size_t>(selectedScreen_)].enemies;
+    const game::ChapterScreen& screen = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
+    context.currentChapterId = chapter_.id;
+    context.selectedScreenId = screen.id;
+    context.selectedScreenMapId = screen.mapId;
+    context.selectedScreenEnemies = screen.enemies;
+    context.selectedScreenEnemiesOwnerId = screen.id;
 }
 
 void LayoutEditorPanel::syncChapterIdBuffer()
