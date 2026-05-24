@@ -215,6 +215,16 @@ void EditorApp::draw()
             ImGui::EndTabItem();
         }
 
+        ImGuiTabItemFlags enemyTypesTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::EnemyTypes ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("Enemy Types", nullptr, enemyTypesTabFlags)) {
+            if (enemyTypesTabFlags != 0) {
+                hasRequestedTab_ = false;
+            }
+            spriteEditorLaunchedFromCharacter_ = false;
+            enemyPathEditor_.drawTypes(context_);
+            ImGui::EndTabItem();
+        }
+
         ImGuiTabItemFlags assetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Assets ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem("Assets", nullptr, assetsTabFlags)) {
             if (assetsTabFlags != 0) {

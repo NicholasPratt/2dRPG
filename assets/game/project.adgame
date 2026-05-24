@@ -1,0 +1,6 @@
+ADGAME 1
+id game
+playable hero
+characters 1
+character hero
+end

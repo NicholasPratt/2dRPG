@@ -77,6 +77,7 @@ std::filesystem::path previewPathForMap(const EditorContext& context, const std:
 
 void LayoutEditorPanel::draw(EditorContext& context)
 {
+    applyContextSelectedScreenData(context);
     if (chapter_.screens.empty()) {
         addScreen();
         if (chapter_.startScreenId.empty()) {
@@ -89,6 +90,7 @@ void LayoutEditorPanel::draw(EditorContext& context)
         context.currentChapterId = chapter_.id;
         context.selectedScreenId = screen.id;
         context.selectedScreenMapId = screen.mapId;
+        context.selectedScreenEnemies = screen.enemies;
     }
     syncContextScreens(context);
 
@@ -722,6 +724,7 @@ void LayoutEditorPanel::saveDirtyMaps(EditorContext& context)
 
 bool LayoutEditorPanel::saveCurrentChapter(EditorContext& context)
 {
+    applyContextSelectedScreenData(context);
     saveDirtyMaps(context);
 
     chapter_.id = chapterId_.data();
@@ -745,6 +748,18 @@ bool LayoutEditorPanel::saveCurrentChapter(EditorContext& context)
     }
 }
 
+void LayoutEditorPanel::applyContextSelectedScreenData(EditorContext& context)
+{
+    if (context.selectedScreenId.empty()) {
+        return;
+    }
+    game::ChapterScreen* screen = screenById(context.selectedScreenId);
+    if (screen == nullptr) {
+        return;
+    }
+    screen->enemies = context.selectedScreenEnemies;
+}
+
 bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::string& chapterId)
 {
     const std::filesystem::path inputPath = context.assets.gameChapterPath() / (chapterId + ".adchapter");
@@ -765,6 +780,7 @@ bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::strin
     if (!chapter_.screens.empty()) {
         context.selectedScreenId = chapter_.screens.front().id;
         context.selectedScreenMapId = chapter_.screens.front().mapId;
+        context.selectedScreenEnemies = chapter_.screens.front().enemies;
     }
     syncContextScreens(context);
     context.dirty = false;
@@ -788,6 +804,7 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
     context.playableCharacterId.clear();
     context.selectedScreenId = chapter_.screens.front().id;
     context.selectedScreenMapId = chapter_.screens.front().mapId;
+    context.selectedScreenEnemies = chapter_.screens.front().enemies;
     syncContextScreens(context);
     context.markDirty();
     status_ = "Created new chapter: " + chapter_.id;
@@ -800,6 +817,15 @@ void LayoutEditorPanel::syncContextScreens(EditorContext& context) const
     for (const game::ChapterScreen& screen : chapter_.screens) {
         context.chapterScreens.push_back({screen.id, screen.mapId, screen.gridX, screen.gridY});
     }
+}
+
+void LayoutEditorPanel::syncSelectedScreenEnemiesToContext(EditorContext& context) const
+{
+    if (!selectedScreenValid()) {
+        context.selectedScreenEnemies.clear();
+        return;
+    }
+    context.selectedScreenEnemies = chapter_.screens[static_cast<std::size_t>(selectedScreen_)].enemies;
 }
 
 void LayoutEditorPanel::syncChapterIdBuffer()

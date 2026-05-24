@@ -13,12 +13,12 @@
 
 namespace adventure::editor {
 
-// Enemy path / spline editor (spec §4.4).
-// Draws linear or spline waypoint paths on a world-grid canvas.
-// Saved to .adpath files in assets/game/paths/.
+// Enemy placement and path editor. Enemy types are universal game data;
+// placements live on the currently selected chapter screen.
 class EnemyPathEditorPanel {
 public:
     void draw(EditorContext& context);
+    void drawTypes(EditorContext& context);
 
 private:
     enum class Behavior { Idle = 0, Patrol = 1, Aggro = 2 };
@@ -29,11 +29,14 @@ private:
         float y = 0.0f;
     };
 
-    // Identity
-    std::array<char, 64> pathId_{'p', 'a', 't', 'h', '_', '1', '\0'};
-    std::array<char, 64> enemyId_{'e', 'n', 'e', 'm', 'y', '_', '1', '\0'};
+    // Placement identity
+    std::array<char, 64> placementId_{'e', 'n', 'e', 'm', 'y', '_', '1', '\0'};
+    std::array<char, 64> typeId_{'e', 'n', 'e', 'm', 'y', '_', '1', '\0'};
     std::array<char, 64> spriteId_{'e', 'n', 'e', 'm', 'y', '_', '1', '\0'};
     std::array<char, 64> mapId_{'n', 'e', 'w', '_', 'm', 'a', 'p', '\0'};
+    int selectedPlacement_ = -1;
+    int selectedType_ = 0;
+    bool projectLoaded_ = false;
 
     // Enemy behavior
     Behavior behavior_ = Behavior::Patrol;
@@ -65,12 +68,17 @@ private:
     std::string status_;
 
     void drawToolbar(EditorContext& context);
+    void drawEnemyTypePage(EditorContext& context);
+    void drawPlacementList(EditorContext& context);
     void drawAnimationStateHelper(EditorContext& context);
-    void drawWaypointList();
-    void drawCanvas();
+    void drawWaypointList(EditorContext& context);
+    void drawCanvas(EditorContext& context);
     void loadBgMap(EditorContext& context);
-    void savePath(EditorContext& context);
-    void loadPath(EditorContext& context);
+    void saveProjectEnemyTypes(EditorContext& context);
+    void loadProjectEnemyTypes(EditorContext& context);
+    void createPlacement(EditorContext& context);
+    void selectPlacement(EditorContext& context, int index);
+    void writeCurrentPlacement(EditorContext& context);
     [[nodiscard]] float snapValue(float v) const;
     [[nodiscard]] ImVec2 waypointToCanvas(ImVec2 origin, const Waypoint& waypoint) const;
     [[nodiscard]] Waypoint splinePoint(int segment, float t) const;

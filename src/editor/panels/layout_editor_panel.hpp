@@ -24,6 +24,7 @@ public:
     [[nodiscard]] bool saveCurrentChapter(EditorContext& context);
     [[nodiscard]] const game::Chapter& chapter() const { return chapter_; }
     void saveDirtyMaps(EditorContext& context);
+    void applyContextSelectedScreenData(EditorContext& context);
 
 private:
     game::Chapter chapter_;
@@ -63,6 +64,7 @@ private:
     [[nodiscard]] game::ChapterScreen* screenById(const std::string& screenId);
     [[nodiscard]] std::string nextScreenId() const;
     void syncContextScreens(EditorContext& context) const;
+    void syncSelectedScreenEnemiesToContext(EditorContext& context) const;
     void syncChapterIdBuffer();
     [[nodiscard]] bool selectedScreenValid() const;
 };

@@ -10,6 +10,8 @@ namespace adventure::game {
 namespace {
 
 constexpr int kMaxScreens = 1024;
+constexpr int kMaxScreenEnemies = 2048;
+constexpr int kMaxEnemyWaypoints = 4096;
 constexpr int kMinGridCoord = -512;
 constexpr int kMaxGridCoord = 512;
 
@@ -55,6 +57,15 @@ bool validChapterShape(const Chapter& chapter)
             screen.gridY < kMinGridCoord || screen.gridY > kMaxGridCoord) {
             return false;
         }
+        if (screen.enemies.size() > kMaxScreenEnemies) {
+            return false;
+        }
+        for (const EnemyPlacement& enemy : screen.enemies) {
+            if (!validToken(enemy.id) || !validToken(enemy.typeId) ||
+                enemy.speedOverride < 0.0f || enemy.waypoints.size() > kMaxEnemyWaypoints) {
+                return false;
+            }
+        }
     }
 
     return findScreen(chapter, chapter.startScreenId) != nullptr;
@@ -88,7 +99,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 3\n";
+    output << "ADCHAPTER 4\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -105,6 +116,16 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                << encodedLink(screen.links.east) << ' '
                << encodedLink(screen.links.west) << "\n";
         output << "respawn " << (screen.respawnEnemies ? 1 : 0) << "\n";
+        output << "enemies " << screen.enemies.size() << "\n";
+        for (const EnemyPlacement& enemy : screen.enemies) {
+            output << "enemy " << enemy.id << ' ' << enemy.typeId << ' '
+                   << static_cast<int>(enemy.behavior) << ' ' << static_cast<int>(enemy.curveMode) << ' '
+                   << enemy.speedOverride << ' ' << (enemy.loop ? 1 : 0) << ' ' << (enemy.respawn ? 1 : 0) << ' '
+                   << enemy.waypoints.size() << "\n";
+            for (const PathWaypoint& waypoint : enemy.waypoints) {
+                output << "wp " << waypoint.x << ' ' << waypoint.y << "\n";
+            }
+        }
     }
     output << "end\n";
 
@@ -127,7 +148,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 3) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 4) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -223,6 +244,50 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 return false;
             }
             screen.respawnEnemies = (respawnVal != 0);
+        }
+
+        if (version >= 4) {
+            int enemyCount = 0;
+            input >> key >> enemyCount;
+            if (key != "enemies" || !input || enemyCount < 0 || enemyCount > kMaxScreenEnemies) {
+                setError(errorMessage, "Expected valid enemy count.");
+                return false;
+            }
+            screen.enemies.reserve(static_cast<std::size_t>(enemyCount));
+            for (int enemyIndex = 0; enemyIndex < enemyCount; ++enemyIndex) {
+                EnemyPlacement enemy;
+                int behavior = 1;
+                int curve = 0;
+                int loopVal = 1;
+                int respawnVal = 0;
+                int waypointCount = 0;
+                input >> key;
+                if (key != "enemy") {
+                    setError(errorMessage, "Expected enemy entry.");
+                    return false;
+                }
+                input >> enemy.id >> enemy.typeId >> behavior >> curve >> enemy.speedOverride
+                      >> loopVal >> respawnVal >> waypointCount;
+                if (!input || waypointCount < 0 || waypointCount > kMaxEnemyWaypoints) {
+                    setError(errorMessage, "Invalid enemy entry.");
+                    return false;
+                }
+                enemy.behavior = static_cast<PathBehavior>(std::clamp(behavior, 0, 2));
+                enemy.curveMode = static_cast<PathCurveMode>(std::clamp(curve, 0, 1));
+                enemy.loop = loopVal != 0;
+                enemy.respawn = respawnVal != 0;
+                enemy.waypoints.reserve(static_cast<std::size_t>(waypointCount));
+                for (int waypointIndex = 0; waypointIndex < waypointCount; ++waypointIndex) {
+                    PathWaypoint waypoint;
+                    input >> key >> waypoint.x >> waypoint.y;
+                    if (key != "wp" || !input) {
+                        setError(errorMessage, "Expected enemy waypoint.");
+                        return false;
+                    }
+                    enemy.waypoints.push_back(waypoint);
+                }
+                screen.enemies.push_back(std::move(enemy));
+            }
         }
 
         loaded.screens.push_back(std::move(screen));

@@ -3,6 +3,7 @@
 #include "game/constants.hpp"
 #include "game/map.hpp"
 #include "game/path.hpp"
+#include "game/project.hpp"
 #include "imgui.h"
 
 #include <algorithm>
@@ -36,152 +37,107 @@ ImU32 bgColorForTileId(uint16_t id)
     return IM_COL32(r, g, b, 255);
 }
 
-void setError(std::string* out, const std::string& msg)
+void copyToBuffer(std::array<char, 64>& buffer, const std::string& value)
 {
-    if (out) {
-        *out = msg;
-    }
-}
-
-bool savePathFile(const std::filesystem::path& path,
-    const std::string& id, const std::string& mapId,
-    int behavior, float speed, bool loop, bool respawn,
-    const std::vector<std::pair<float, float>>& waypoints,
-    std::string* errorMessage)
-{
-    std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
-
-    std::ofstream output(path);
-    if (!output) {
-        setError(errorMessage, "Could not open path file for writing.");
-        return false;
-    }
-
-    output << "ADPATH 1\n";
-    output << "id " << id << "\n";
-    output << "map " << mapId << "\n";
-    output << "behavior " << behavior << "\n";
-    output << "speed " << speed << "\n";
-    output << "loop " << (loop ? 1 : 0) << "\n";
-    output << "respawn " << (respawn ? 1 : 0) << "\n";
-    output << "waypoints " << waypoints.size() << "\n";
-    for (const auto& [x, y] : waypoints) {
-        output << "wp " << x << " " << y << "\n";
-    }
-    output << "end\n";
-
-    if (!output) {
-        setError(errorMessage, "Failed while writing path file.");
-        return false;
-    }
-    return true;
-}
-
-bool loadPathFile(const std::filesystem::path& path,
-    std::string& id, std::string& mapId,
-    int& behavior, float& speed, bool& loop, bool& respawn,
-    std::vector<std::pair<float, float>>& waypoints,
-    std::string* errorMessage)
-{
-    std::ifstream input(path);
-    if (!input) {
-        setError(errorMessage, "Could not open path file for reading.");
-        return false;
-    }
-
-    std::string magic;
-    int version = 0;
-    input >> magic >> version;
-    if (magic != "ADPATH" || version != 1) {
-        setError(errorMessage, "Unsupported path file type or version.");
-        return false;
-    }
-
-    std::string key;
-
-    input >> key;
-    if (key != "id") { setError(errorMessage, "Expected id."); return false; }
-    input >> id;
-
-    input >> key;
-    if (key != "map") { setError(errorMessage, "Expected map."); return false; }
-    input >> mapId;
-
-    input >> key;
-    if (key != "behavior") { setError(errorMessage, "Expected behavior."); return false; }
-    input >> behavior;
-
-    input >> key;
-    if (key != "speed") { setError(errorMessage, "Expected speed."); return false; }
-    input >> speed;
-
-    int loopVal = 0;
-    input >> key;
-    if (key != "loop") { setError(errorMessage, "Expected loop."); return false; }
-    input >> loopVal;
-    loop = (loopVal != 0);
-
-    int respawnVal = 0;
-    input >> key;
-    if (key != "respawn") { setError(errorMessage, "Expected respawn."); return false; }
-    input >> respawnVal;
-    respawn = (respawnVal != 0);
-
-    int wpCount = 0;
-    input >> key;
-    if (key != "waypoints") { setError(errorMessage, "Expected waypoints."); return false; }
-    input >> wpCount;
-    if (wpCount < 0 || wpCount > 4096) { setError(errorMessage, "Waypoint count out of range."); return false; }
-
-    waypoints.clear();
-    waypoints.reserve(static_cast<std::size_t>(wpCount));
-    for (int i = 0; i < wpCount; ++i) {
-        float x = 0.0f;
-        float y = 0.0f;
-        input >> key;
-        if (key != "wp") { setError(errorMessage, "Expected wp entry."); return false; }
-        input >> x >> y;
-        if (!input) { setError(errorMessage, "Failed to read waypoint."); return false; }
-        waypoints.emplace_back(x, y);
-    }
-
-    input >> key;
-    if (key != "end") { setError(errorMessage, "Expected end marker."); return false; }
-
-    return true;
+    std::memset(buffer.data(), 0, buffer.size());
+    std::memcpy(buffer.data(), value.data(), std::min(value.size(), buffer.size() - 1));
 }
 
 } // namespace
 
 void EnemyPathEditorPanel::draw(EditorContext& context)
 {
+    if (!projectLoaded_) {
+        loadProjectEnemyTypes(context);
+        projectLoaded_ = true;
+    }
+    if (context.enemyTypes.empty()) {
+        context.enemyTypes.push_back({});
+    }
+    if (std::string(mapId_.data()) != context.selectedScreenMapId && !context.selectedScreenMapId.empty()) {
+        copyToBuffer(mapId_, context.selectedScreenMapId);
+        loadBgMap(context);
+    }
+    if (selectedPlacement_ >= static_cast<int>(context.selectedScreenEnemies.size())) {
+        selectedPlacement_ = static_cast<int>(context.selectedScreenEnemies.size()) - 1;
+    }
+
     drawToolbar(context);
     ImGui::Separator();
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
-    const float leftWidth = std::min(200.0f, available.x * 0.22f);
+    const float leftWidth = std::min(260.0f, std::max(200.0f, available.x * 0.26f));
 
-    ImGui::BeginChild("PathWaypointList", ImVec2(leftWidth, 0.0f), true);
-    drawWaypointList();
+    ImGui::BeginChild("EnemyPlacementList", ImVec2(leftWidth, 0.0f), true);
+    drawPlacementList(context);
+    ImGui::Separator();
+    drawWaypointList(context);
     ImGui::EndChild();
 
     ImGui::SameLine();
     ImGui::BeginChild("PathCanvas", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
-    drawCanvas();
+    drawCanvas(context);
     ImGui::EndChild();
+}
+
+void EnemyPathEditorPanel::drawTypes(EditorContext& context)
+{
+    if (!projectLoaded_) {
+        loadProjectEnemyTypes(context);
+        projectLoaded_ = true;
+    }
+    if (context.enemyTypes.empty()) {
+        context.enemyTypes.push_back({});
+    }
+    drawEnemyTypePage(context);
+    ImGui::Separator();
+    if (ImGui::Button("Save enemy types")) {
+        saveProjectEnemyTypes(context);
+    }
+    if (!status_.empty()) {
+        ImGui::TextWrapped("%s", status_.c_str());
+    }
 }
 
 void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
 {
+    ImGui::Text("Screen: %s", context.selectedScreenId.empty() ? "(none)" : context.selectedScreenId.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("map %s", context.selectedScreenMapId.empty() ? "(none)" : context.selectedScreenMapId.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("New enemy placement")) {
+        createPlacement(context);
+    }
+    ImGui::SameLine();
+    if (!context.enemyTypes.empty()) {
+        selectedType_ = std::clamp(selectedType_, 0, static_cast<int>(context.enemyTypes.size()) - 1);
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::BeginCombo("Placement type", context.enemyTypes[static_cast<std::size_t>(selectedType_)].id.c_str())) {
+            for (int i = 0; i < static_cast<int>(context.enemyTypes.size()); ++i) {
+                if (ImGui::Selectable(context.enemyTypes[static_cast<std::size_t>(i)].id.c_str(), selectedType_ == i)) {
+                    selectedType_ = i;
+                    const game::EnemyType& selectedType = context.enemyTypes[static_cast<std::size_t>(selectedType_)];
+                    copyToBuffer(typeId_, selectedType.id);
+                    copyToBuffer(spriteId_, selectedType.spriteId);
+                    writeCurrentPlacement(context);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
     ImGui::SetNextItemWidth(180.0f);
-    ImGui::InputText("Path id", pathId_.data(), pathId_.size());
+    if (ImGui::InputText("Placement id", placementId_.data(), placementId_.size())) {
+        writeCurrentPlacement(context);
+    }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::InputText("Enemy id", enemyId_.data(), enemyId_.size());
+    if (ImGui::InputText("Enemy type", typeId_.data(), typeId_.size())) {
+        writeCurrentPlacement(context);
+    }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::InputText("Sprite id", spriteId_.data(), spriteId_.size());
+    ImGui::InputText("Type sprite", spriteId_.data(), spriteId_.size());
     ImGui::SameLine();
     if (ImGui::Button("Edit Sprite")) {
         const std::string spriteId(spriteId_.data());
@@ -192,13 +148,13 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     }
 
     ImGui::SetNextItemWidth(180.0f);
-    ImGui::InputText("Map id (ref)", mapId_.data(), mapId_.size());
+    ImGui::InputText("Map id (screen ref)", mapId_.data(), mapId_.size());
     ImGui::SameLine();
     if (ImGui::Button("Use selected screen")) {
         const std::string mapId = context.selectedScreenMapId;
         if (!mapId.empty()) {
-            std::memset(mapId_.data(), 0, mapId_.size());
-            std::memcpy(mapId_.data(), mapId.data(), std::min(mapId.size(), mapId_.size() - 1));
+            copyToBuffer(mapId_, mapId);
+            loadBgMap(context);
         }
     }
     ImGui::SameLine();
@@ -212,6 +168,7 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
         int bInt = static_cast<int>(behavior_);
         if (ImGui::RadioButton(kBehaviorNames[b], &bInt, b)) {
             behavior_ = static_cast<Behavior>(bInt);
+            writeCurrentPlacement(context);
         }
     }
 
@@ -222,37 +179,22 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
         int mode = static_cast<int>(curveMode_);
         if (ImGui::RadioButton(kCurveModeNames[m], &mode, m)) {
             curveMode_ = static_cast<CurveMode>(mode);
+            writeCurrentPlacement(context);
         }
     }
 
     ImGui::SameLine(0.0f, 24.0f);
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::SliderFloat("Speed", &speed_, 16.0f, 256.0f, "%.0f px/s");
-    ImGui::SameLine();
-    ImGui::Checkbox("Loop", &loop_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Respawn enemy", &respawn_);
-
-    ImGui::SetNextItemWidth(90.0f);
-    if (ImGui::InputInt("Health", &maxHealth_)) {
-        maxHealth_ = std::clamp(maxHealth_, 1, 999);
+    if (ImGui::SliderFloat("Speed override", &speed_, 0.0f, 256.0f, "%.0f px/s")) {
+        writeCurrentPlacement(context);
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(90.0f);
-    if (ImGui::InputInt("Contact dmg", &contactDamage_)) {
-        contactDamage_ = std::clamp(contactDamage_, 0, 999);
-    }
-    float hitbox[2]{hitboxWidth_, hitboxHeight_};
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::InputFloat2("Hitbox px", hitbox, "%.1f")) {
-        hitboxWidth_ = std::clamp(hitbox[0], 1.0f, 256.0f);
-        hitboxHeight_ = std::clamp(hitbox[1], 1.0f, 256.0f);
+    if (ImGui::Checkbox("Loop", &loop_)) {
+        writeCurrentPlacement(context);
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(90.0f);
-    if (ImGui::InputFloat("Hit cooldown", &attackCooldownSeconds_, 0.1f, 0.5f, "%.2f")) {
-        attackCooldownSeconds_ = std::clamp(attackCooldownSeconds_, 0.0f, 60.0f);
+    if (ImGui::Checkbox("Respawn enemy", &respawn_)) {
+        writeCurrentPlacement(context);
     }
 
     ImGui::SetNextItemWidth(80.0f);
@@ -260,21 +202,119 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     ImGui::SameLine();
     ImGui::Checkbox("Snap to grid", &snapToGrid_);
 
-    ImGui::SameLine(0.0f, 24.0f);
-    if (ImGui::Button("Save .adpath")) {
-        savePath(context);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Load .adpath")) {
-        loadPath(context);
-    }
-
     drawAnimationStateHelper(context);
 
-    ImGui::Text("Path files: %s", context.assets.gamePathPath().string().c_str());
+    ImGui::Text("Placements save inside the selected screen in chapter %s.", context.currentChapterId.c_str());
     ImGui::TextDisabled("Click empty area: add waypoint   Click near waypoint: select   Drag selected: move   Right-click: delete");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
+    }
+}
+
+void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
+{
+    selectedType_ = std::clamp(selectedType_, 0, static_cast<int>(context.enemyTypes.size()) - 1);
+    ImGui::TextUnformatted("Enemy Types");
+    ImGui::SameLine();
+    if (ImGui::Button("New type")) {
+        game::EnemyType type;
+        type.id = "enemy_type_" + std::to_string(context.enemyTypes.size() + 1);
+        type.spriteId = type.id;
+        context.enemyTypes.push_back(type);
+        selectedType_ = static_cast<int>(context.enemyTypes.size()) - 1;
+        context.markDirty();
+    }
+
+    if (!context.enemyTypes.empty()) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::BeginCombo("Selected type", context.enemyTypes[static_cast<std::size_t>(selectedType_)].id.c_str())) {
+            for (int i = 0; i < static_cast<int>(context.enemyTypes.size()); ++i) {
+                if (ImGui::Selectable(context.enemyTypes[static_cast<std::size_t>(i)].id.c_str(), selectedType_ == i)) {
+                    selectedType_ = i;
+                    const game::EnemyType& selectedType = context.enemyTypes[static_cast<std::size_t>(selectedType_)];
+                    copyToBuffer(typeId_, selectedType.id);
+                    copyToBuffer(spriteId_, selectedType.spriteId);
+                    writeCurrentPlacement(context);
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        game::EnemyType& type = context.enemyTypes[static_cast<std::size_t>(selectedType_)];
+        char typeId[64]{};
+        char spriteId[64]{};
+        std::memcpy(typeId, type.id.data(), std::min(type.id.size(), sizeof(typeId) - 1));
+        std::memcpy(spriteId, type.spriteId.data(), std::min(type.spriteId.size(), sizeof(spriteId) - 1));
+        ImGui::SetNextItemWidth(140.0f);
+        if (ImGui::InputText("Type id", typeId, sizeof(typeId))) {
+            type.id = typeId;
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140.0f);
+        if (ImGui::InputText("Sprite", spriteId, sizeof(spriteId))) {
+            type.spriteId = spriteId;
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        if (ImGui::InputInt("HP", &type.maxHealth)) {
+            type.maxHealth = std::clamp(type.maxHealth, 1, 999);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        if (ImGui::InputInt("Damage", &type.contactDamage)) {
+            type.contactDamage = std::clamp(type.contactDamage, 0, 999);
+            context.markDirty();
+        }
+        float hitbox[2]{type.hitboxWidth, type.hitboxHeight};
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130.0f);
+        if (ImGui::InputFloat2("Hitbox", hitbox, "%.1f")) {
+            type.hitboxWidth = std::clamp(hitbox[0], 1.0f, 256.0f);
+            type.hitboxHeight = std::clamp(hitbox[1], 1.0f, 256.0f);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputFloat("Cooldown", &type.attackCooldownSeconds, 0.1f, 0.5f, "%.2f")) {
+            type.attackCooldownSeconds = std::clamp(type.attackCooldownSeconds, 0.0f, 60.0f);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputFloat("Base speed", &type.speed, 1.0f, 8.0f, "%.0f")) {
+            type.speed = std::clamp(type.speed, 0.0f, 512.0f);
+            context.markDirty();
+        }
+    }
+}
+
+void EnemyPathEditorPanel::drawPlacementList(EditorContext& context)
+{
+    ImGui::Text("Enemies on %s", context.selectedScreenId.empty() ? "(no screen)" : context.selectedScreenId.c_str());
+    for (int i = 0; i < static_cast<int>(context.selectedScreenEnemies.size()); ++i) {
+        ImGui::PushID(i);
+        const game::EnemyPlacement& enemy = context.selectedScreenEnemies[static_cast<std::size_t>(i)];
+        const std::string label = enemy.id + "  [" + enemy.typeId + "]";
+        if (ImGui::Selectable(label.c_str(), selectedPlacement_ == i)) {
+            selectPlacement(context, i);
+        }
+        ImGui::PopID();
+    }
+    if (selectedPlacement_ >= 0 && selectedPlacement_ < static_cast<int>(context.selectedScreenEnemies.size())) {
+        if (ImGui::Button("Delete placement")) {
+            context.selectedScreenEnemies.erase(context.selectedScreenEnemies.begin() + selectedPlacement_);
+            selectedPlacement_ = std::clamp(selectedPlacement_, -1, static_cast<int>(context.selectedScreenEnemies.size()) - 1);
+            if (selectedPlacement_ >= 0) {
+                selectPlacement(context, selectedPlacement_);
+            } else {
+                waypoints_.clear();
+            }
+            context.markDirty();
+        }
     }
 }
 
@@ -291,7 +331,7 @@ void EnemyPathEditorPanel::drawAnimationStateHelper(EditorContext& context)
     }
 }
 
-void EnemyPathEditorPanel::drawWaypointList()
+void EnemyPathEditorPanel::drawWaypointList(EditorContext& context)
 {
     ImGui::Text("Waypoints (%d)", static_cast<int>(waypoints_.size()));
     ImGui::Separator();
@@ -299,6 +339,7 @@ void EnemyPathEditorPanel::drawWaypointList()
     if (ImGui::Button("Clear all")) {
         waypoints_.clear();
         selectedWaypoint_ = -1;
+        writeCurrentPlacement(context);
     }
 
     for (int i = 0; i < static_cast<int>(waypoints_.size()); ++i) {
@@ -313,7 +354,7 @@ void EnemyPathEditorPanel::drawWaypointList()
     }
 }
 
-void EnemyPathEditorPanel::drawCanvas()
+void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
 {
     const int worldTilesW = bgMapLoaded_ ? bgMap_.width : kDefaultWorldTilesW;
     const int worldTilesH = bgMapLoaded_ ? bgMap_.height : kDefaultWorldTilesH;
@@ -330,17 +371,31 @@ void EnemyPathEditorPanel::drawCanvas()
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(origin, {origin.x + canvasW, origin.y + canvasH}, IM_COL32(20, 22, 28, 255));
 
-    // Map background (mid layer, dim)
+    // Map background: floor, walls, ceiling, and obstacles from the selected screen.
     if (bgMapLoaded_) {
-        for (int y = 0; y < bgMap_.height; ++y) {
-            for (int x = 0; x < bgMap_.width; ++x) {
-                const uint16_t id = bgMap_.layers[1][static_cast<std::size_t>(y) * bgMap_.width + x];
-                if (id != 0u) {
-                    const ImVec2 tMin{origin.x + x * tileCanvas, origin.y + y * tileCanvas};
-                    const ImVec2 tMax{tMin.x + tileCanvas, tMin.y + tileCanvas};
-                    dl->AddRectFilled(tMin, tMax, bgColorForTileId(id));
+        for (int layer = 0; layer < 3; ++layer) {
+            for (int y = 0; y < bgMap_.height; ++y) {
+                for (int x = 0; x < bgMap_.width; ++x) {
+                    const uint16_t id = bgMap_.layers[static_cast<std::size_t>(layer)][static_cast<std::size_t>(y) * bgMap_.width + x];
+                    if (id != 0u) {
+                        const ImVec2 tMin{origin.x + x * tileCanvas, origin.y + y * tileCanvas};
+                        const ImVec2 tMax{tMin.x + tileCanvas, tMin.y + tileCanvas};
+                        ImU32 color = bgColorForTileId(id);
+                        if (layer == 0) {
+                            color = IM_COL32((color & 0xffu) / 2, ((color >> 8u) & 0xffu) / 2, ((color >> 16u) & 0xffu) / 2, 180);
+                        } else if (layer == 2) {
+                            color = IM_COL32(70, 105, 170, 150);
+                        }
+                        dl->AddRectFilled(tMin, tMax, color);
+                    }
                 }
             }
+        }
+        for (const game::MapObstacle& obstacle : bgMap_.obstacles) {
+            const ImVec2 oMin{origin.x + obstacle.x * tileCanvas, origin.y + obstacle.y * tileCanvas};
+            const ImVec2 oMax{oMin.x + obstacle.width * tileCanvas, oMin.y + obstacle.height * tileCanvas};
+            dl->AddRectFilled(oMin, oMax, IM_COL32(220, 80, 70, 125));
+            dl->AddRect(oMin, oMax, IM_COL32(255, 235, 180, 210), 0.0f, 0, 2.0f);
         }
     }
 
@@ -434,6 +489,7 @@ void EnemyPathEditorPanel::drawCanvas()
             ay = std::clamp(ay, 0.0f, worldH);
             waypoints_.push_back({ax, ay});
             selectedWaypoint_ = static_cast<int>(waypoints_.size()) - 1;
+            writeCurrentPlacement(context);
         }
     }
 
@@ -447,6 +503,7 @@ void EnemyPathEditorPanel::drawCanvas()
         }
         waypoints_[selectedWaypoint_].x = std::clamp(nx, 0.0f, worldW);
         waypoints_[selectedWaypoint_].y = std::clamp(ny, 0.0f, worldH);
+        writeCurrentPlacement(context);
     }
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         dragging_ = false;
@@ -458,6 +515,7 @@ void EnemyPathEditorPanel::drawCanvas()
         if (selectedWaypoint_ >= static_cast<int>(waypoints_.size())) {
             selectedWaypoint_ = static_cast<int>(waypoints_.size()) - 1;
         }
+        writeCurrentPlacement(context);
     }
 
     // Delete key: remove selected waypoint
@@ -466,6 +524,7 @@ void EnemyPathEditorPanel::drawCanvas()
         if (selectedWaypoint_ >= static_cast<int>(waypoints_.size())) {
             selectedWaypoint_ = static_cast<int>(waypoints_.size()) - 1;
         }
+        writeCurrentPlacement(context);
     }
 }
 
@@ -487,85 +546,102 @@ void EnemyPathEditorPanel::loadBgMap(EditorContext& context)
     status_ = "Loaded map background: " + mapPath.generic_string();
 }
 
-void EnemyPathEditorPanel::savePath(EditorContext& context)
+void EnemyPathEditorPanel::saveProjectEnemyTypes(EditorContext& context)
 {
-    game::EnemyPath path;
-    path.id = pathId_.data();
-    path.enemyId = enemyId_.data();
-    path.spriteId = spriteId_.data();
-    path.mapId = mapId_.data();
-    path.behavior = static_cast<game::PathBehavior>(static_cast<int>(behavior_));
-    path.curveMode = static_cast<game::PathCurveMode>(static_cast<int>(curveMode_));
-    path.combat.maxHealth = maxHealth_;
-    path.combat.contactDamage = contactDamage_;
-    path.combat.hitboxWidth = hitboxWidth_;
-    path.combat.hitboxHeight = hitboxHeight_;
-    path.combat.attackCooldownSeconds = attackCooldownSeconds_;
-    path.speed = speed_;
-    path.loop = loop_;
-    path.respawn = respawn_;
-    path.waypoints.reserve(waypoints_.size());
-    for (const auto& wp : waypoints_) {
-        path.waypoints.push_back({wp.x, wp.y});
+    game::GameProject project;
+    (void)game::loadGameProject(context.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
+    project.id = project.id.empty() ? "game" : project.id;
+    project.enemyTypes = context.enemyTypes;
+    if (!context.currentChapterId.empty() &&
+        std::find(project.chapterIds.begin(), project.chapterIds.end(), context.currentChapterId) == project.chapterIds.end()) {
+        project.chapterIds.push_back(context.currentChapterId);
     }
-
     std::string error;
-    const std::filesystem::path outputPath = context.assets.gamePathPath() / (path.id + ".adpath");
-    if (game::saveEnemyPath(outputPath, path, &error)) {
-        status_ = "Saved path: " + outputPath.generic_string();
+    if (game::saveGameProject(context.assets.projectRoot / "assets/game/project.adgame", project, &error)) {
+        status_ = "Saved universal enemy types.";
     } else {
-        status_ = "Failed to save path: " + error;
+        status_ = "Failed to save enemy types: " + error;
     }
 }
 
-void EnemyPathEditorPanel::loadPath(EditorContext& context)
+void EnemyPathEditorPanel::loadProjectEnemyTypes(EditorContext& context)
 {
-    const std::string id(pathId_.data());
-    const std::filesystem::path inputPath = context.assets.gamePathPath() / (id + ".adpath");
+    game::GameProject project;
+    if (game::loadGameProject(context.assets.projectRoot / "assets/game/project.adgame", project, nullptr)) {
+        context.enemyTypes = std::move(project.enemyTypes);
+    }
+    if (context.enemyTypes.empty()) {
+        context.enemyTypes.push_back({});
+    }
+    selectedType_ = std::clamp(selectedType_, 0, static_cast<int>(context.enemyTypes.size()) - 1);
+    if (!context.enemyTypes.empty()) {
+        copyToBuffer(typeId_, context.enemyTypes.front().id);
+        copyToBuffer(spriteId_, context.enemyTypes.front().spriteId);
+    }
+}
 
-    game::EnemyPath path;
-    std::string error;
-    if (!game::loadEnemyPath(inputPath, path, &error)) {
-        status_ = "Failed to load path: " + error;
+void EnemyPathEditorPanel::createPlacement(EditorContext& context)
+{
+    game::EnemyPlacement placement;
+    placement.id = "enemy_" + std::to_string(context.selectedScreenEnemies.size() + 1);
+    if (!context.enemyTypes.empty()) {
+        const game::EnemyType& type = context.enemyTypes[static_cast<std::size_t>(std::clamp(selectedType_, 0, static_cast<int>(context.enemyTypes.size()) - 1))];
+        placement.typeId = type.id;
+        placement.speedOverride = type.speed;
+    }
+    placement.waypoints.push_back({static_cast<float>(game::kTileSize * 2), static_cast<float>(game::kTileSize * 2)});
+    context.selectedScreenEnemies.push_back(placement);
+    selectPlacement(context, static_cast<int>(context.selectedScreenEnemies.size()) - 1);
+    context.markDirty();
+}
+
+void EnemyPathEditorPanel::selectPlacement(EditorContext& context, int index)
+{
+    if (index < 0 || index >= static_cast<int>(context.selectedScreenEnemies.size())) {
         return;
     }
-
-    // Apply loaded data
-    const std::size_t idLen = std::min(path.id.size(), pathId_.size() - 1);
-    std::memset(pathId_.data(), 0, pathId_.size());
-    std::memcpy(pathId_.data(), path.id.data(), idLen);
-
-    const std::size_t enemyLen = std::min(path.enemyId.size(), enemyId_.size() - 1);
-    std::memset(enemyId_.data(), 0, enemyId_.size());
-    std::memcpy(enemyId_.data(), path.enemyId.data(), enemyLen);
-
-    const std::size_t spriteLen = std::min(path.spriteId.size(), spriteId_.size() - 1);
-    std::memset(spriteId_.data(), 0, spriteId_.size());
-    std::memcpy(spriteId_.data(), path.spriteId.data(), spriteLen);
-
-    const std::size_t mapLen = std::min(path.mapId.size(), mapId_.size() - 1);
-    std::memset(mapId_.data(), 0, mapId_.size());
-    std::memcpy(mapId_.data(), path.mapId.data(), mapLen);
-
-    behavior_ = static_cast<Behavior>(std::clamp(static_cast<int>(path.behavior), 0, 2));
-    curveMode_ = static_cast<CurveMode>(std::clamp(static_cast<int>(path.curveMode), 0, 1));
-    maxHealth_ = std::clamp(path.combat.maxHealth, 1, 999);
-    contactDamage_ = std::clamp(path.combat.contactDamage, 0, 999);
-    hitboxWidth_ = std::clamp(path.combat.hitboxWidth, 1.0f, 256.0f);
-    hitboxHeight_ = std::clamp(path.combat.hitboxHeight, 1.0f, 256.0f);
-    attackCooldownSeconds_ = std::clamp(path.combat.attackCooldownSeconds, 0.0f, 60.0f);
-    speed_ = std::clamp(path.speed, 16.0f, 256.0f);
-    loop_ = path.loop;
-    respawn_ = path.respawn;
-
+    selectedPlacement_ = index;
+    const game::EnemyPlacement& placement = context.selectedScreenEnemies[static_cast<std::size_t>(index)];
+    copyToBuffer(placementId_, placement.id);
+    copyToBuffer(typeId_, placement.typeId);
+    const auto typeIt = std::find_if(context.enemyTypes.begin(), context.enemyTypes.end(), [&](const game::EnemyType& type) {
+        return type.id == placement.typeId;
+    });
+    if (typeIt != context.enemyTypes.end()) {
+        selectedType_ = static_cast<int>(std::distance(context.enemyTypes.begin(), typeIt));
+        copyToBuffer(spriteId_, typeIt->spriteId);
+    }
+    behavior_ = static_cast<Behavior>(std::clamp(static_cast<int>(placement.behavior), 0, 2));
+    curveMode_ = static_cast<CurveMode>(std::clamp(static_cast<int>(placement.curveMode), 0, 1));
+    speed_ = placement.speedOverride;
+    loop_ = placement.loop;
+    respawn_ = placement.respawn;
     waypoints_.clear();
-    waypoints_.reserve(path.waypoints.size());
-    for (const game::PathWaypoint& wp : path.waypoints) {
-        waypoints_.push_back({wp.x, wp.y});
+    for (const game::PathWaypoint& waypoint : placement.waypoints) {
+        waypoints_.push_back({waypoint.x, waypoint.y});
     }
     selectedWaypoint_ = -1;
+}
 
-    status_ = "Loaded path: " + inputPath.generic_string();
+void EnemyPathEditorPanel::writeCurrentPlacement(EditorContext& context)
+{
+    if (selectedPlacement_ < 0 || selectedPlacement_ >= static_cast<int>(context.selectedScreenEnemies.size())) {
+        return;
+    }
+    game::EnemyPlacement& placement = context.selectedScreenEnemies[static_cast<std::size_t>(selectedPlacement_)];
+    placement.id = placementId_.data();
+    placement.typeId = typeId_.data();
+    placement.behavior = static_cast<game::PathBehavior>(static_cast<int>(behavior_));
+    placement.curveMode = static_cast<game::PathCurveMode>(static_cast<int>(curveMode_));
+    placement.speedOverride = std::max(0.0f, speed_);
+    placement.loop = loop_;
+    placement.respawn = respawn_;
+    placement.waypoints.clear();
+    placement.waypoints.reserve(waypoints_.size());
+    for (const Waypoint& waypoint : waypoints_) {
+        placement.waypoints.push_back({waypoint.x, waypoint.y});
+    }
+    context.markDirty();
 }
 
 ImVec2 EnemyPathEditorPanel::waypointToCanvas(ImVec2 origin, const Waypoint& waypoint) const

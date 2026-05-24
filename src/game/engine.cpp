@@ -314,6 +314,54 @@ void Engine::destroyTexture(Texture& texture)
 void Engine::loadPathEntities()
 {
     pathEntities_.clear();
+    GameProject project;
+    (void)loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr);
+
+    auto typeForId = [&project](const std::string& id) -> const EnemyType* {
+        for (const EnemyType& type : project.enemyTypes) {
+            if (type.id == id) {
+                return &type;
+            }
+        }
+        return nullptr;
+    };
+
+    if (activeScreen_ != nullptr) {
+        for (const EnemyPlacement& placement : activeScreen_->enemies) {
+            if (placement.waypoints.empty()) {
+                continue;
+            }
+            EnemyPath path;
+            path.id = placement.id;
+            path.enemyId = placement.typeId;
+            path.mapId = activeScreen_->mapId;
+            path.behavior = placement.behavior;
+            path.curveMode = placement.curveMode;
+            path.speed = placement.speedOverride;
+            path.loop = placement.loop;
+            path.respawn = placement.respawn;
+            path.waypoints = placement.waypoints;
+            if (const EnemyType* type = typeForId(placement.typeId)) {
+                path.spriteId = type->spriteId;
+                path.combat.maxHealth = type->maxHealth;
+                path.combat.contactDamage = type->contactDamage;
+                path.combat.hitboxWidth = type->hitboxWidth;
+                path.combat.hitboxHeight = type->hitboxHeight;
+                path.combat.attackCooldownSeconds = type->attackCooldownSeconds;
+                if (path.speed <= 0.0f) {
+                    path.speed = type->speed;
+                }
+            }
+            RuntimePathEntity entity;
+            entity.path = std::move(path);
+            entity.x = entity.path.waypoints.front().x;
+            entity.y = entity.path.waypoints.front().y;
+            entity.health = std::max(1, entity.path.combat.maxHealth);
+            entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+            pathEntities_.push_back(std::move(entity));
+        }
+    }
+
     const std::filesystem::path pathDir = assetPath(projectRoot_, "assets/game/paths");
     std::error_code ec;
     if (!std::filesystem::exists(pathDir, ec)) {

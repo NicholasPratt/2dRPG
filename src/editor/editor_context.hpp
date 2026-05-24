@@ -1,6 +1,8 @@
 #pragma once
 
 #include "editor/asset_directories.hpp"
+#include "game/chapter.hpp"
+#include "game/project.hpp"
 
 #include <cstdint>
 #include <string>
@@ -41,6 +43,8 @@ struct EditorContext {
     bool requestChapterSwitch = false;
     std::vector<TilePaletteEntry> tilePalette;
     std::vector<ChapterScreenEntry> chapterScreens;
+    std::vector<game::EnemyPlacement> selectedScreenEnemies;
+    std::vector<game::EnemyType> enemyTypes;
     std::vector<std::string> importedCharacterIds;
     std::string playableCharacterId;
 

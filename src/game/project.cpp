@@ -43,12 +43,23 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 1\n";
+    output << "ADGAME 2\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
     for (const std::string& id : project.characterIds) {
         output << "character " << id << "\n";
+    }
+    output << "chapters " << project.chapterIds.size() << "\n";
+    for (const std::string& id : project.chapterIds) {
+        output << "chapter " << id << "\n";
+    }
+    output << "enemy_types " << project.enemyTypes.size() << "\n";
+    for (const EnemyType& type : project.enemyTypes) {
+        output << "enemy_type " << type.id << ' ' << (type.spriteId.empty() ? "-" : type.spriteId) << ' '
+               << type.maxHealth << ' ' << type.contactDamage << ' '
+               << type.hitboxWidth << ' ' << type.hitboxHeight << ' '
+               << type.attackCooldownSeconds << ' ' << type.speed << "\n";
     }
     output << "end\n";
     return static_cast<bool>(output);
@@ -65,7 +76,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version != 1) {
+    if (magic != "ADGAME" || version < 1 || version > 2) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -89,6 +100,30 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             input >> id;
             if (!id.empty()) {
                 loaded.characterIds.push_back(id);
+            }
+        } else if (version >= 2 && key == "chapters") {
+            std::size_t count = 0;
+            input >> count;
+            loaded.chapterIds.reserve(count);
+        } else if (version >= 2 && key == "chapter") {
+            std::string id;
+            input >> id;
+            if (!id.empty()) {
+                loaded.chapterIds.push_back(id);
+            }
+        } else if (version >= 2 && key == "enemy_types") {
+            std::size_t count = 0;
+            input >> count;
+            loaded.enemyTypes.reserve(count);
+        } else if (version >= 2 && key == "enemy_type") {
+            EnemyType type;
+            input >> type.id >> type.spriteId >> type.maxHealth >> type.contactDamage
+                  >> type.hitboxWidth >> type.hitboxHeight >> type.attackCooldownSeconds >> type.speed;
+            if (type.spriteId == "-") {
+                type.spriteId.clear();
+            }
+            if (!type.id.empty()) {
+                loaded.enemyTypes.push_back(std::move(type));
             }
         } else if (key == "end") {
             break;

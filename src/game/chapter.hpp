@@ -6,6 +6,33 @@
 
 namespace adventure::game {
 
+struct PathWaypoint {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+enum class PathBehavior {
+    Idle = 0,
+    Patrol = 1,
+    Aggro = 2,
+};
+
+enum class PathCurveMode {
+    Linear = 0,
+    Spline = 1,
+};
+
+struct EnemyPlacement {
+    std::string id = "enemy_1";
+    std::string typeId = "enemy_1";
+    PathBehavior behavior = PathBehavior::Patrol;
+    PathCurveMode curveMode = PathCurveMode::Linear;
+    float speedOverride = 0.0f;
+    bool loop = true;
+    bool respawn = false;
+    std::vector<PathWaypoint> waypoints;
+};
+
 struct ScreenLink {
     std::string north;
     std::string south;
@@ -20,6 +47,7 @@ struct ChapterScreen {
     int gridY = 0;
     ScreenLink links;
     bool respawnEnemies = false;
+    std::vector<EnemyPlacement> enemies;
 };
 
 struct Chapter {

@@ -31,6 +31,7 @@ private:
         Layout,
         Tilesets,
         WallFloorPaint,
+        EnemyTypes,
         EnemyPaths,
         Assets,
     };

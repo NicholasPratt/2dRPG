@@ -192,9 +192,20 @@ bool CharacterEditorPanel::saveForChapter(EditorContext& context)
 {
     bool allOk = true;
     game::GameProject project;
+    (void)game::loadGameProject(context.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
     project.id = "game";
+    if (!context.enemyTypes.empty()) {
+        project.enemyTypes = context.enemyTypes;
+    } else {
+        context.enemyTypes = project.enemyTypes;
+    }
+    if (!context.currentChapterId.empty() &&
+        std::find(project.chapterIds.begin(), project.chapterIds.end(), context.currentChapterId) == project.chapterIds.end()) {
+        project.chapterIds.push_back(context.currentChapterId);
+    }
     context.importedCharacterIds.clear();
     context.playableCharacterId.clear();
+    project.characterIds.clear();
 
     for (const CharacterSheet& character : characters_) {
         const std::string id = characterId(character);

@@ -1,7 +1,14 @@
-ADCHAPTER 1
+ADCHAPTER 3
 id chapter_1
 start screen_1
-screens 1
+playable hero
+characters 1
+character hero
+screens 2
 screen screen_1 new_map 0 0
-links - - - -
+links screen_2 - - -
+respawn 0
+screen screen_2 screen_2_map 0 -1
+links - screen_1 - -
+respawn 0
 end

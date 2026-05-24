@@ -1,26 +1,12 @@
 #pragma once
 
+#include "game/chapter.hpp"
+
 #include <filesystem>
 #include <string>
 #include <vector>
 
 namespace adventure::game {
-
-struct PathWaypoint {
-    float x = 0.0f;
-    float y = 0.0f;
-};
-
-enum class PathBehavior {
-    Idle = 0,
-    Patrol = 1,
-    Aggro = 2,
-};
-
-enum class PathCurveMode {
-    Linear = 0,
-    Spline = 1,
-};
 
 struct EnemyCombatStats {
     int maxHealth = 1;
