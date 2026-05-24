@@ -14,6 +14,8 @@ namespace {
 
 constexpr int kMinCanvasSize = 4;
 constexpr int kMaxCanvasSize = 1024;
+constexpr int kMaxChapterTiles = 32;
+constexpr int kMaxTileFrames = 16;
 constexpr unsigned char kPngSignature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
 
 ImU32 packedColor(std::uint32_t color)
@@ -24,6 +26,35 @@ ImU32 packedColor(std::uint32_t color)
 std::uint8_t alphaOf(std::uint32_t color)
 {
     return static_cast<std::uint8_t>((color >> 24) & 0xff);
+}
+
+TilePaletteFrame* frameAt(TilePaletteEntry& tile, int frameIndex)
+{
+    if (tile.frames.empty()) {
+        return nullptr;
+    }
+    frameIndex = std::clamp(frameIndex, 0, static_cast<int>(tile.frames.size()) - 1);
+    return &tile.frames[static_cast<std::size_t>(frameIndex)];
+}
+
+const TilePaletteFrame* frameAt(const TilePaletteEntry& tile, int frameIndex)
+{
+    if (tile.frames.empty()) {
+        return nullptr;
+    }
+    frameIndex = std::clamp(frameIndex, 0, static_cast<int>(tile.frames.size()) - 1);
+    return &tile.frames[static_cast<std::size_t>(frameIndex)];
+}
+
+int animatedFrameIndex(const TilePaletteEntry& tile)
+{
+    if (tile.frames.empty()) {
+        return 0;
+    }
+    const int durationMs = std::max(40, tile.frameDurationMs);
+    const double seconds = ImGui::GetTime();
+    return static_cast<int>((seconds * 1000.0) / static_cast<double>(durationMs)) %
+        static_cast<int>(tile.frames.size());
 }
 
 void appendBigEndian32(std::vector<unsigned char>& bytes, std::uint32_t value)
@@ -639,6 +670,11 @@ void WallFloorPaintPanel::drawPalette()
 
 void WallFloorPaintPanel::addToTilePalette(EditorContext& context)
 {
+    if (context.tilePalette.size() >= static_cast<std::size_t>(kMaxChapterTiles)) {
+        status_ = "Tile palette is full. Each chapter can store 32 tiles.";
+        return;
+    }
+
     const int ts = game::kTileSize;
     const int sx0 = (std::min(selX0_, selX1_) / ts) * ts;
     const int sy0 = (std::min(selY0_, selY1_) / ts) * ts;
@@ -652,8 +688,11 @@ void WallFloorPaintPanel::addToTilePalette(EditorContext& context)
     entry.name = "tile_" + std::to_string(context.tilePalette.size() + 1);
     entry.widthPx = w;
     entry.heightPx = h;
-    entry.floor.resize(static_cast<std::size_t>(w * h), 0u);
-    entry.wall.resize(static_cast<std::size_t>(w * h), 0u);
+    entry.frameDurationMs = 250;
+    entry.frames.resize(1);
+    TilePaletteFrame& frame = entry.frames.front();
+    frame.floor.resize(static_cast<std::size_t>(w * h), 0u);
+    frame.wall.resize(static_cast<std::size_t>(w * h), 0u);
     for (int py = 0; py < h; ++py) {
         for (int px = 0; px < w; ++px) {
             const int sx = sx0 + px;
@@ -661,33 +700,42 @@ void WallFloorPaintPanel::addToTilePalette(EditorContext& context)
             if (sx < width_ && sy < height_) {
                 const auto src = static_cast<std::size_t>(sy * width_ + sx);
                 const auto dst = static_cast<std::size_t>(py * w + px);
-                entry.floor[dst] = floor_.pixels[src];
-                entry.wall[dst] = wall_.pixels[src];
+                frame.floor[dst] = floor_.pixels[src];
+                frame.wall[dst] = wall_.pixels[src];
             }
         }
     }
     context.tilePalette.push_back(std::move(entry));
-    status_ = "Added to tile palette (" + std::to_string(context.tilePalette.size()) + " tiles).";
+    stampTileIndex_ = static_cast<int>(context.tilePalette.size()) - 1;
+    stampFrameIndex_ = 0;
+    status_ = "Added to tile palette (" + std::to_string(context.tilePalette.size()) + "/32 tiles).";
 }
 
 void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
 {
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextUnformatted("Tile Palette");
+    ImGui::Text("Tile Palette (%d/%d)", static_cast<int>(context.tilePalette.size()), kMaxChapterTiles);
     if (context.tilePalette.empty()) {
         ImGui::TextDisabled("Select a region, then\nclick \"-> Tile Palette\".");
         return;
     }
 
-    ImGui::BeginChild("TilePaletteScroll", ImVec2(0.0f, 220.0f), false);
+    ImGui::BeginChild("TilePaletteScroll", ImVec2(0.0f, 300.0f), false);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     constexpr float kThumbPx = 2.0f;
 
     for (int i = 0; i < static_cast<int>(context.tilePalette.size()); ++i) {
         auto& tile = context.tilePalette[static_cast<std::size_t>(i)];
+        if (tile.frames.empty()) {
+            tile.frames.push_back({});
+            tile.frames.back().floor.assign(static_cast<std::size_t>(tile.widthPx * tile.heightPx), 0u);
+            tile.frames.back().wall.assign(static_cast<std::size_t>(tile.widthPx * tile.heightPx), 0u);
+        }
         const float thumbW = static_cast<float>(tile.widthPx) * kThumbPx;
         const float thumbH = static_cast<float>(tile.heightPx) * kThumbPx;
+        const int previewFrameIndex = animatedFrameIndex(tile);
+        const TilePaletteFrame* previewFrame = frameAt(tile, previewFrameIndex);
 
         ImGui::PushID(i);
 
@@ -695,18 +743,23 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
         ImGui::InvisibleButton("thumb", {thumbW, thumbH});
 
         // Draw floor then wall pixels
-        for (int py = 0; py < tile.heightPx; ++py) {
-            for (int px = 0; px < tile.widthPx; ++px) {
-                const auto idx = static_cast<std::size_t>(py * tile.widthPx + px);
-                const ImVec2 pMin{thumbMin.x + static_cast<float>(px) * kThumbPx, thumbMin.y + static_cast<float>(py) * kThumbPx};
-                const ImVec2 pMax{pMin.x + kThumbPx, pMin.y + kThumbPx};
-                const std::uint32_t fc = tile.floor[idx];
-                const std::uint32_t wc = tile.wall[idx];
-                if ((fc >> 24) > 0u) {
-                    drawList->AddRectFilled(pMin, pMax, packedColor(fc));
-                }
-                if ((wc >> 24) > 0u) {
-                    drawList->AddRectFilled(pMin, pMax, packedColor(wc));
+        if (previewFrame != nullptr) {
+            for (int py = 0; py < tile.heightPx; ++py) {
+                for (int px = 0; px < tile.widthPx; ++px) {
+                    const auto idx = static_cast<std::size_t>(py * tile.widthPx + px);
+                    if (idx >= previewFrame->floor.size() || idx >= previewFrame->wall.size()) {
+                        continue;
+                    }
+                    const ImVec2 pMin{thumbMin.x + static_cast<float>(px) * kThumbPx, thumbMin.y + static_cast<float>(py) * kThumbPx};
+                    const ImVec2 pMax{pMin.x + kThumbPx, pMin.y + kThumbPx};
+                    const std::uint32_t fc = previewFrame->floor[idx];
+                    const std::uint32_t wc = previewFrame->wall[idx];
+                    if ((fc >> 24) > 0u) {
+                        drawList->AddRectFilled(pMin, pMax, packedColor(fc));
+                    }
+                    if ((wc >> 24) > 0u) {
+                        drawList->AddRectFilled(pMin, pMax, packedColor(wc));
+                    }
                 }
             }
         }
@@ -718,10 +771,12 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
 
         if (ImGui::IsItemClicked()) {
             stampTileIndex_ = i;
+            stampFrameIndex_ = std::clamp(stampFrameIndex_, 0, static_cast<int>(tile.frames.size()) - 1);
             tool_ = PaintTool::TileStamp;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s  %dx%d px", tile.name.c_str(), tile.widthPx, tile.heightPx);
+            ImGui::SetTooltip("%s  %dx%d px  %d frame(s)", tile.name.c_str(), tile.widthPx, tile.heightPx,
+                static_cast<int>(tile.frames.size()));
         }
 
         ImGui::SameLine();
@@ -732,6 +787,7 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
         ImGui::SetNextItemWidth(80.0f);
         if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) {
             tile.name = nameBuf;
+            context.markDirty();
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("X")) {
@@ -739,11 +795,66 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
             if (stampTileIndex_ >= static_cast<int>(context.tilePalette.size())) {
                 stampTileIndex_ = static_cast<int>(context.tilePalette.size()) - 1;
             }
+            stampFrameIndex_ = 0;
             if (context.tilePalette.empty()) {
                 tool_ = PaintTool::Select;
             }
+            context.markDirty();
             ImGui::PopID();
             break;
+        }
+        ImGui::Text("Frames: %d  Preview: %d", static_cast<int>(tile.frames.size()), previewFrameIndex + 1);
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputInt("ms/frame", &tile.frameDurationMs)) {
+            tile.frameDurationMs = std::clamp(tile.frameDurationMs, 40, 5000);
+            context.markDirty();
+        }
+        if (selected) {
+            stampFrameIndex_ = std::clamp(stampFrameIndex_, 0, static_cast<int>(tile.frames.size()) - 1);
+            int frameNumber = stampFrameIndex_ + 1;
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::InputInt("Edit frame", &frameNumber)) {
+                stampFrameIndex_ = std::clamp(frameNumber - 1, 0, static_cast<int>(tile.frames.size()) - 1);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("+ frame") && static_cast<int>(tile.frames.size()) < kMaxTileFrames) {
+                tile.frames.push_back(tile.frames[static_cast<std::size_t>(stampFrameIndex_)]);
+                stampFrameIndex_ = static_cast<int>(tile.frames.size()) - 1;
+                context.markDirty();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("capture") && selectionActive_) {
+                const int ts = game::kTileSize;
+                const int sx0 = (std::min(selX0_, selX1_) / ts) * ts;
+                const int sy0 = (std::min(selY0_, selY1_) / ts) * ts;
+                TilePaletteFrame* frame = frameAt(tile, stampFrameIndex_);
+                if (frame != nullptr) {
+                    frame->floor.assign(static_cast<std::size_t>(tile.widthPx * tile.heightPx), 0u);
+                    frame->wall.assign(static_cast<std::size_t>(tile.widthPx * tile.heightPx), 0u);
+                    for (int py = 0; py < tile.heightPx; ++py) {
+                        for (int px = 0; px < tile.widthPx; ++px) {
+                            const int sx = sx0 + px;
+                            const int sy = sy0 + py;
+                            if (sx < width_ && sy < height_) {
+                                const auto src = static_cast<std::size_t>(sy * width_ + sx);
+                                const auto dst = static_cast<std::size_t>(py * tile.widthPx + px);
+                                frame->floor[dst] = floor_.pixels[src];
+                                frame->wall[dst] = wall_.pixels[src];
+                            }
+                        }
+                    }
+                    context.markDirty();
+                    status_ = "Captured selection into tile frame " + std::to_string(stampFrameIndex_ + 1) + ".";
+                }
+            }
+            if (tile.frames.size() > 1) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("- frame")) {
+                    tile.frames.erase(tile.frames.begin() + stampFrameIndex_);
+                    stampFrameIndex_ = std::clamp(stampFrameIndex_, 0, static_cast<int>(tile.frames.size()) - 1);
+                    context.markDirty();
+                }
+            }
         }
 
         ImGui::PopID();
@@ -754,11 +865,19 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
 
 void WallFloorPaintPanel::stampTile(int x, int y, const TilePaletteEntry& tile)
 {
+    const int frameIndex = tile.frames.size() > 1 ? animatedFrameIndex(tile) : stampFrameIndex_;
+    const TilePaletteFrame* frame = frameAt(tile, frameIndex);
+    if (frame == nullptr) {
+        return;
+    }
     for (int py = 0; py < tile.heightPx; ++py) {
         for (int px = 0; px < tile.widthPx; ++px) {
             const auto src = static_cast<std::size_t>(py * tile.widthPx + px);
-            const std::uint32_t fc = tile.floor[src];
-            const std::uint32_t wc = tile.wall[src];
+            if (src >= frame->floor.size() || src >= frame->wall.size()) {
+                continue;
+            }
+            const std::uint32_t fc = frame->floor[src];
+            const std::uint32_t wc = frame->wall[src];
             if ((fc >> 24) > 0u) { setPixel(floor_, x + px, y + py, fc); }
             if ((wc >> 24) > 0u) { setPixel(wall_, x + px, y + py, wc); }
         }
@@ -841,21 +960,26 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
         const int ts = game::kTileSize;
         const int mx = (static_cast<int>((mouse.x - origin.x) / pixelSize) / ts) * ts;
         const int my = (static_cast<int>((mouse.y - origin.y) / pixelSize) / ts) * ts;
-        for (int cy = 0; cy < tile.heightPx; ++cy) {
-            for (int cx = 0; cx < tile.widthPx; ++cx) {
-                const int tx = mx + cx;
-                const int ty = my + cy;
-                if (tx < 0 || ty < 0 || tx >= width_ || ty >= height_) { continue; }
-                const auto idx = static_cast<std::size_t>(cy * tile.widthPx + cx);
-                const std::uint32_t fc = tile.floor[idx];
-                const std::uint32_t wc = tile.wall[idx];
-                const ImVec2 pMin{origin.x + static_cast<float>(tx) * pixelSize, origin.y + static_cast<float>(ty) * pixelSize};
-                const ImVec2 pMax{pMin.x + pixelSize, pMin.y + pixelSize};
-                if ((fc >> 24) > 0u) {
-                    drawList->AddRectFilled(pMin, pMax, IM_COL32((fc>>0)&0xff, (fc>>8)&0xff, (fc>>16)&0xff, 140));
-                }
-                if ((wc >> 24) > 0u) {
-                    drawList->AddRectFilled(pMin, pMax, IM_COL32((wc>>0)&0xff, (wc>>8)&0xff, (wc>>16)&0xff, 140));
+        const int frameIndex = tile.frames.size() > 1 ? animatedFrameIndex(tile) : stampFrameIndex_;
+        const TilePaletteFrame* frame = frameAt(tile, frameIndex);
+        if (frame != nullptr) {
+            for (int cy = 0; cy < tile.heightPx; ++cy) {
+                for (int cx = 0; cx < tile.widthPx; ++cx) {
+                    const int tx = mx + cx;
+                    const int ty = my + cy;
+                    if (tx < 0 || ty < 0 || tx >= width_ || ty >= height_) { continue; }
+                    const auto idx = static_cast<std::size_t>(cy * tile.widthPx + cx);
+                    if (idx >= frame->floor.size() || idx >= frame->wall.size()) { continue; }
+                    const std::uint32_t fc = frame->floor[idx];
+                    const std::uint32_t wc = frame->wall[idx];
+                    const ImVec2 pMin{origin.x + static_cast<float>(tx) * pixelSize, origin.y + static_cast<float>(ty) * pixelSize};
+                    const ImVec2 pMax{pMin.x + pixelSize, pMin.y + pixelSize};
+                    if ((fc >> 24) > 0u) {
+                        drawList->AddRectFilled(pMin, pMax, IM_COL32((fc>>0)&0xff, (fc>>8)&0xff, (fc>>16)&0xff, 140));
+                    }
+                    if ((wc >> 24) > 0u) {
+                        drawList->AddRectFilled(pMin, pMax, IM_COL32((wc>>0)&0xff, (wc>>8)&0xff, (wc>>16)&0xff, 140));
+                    }
                 }
             }
         }

@@ -16,6 +16,16 @@ void setError(std::string* errorMessage, const std::string& message)
     }
 }
 
+std::string encodedToken(const std::string& value)
+{
+    return value.empty() ? "-" : value;
+}
+
+std::string decodedToken(const std::string& value)
+{
+    return value == "-" ? std::string{} : value;
+}
+
 } // namespace
 
 bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath, std::string* errorMessage)
@@ -24,7 +34,10 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
         setError(errorMessage, "Path id and map id must not be empty.");
         return false;
     }
-    if (enemyPath.speed < 0.0f || static_cast<int>(enemyPath.waypoints.size()) > kMaxWaypoints) {
+    if (enemyPath.speed < 0.0f || static_cast<int>(enemyPath.waypoints.size()) > kMaxWaypoints ||
+        enemyPath.combat.maxHealth <= 0 || enemyPath.combat.contactDamage < 0 ||
+        enemyPath.combat.hitboxWidth <= 0.0f || enemyPath.combat.hitboxHeight <= 0.0f ||
+        enemyPath.combat.attackCooldownSeconds < 0.0f) {
         setError(errorMessage, "Path speed or waypoint count is invalid.");
         return false;
     }
@@ -38,10 +51,18 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
         return false;
     }
 
-    output << "ADPATH 1\n";
+    output << "ADPATH 3\n";
     output << "id " << enemyPath.id << "\n";
+    output << "enemy " << encodedToken(enemyPath.enemyId) << "\n";
+    output << "sprite " << encodedToken(enemyPath.spriteId) << "\n";
     output << "map " << enemyPath.mapId << "\n";
     output << "behavior " << static_cast<int>(enemyPath.behavior) << "\n";
+    output << "curve " << static_cast<int>(enemyPath.curveMode) << "\n";
+    output << "combat " << enemyPath.combat.maxHealth << ' '
+           << enemyPath.combat.contactDamage << ' '
+           << enemyPath.combat.hitboxWidth << ' '
+           << enemyPath.combat.hitboxHeight << ' '
+           << enemyPath.combat.attackCooldownSeconds << "\n";
     output << "speed " << enemyPath.speed << "\n";
     output << "loop " << (enemyPath.loop ? 1 : 0) << "\n";
     output << "respawn " << (enemyPath.respawn ? 1 : 0) << "\n";
@@ -69,7 +90,7 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADPATH" || version != 1) {
+    if (magic != "ADPATH" || version < 1 || version > 3) {
         setError(errorMessage, "Unsupported path file type or version.");
         return false;
     }
@@ -82,6 +103,16 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
     input >> loaded.id;
 
     input >> key;
+    if (version >= 2 && key == "enemy") {
+        input >> loaded.enemyId;
+        loaded.enemyId = decodedToken(loaded.enemyId);
+        input >> key;
+    }
+    if (version >= 2 && key == "sprite") {
+        input >> loaded.spriteId;
+        loaded.spriteId = decodedToken(loaded.spriteId);
+        input >> key;
+    }
     if (key != "map") { setError(errorMessage, "Expected map."); return false; }
     input >> loaded.mapId;
 
@@ -92,6 +123,24 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
     loaded.behavior = static_cast<PathBehavior>(std::clamp(behavior, 0, 2));
 
     input >> key;
+    if (version >= 2 && key == "curve") {
+        int curve = 0;
+        input >> curve;
+        loaded.curveMode = static_cast<PathCurveMode>(std::clamp(curve, 0, 1));
+        input >> key;
+    }
+    if (version >= 3 && key == "combat") {
+        input >> loaded.combat.maxHealth >> loaded.combat.contactDamage >>
+            loaded.combat.hitboxWidth >> loaded.combat.hitboxHeight >>
+            loaded.combat.attackCooldownSeconds;
+        if (!input || loaded.combat.maxHealth <= 0 || loaded.combat.contactDamage < 0 ||
+            loaded.combat.hitboxWidth <= 0.0f || loaded.combat.hitboxHeight <= 0.0f ||
+            loaded.combat.attackCooldownSeconds < 0.0f) {
+            setError(errorMessage, "Enemy combat data is invalid.");
+            return false;
+        }
+        input >> key;
+    }
     if (key != "speed") { setError(errorMessage, "Expected speed."); return false; }
     input >> loaded.speed;
     if (!input || loaded.speed < 0.0f) {

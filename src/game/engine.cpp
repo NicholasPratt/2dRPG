@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <system_error>
 
 namespace adventure::game {
@@ -21,6 +22,8 @@ constexpr float kFixedStepSeconds = 1.0f / 60.0f;
 constexpr float kPlayerSpeedPxPerSecond = 96.0f;
 constexpr float kPlayerSizePx = 12.0f;
 constexpr float kScreenTransitionExitRatio = 0.30f;
+constexpr float kHazardRespawnCooldownSeconds = 0.75f;
+constexpr float kPlayerDamageInvulnerableSeconds = 0.65f;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -32,6 +35,119 @@ void setError(std::string* errorMessage, const std::string& message)
 std::filesystem::path assetPath(const std::filesystem::path& root, const std::filesystem::path& relative)
 {
     return root / relative;
+}
+
+PathWaypoint catmullPoint(const EnemyPath& path, int segment, float t)
+{
+    const int count = static_cast<int>(path.waypoints.size());
+    const auto at = [&path, count](int index) -> const PathWaypoint& {
+        if (path.loop) {
+            index %= count;
+            if (index < 0) {
+                index += count;
+            }
+            return path.waypoints[static_cast<std::size_t>(index)];
+        }
+        return path.waypoints[static_cast<std::size_t>(std::clamp(index, 0, count - 1))];
+    };
+    const PathWaypoint& p0 = at(segment - 1);
+    const PathWaypoint& p1 = at(segment);
+    const PathWaypoint& p2 = at(segment + 1);
+    const PathWaypoint& p3 = at(segment + 2);
+    const float t2 = t * t;
+    const float t3 = t2 * t;
+    return {
+        0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t + (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 + (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3),
+        0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t + (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 + (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3),
+    };
+}
+
+float distance(PathWaypoint a, PathWaypoint b)
+{
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+float approximatePathLength(const EnemyPath& path)
+{
+    if (path.waypoints.size() < 2) {
+        return 0.0f;
+    }
+    float total = 0.0f;
+    if (path.curveMode == PathCurveMode::Spline && path.waypoints.size() >= 3) {
+        const int segments = path.loop ? static_cast<int>(path.waypoints.size()) : static_cast<int>(path.waypoints.size()) - 1;
+        for (int s = 0; s < segments; ++s) {
+            PathWaypoint prev = catmullPoint(path, s, 0.0f);
+            for (int i = 1; i <= 12; ++i) {
+                PathWaypoint next = catmullPoint(path, s, static_cast<float>(i) / 12.0f);
+                total += distance(prev, next);
+                prev = next;
+            }
+        }
+        return total;
+    }
+    for (std::size_t i = 1; i < path.waypoints.size(); ++i) {
+        total += distance(path.waypoints[i - 1], path.waypoints[i]);
+    }
+    if (path.loop) {
+        total += distance(path.waypoints.back(), path.waypoints.front());
+    }
+    return total;
+}
+
+PathWaypoint pointAtDistance(const EnemyPath& path, float targetDistance)
+{
+    if (path.waypoints.empty()) {
+        return {};
+    }
+    if (path.waypoints.size() == 1) {
+        return path.waypoints.front();
+    }
+    const float totalLength = approximatePathLength(path);
+    if (totalLength <= 0.0f) {
+        return path.waypoints.front();
+    }
+    if (path.loop) {
+        targetDistance = std::fmod(targetDistance, totalLength);
+        if (targetDistance < 0.0f) {
+            targetDistance += totalLength;
+        }
+    } else {
+        targetDistance = std::clamp(targetDistance, 0.0f, totalLength);
+    }
+
+    float walked = 0.0f;
+    if (path.curveMode == PathCurveMode::Spline && path.waypoints.size() >= 3) {
+        const int segments = path.loop ? static_cast<int>(path.waypoints.size()) : static_cast<int>(path.waypoints.size()) - 1;
+        for (int s = 0; s < segments; ++s) {
+            PathWaypoint prev = catmullPoint(path, s, 0.0f);
+            for (int i = 1; i <= 12; ++i) {
+                PathWaypoint next = catmullPoint(path, s, static_cast<float>(i) / 12.0f);
+                const float segLen = distance(prev, next);
+                if (walked + segLen >= targetDistance) {
+                    const float t = segLen > 0.0f ? (targetDistance - walked) / segLen : 0.0f;
+                    return {prev.x + (next.x - prev.x) * t, prev.y + (next.y - prev.y) * t};
+                }
+                walked += segLen;
+                prev = next;
+            }
+        }
+        return path.loop ? path.waypoints.front() : path.waypoints.back();
+    }
+
+    const int segments = path.loop ? static_cast<int>(path.waypoints.size()) : static_cast<int>(path.waypoints.size()) - 1;
+    for (int i = 0; i < segments; ++i) {
+        const PathWaypoint a = path.waypoints[static_cast<std::size_t>(i)];
+        const PathWaypoint b = path.waypoints[static_cast<std::size_t>((i + 1) % static_cast<int>(path.waypoints.size()))];
+        const float segLen = distance(a, b);
+        if (walked + segLen >= targetDistance) {
+            const float t = segLen > 0.0f ? (targetDistance - walked) / segLen : 0.0f;
+            return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
+        }
+        walked += segLen;
+    }
+    return path.loop ? path.waypoints.front() : path.waypoints.back();
 }
 
 } // namespace
@@ -46,6 +162,9 @@ Engine::~Engine()
     destroyTexture(floorTexture_);
     destroyTexture(wallTexture_);
     destroyTexture(playerTexture_);
+    for (auto& [id, sprite] : obstacleSprites_) {
+        destroyTexture(sprite.texture);
+    }
     if (window_ != nullptr) {
         glfwDestroyWindow(window_);
         window_ = nullptr;
@@ -151,6 +270,7 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     }
 
     loadPathEntities();
+    loadObstacleSprites();
     std::cout << "Loaded screen " << screen->id << " map " << activeMap_.id << "\n";
     return true;
 }
@@ -216,8 +336,47 @@ void Engine::loadPathEntities()
         entity.path = std::move(path);
         entity.x = entity.path.waypoints.front().x;
         entity.y = entity.path.waypoints.front().y;
+        entity.health = std::max(1, entity.path.combat.maxHealth);
         entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
         pathEntities_.push_back(std::move(entity));
+    }
+}
+
+void Engine::loadObstacleSprites()
+{
+    for (auto& [id, sprite] : obstacleSprites_) {
+        destroyTexture(sprite.texture);
+    }
+    obstacleSprites_.clear();
+
+    const std::filesystem::path spriteDir = assetPath(projectRoot_, "assets/game/sprites");
+    auto loadSprite = [&](const std::string& spriteId) {
+        if (spriteId.empty() || obstacleSprites_.find(spriteId) != obstacleSprites_.end()) {
+            return;
+        }
+
+        RuntimeSprite runtime;
+        std::string error;
+        const std::filesystem::path metadataPath = spriteDir / (spriteId + ".sprite.json");
+        if (!loadSpriteMetadata(metadataPath, runtime.metadata, &error)) {
+            obstacleSprites_[spriteId] = std::move(runtime);
+            return;
+        }
+
+        std::filesystem::path sourcePath = runtime.metadata.source;
+        if (sourcePath.empty()) {
+            sourcePath = std::filesystem::path("assets/raw/sprites") / (spriteId + "_sheet.png");
+        }
+        sourcePath = sourcePath.is_absolute() ? sourcePath : projectRoot_ / sourcePath;
+        runtime.loaded = loadTexture(sourcePath, runtime.texture, nullptr);
+        obstacleSprites_[spriteId] = std::move(runtime);
+    };
+
+    for (const MapObstacle& obstacle : activeMap_.obstacles) {
+        loadSprite(obstacle.spriteId);
+    }
+    for (const RuntimePathEntity& entity : pathEntities_) {
+        loadSprite(entity.path.spriteId);
     }
 }
 
@@ -331,6 +490,10 @@ void Engine::loadPlayableCharacter()
 
 void Engine::update(float dt)
 {
+    runtimeSeconds_ += dt;
+    hazardCooldownSeconds_ = std::max(0.0f, hazardCooldownSeconds_ - dt);
+    playerInvulnerableSeconds_ = std::max(0.0f, playerInvulnerableSeconds_ - dt);
+
     if (transitionState_ == TransitionState::Sliding) {
         transitionTime_ += dt;
         if (transitionTime_ >= transitionDuration_) {
@@ -340,6 +503,8 @@ void Engine::update(float dt)
     }
 
     updatePlayer(dt);
+    updateHazards(dt);
+    updateEnemyCombat(dt);
     updatePaths(dt);
 }
 
@@ -422,6 +587,22 @@ void Engine::updatePaths(float dt)
         if (entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
             continue;
         }
+        if (entity.path.curveMode == PathCurveMode::Spline && entity.path.waypoints.size() >= 3) {
+            const float length = approximatePathLength(entity.path);
+            if (length <= 0.0f) {
+                continue;
+            }
+            entity.pathDistance += entity.path.speed * dt;
+            if (entity.path.loop) {
+                entity.pathDistance = std::fmod(entity.pathDistance, length);
+            } else {
+                entity.pathDistance = std::min(entity.pathDistance, length);
+            }
+            const PathWaypoint point = pointAtDistance(entity.path, entity.pathDistance);
+            entity.x = point.x;
+            entity.y = point.y;
+            continue;
+        }
         PathWaypoint target = entity.path.waypoints[entity.waypointIndex];
         const float dx = target.x - entity.x;
         const float dy = target.y - entity.y;
@@ -437,6 +618,34 @@ void Engine::updatePaths(float dt)
         const float step = std::min(distance, entity.path.speed * dt);
         entity.x += dx / distance * step;
         entity.y += dy / distance * step;
+    }
+}
+
+void Engine::updateHazards(float)
+{
+    if (hazardCooldownSeconds_ > 0.0f) {
+        return;
+    }
+    for (const MapObstacle& obstacle : activeMap_.obstacles) {
+        if (!obstacleIsActive(obstacle) || !playerOverlapsObstacle(obstacle)) {
+            continue;
+        }
+        damagePlayer(1);
+        hazardCooldownSeconds_ = kHazardRespawnCooldownSeconds;
+        break;
+    }
+}
+
+void Engine::updateEnemyCombat(float dt)
+{
+    for (RuntimePathEntity& entity : pathEntities_) {
+        entity.contactCooldownSeconds = std::max(0.0f, entity.contactCooldownSeconds - dt);
+        if (entity.health <= 0 || entity.path.combat.contactDamage <= 0 ||
+            entity.contactCooldownSeconds > 0.0f || !playerOverlapsEnemy(entity)) {
+            continue;
+        }
+        damagePlayer(entity.path.combat.contactDamage);
+        entity.contactCooldownSeconds = entity.path.combat.attackCooldownSeconds;
     }
 }
 
@@ -516,6 +725,68 @@ bool Engine::solidAtPixelInMap(const TileMap& map, float x, float y) const
     return map.layers[1][index] != 0u;
 }
 
+bool Engine::obstacleIsActive(const MapObstacle& obstacle) const
+{
+    if (obstacle.type != ObstacleType::TimedSpike) {
+        return true;
+    }
+    const float cycle = std::max(0.05f, obstacle.activeSeconds + obstacle.inactiveSeconds);
+    const float t = std::fmod(runtimeSeconds_ + obstacle.phaseSeconds, cycle);
+    return t < obstacle.activeSeconds;
+}
+
+bool Engine::playerOverlapsObstacle(const MapObstacle& obstacle) const
+{
+    const float half = kPlayerSizePx * 0.5f;
+    const float playerMinX = playerX_ - half;
+    const float playerMinY = playerY_ - half;
+    const float playerMaxX = playerX_ + half;
+    const float playerMaxY = playerY_ + half;
+    const float obstacleMinX = static_cast<float>(obstacle.x * kTileSize);
+    const float obstacleMinY = static_cast<float>(obstacle.y * kTileSize);
+    const float obstacleMaxX = static_cast<float>((obstacle.x + obstacle.width) * kTileSize);
+    const float obstacleMaxY = static_cast<float>((obstacle.y + obstacle.height) * kTileSize);
+    return playerMaxX > obstacleMinX && playerMaxY > obstacleMinY &&
+        playerMinX < obstacleMaxX && playerMinY < obstacleMaxY;
+}
+
+bool Engine::playerOverlapsEnemy(const RuntimePathEntity& entity) const
+{
+    const float half = kPlayerSizePx * 0.5f;
+    const float playerMinX = playerX_ - half;
+    const float playerMinY = playerY_ - half;
+    const float playerMaxX = playerX_ + half;
+    const float playerMaxY = playerY_ + half;
+    const float enemyHalfW = entity.path.combat.hitboxWidth * 0.5f;
+    const float enemyHalfH = entity.path.combat.hitboxHeight * 0.5f;
+    const float enemyMinX = entity.x - enemyHalfW;
+    const float enemyMinY = entity.y - enemyHalfH;
+    const float enemyMaxX = entity.x + enemyHalfW;
+    const float enemyMaxY = entity.y + enemyHalfH;
+    return playerMaxX > enemyMinX && playerMaxY > enemyMinY &&
+        playerMinX < enemyMaxX && playerMinY < enemyMaxY;
+}
+
+void Engine::damagePlayer(int amount)
+{
+    if (amount <= 0 || playerInvulnerableSeconds_ > 0.0f) {
+        return;
+    }
+    playerHealth_ = std::max(0, playerHealth_ - amount);
+    playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
+    if (playerHealth_ <= 0) {
+        respawnPlayerAtMapSpawn();
+    }
+}
+
+void Engine::respawnPlayerAtMapSpawn()
+{
+    playerX_ = static_cast<float>(activeMap_.spawnX * kTileSize + kTileSize / 2);
+    playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
+    playerHealth_ = playerMaxHealth_;
+    playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
+}
+
 float Engine::screenWidthPx() const
 {
     return static_cast<float>(activeMap_.width * kTileSize);
@@ -571,7 +842,58 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
+        auto spriteIt = obstacleSprites_.find(entity.path.spriteId);
+        if (spriteIt != obstacleSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = obstacleSpriteFrame(spriteIt->second);
+            if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                const float drawW = static_cast<float>(frame->width);
+                const float drawH = static_cast<float>(frame->height);
+                renderTextureRegion(spriteIt->second.texture, entity.x - drawW * 0.5f, entity.y - drawH * 0.5f, drawW, drawH, u0, v0, u1, v1);
+                continue;
+            }
+        }
         renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, 1.0f);
+    }
+
+    for (const MapObstacle& obstacle : activeMap_.obstacles) {
+        const bool active = obstacleIsActive(obstacle);
+        const float x = static_cast<float>(obstacle.x * kTileSize);
+        const float y = static_cast<float>(obstacle.y * kTileSize);
+        const float w = static_cast<float>(obstacle.width * kTileSize);
+        const float h = static_cast<float>(obstacle.height * kTileSize);
+
+        auto spriteIt = obstacleSprites_.find(obstacle.spriteId);
+        if (spriteIt != obstacleSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = obstacleSpriteFrame(spriteIt->second);
+            if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                renderTextureRegion(spriteIt->second.texture, x, y, w, h, u0, v0, u1, v1);
+                if (!active) {
+                    renderFilledRect(x, y, w, h, 0.05f, 0.08f, 0.10f, 0.45f);
+                }
+                continue;
+            }
+        }
+
+        float r = 0.90f;
+        float g = 0.12f;
+        float b = 0.16f;
+        float a = active ? 0.42f : 0.18f;
+        if (obstacle.type == ObstacleType::Pit) {
+            r = 0.02f; g = 0.02f; b = 0.03f; a = 0.70f;
+        } else if (obstacle.type == ObstacleType::TimedSpike) {
+            r = active ? 1.0f : 0.20f;
+            g = active ? 0.62f : 0.50f;
+            b = active ? 0.10f : 0.80f;
+        }
+        renderFilledRect(x, y, w, h, r, g, b, a);
     }
 
     if (playerTexture_.id != 0) {
@@ -587,21 +909,67 @@ void Engine::render()
         renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
     }
 
+    for (const RuntimePathEntity& entity : pathEntities_) {
+        if (entity.path.combat.maxHealth <= 1) {
+            continue;
+        }
+        const float barW = std::max(8.0f, entity.path.combat.hitboxWidth);
+        const float barH = 2.0f;
+        const float pct = std::clamp(static_cast<float>(entity.health) / static_cast<float>(entity.path.combat.maxHealth), 0.0f, 1.0f);
+        renderFilledRect(entity.x - barW * 0.5f, entity.y - entity.path.combat.hitboxHeight * 0.5f - 5.0f, barW, barH, 0.08f, 0.08f, 0.08f, 0.85f);
+        renderFilledRect(entity.x - barW * 0.5f, entity.y - entity.path.combat.hitboxHeight * 0.5f - 5.0f, barW * pct, barH, 0.95f, 0.20f, 0.16f, 0.95f);
+    }
+
+    const float heartW = 8.0f;
+    for (int i = 0; i < playerMaxHealth_; ++i) {
+        const bool filled = i < playerHealth_;
+        renderFilledRect(8.0f + static_cast<float>(i) * (heartW + 2.0f), 8.0f, heartW, 6.0f,
+            filled ? 0.90f : 0.16f, filled ? 0.08f : 0.08f, filled ? 0.12f : 0.09f, 0.95f);
+    }
+
     glPopMatrix();
 }
 
 void Engine::renderTexture(const Texture& texture, float x, float y, float width, float height) const
 {
+    renderTextureRegion(texture, x, y, width, height, 0.0f, 0.0f, 1.0f, 1.0f);
+}
+
+void Engine::renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const
+{
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, texture.id);
     glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     glBegin(GL_QUADS);
-    glTexCoord2f(0.0f, 0.0f); glVertex2f(x, y);
-    glTexCoord2f(1.0f, 0.0f); glVertex2f(x + width, y);
-    glTexCoord2f(1.0f, 1.0f); glVertex2f(x + width, y + height);
-    glTexCoord2f(0.0f, 1.0f); glVertex2f(x, y + height);
+    glTexCoord2f(u0, v0); glVertex2f(x, y);
+    glTexCoord2f(u1, v0); glVertex2f(x + width, y);
+    glTexCoord2f(u1, v1); glVertex2f(x + width, y + height);
+    glTexCoord2f(u0, v1); glVertex2f(x, y + height);
     glEnd();
     glDisable(GL_TEXTURE_2D);
+}
+
+const SpriteFrameDef* Engine::obstacleSpriteFrame(const RuntimeSprite& sprite) const
+{
+    if (sprite.metadata.frames.empty()) {
+        return nullptr;
+    }
+
+    const int totalMs = std::accumulate(sprite.metadata.frames.begin(), sprite.metadata.frames.end(), 0, [](int total, const SpriteFrameDef& frame) {
+        return total + std::max(1, frame.durationMs);
+    });
+    if (totalMs <= 0) {
+        return &sprite.metadata.frames.front();
+    }
+
+    int t = static_cast<int>(std::fmod(runtimeSeconds_ * 1000.0f, static_cast<float>(totalMs)));
+    for (const SpriteFrameDef& frame : sprite.metadata.frames) {
+        t -= std::max(1, frame.durationMs);
+        if (t < 0) {
+            return &frame;
+        }
+    }
+    return &sprite.metadata.frames.back();
 }
 
 void Engine::renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const

@@ -8,12 +8,17 @@
 
 namespace adventure::editor {
 
+struct TilePaletteFrame {
+    std::vector<std::uint32_t> floor;
+    std::vector<std::uint32_t> wall;
+};
+
 struct TilePaletteEntry {
     std::string name;
     int widthPx = 0;
     int heightPx = 0;
-    std::vector<std::uint32_t> floor;
-    std::vector<std::uint32_t> wall;
+    int frameDurationMs = 250;
+    std::vector<TilePaletteFrame> frames;
 };
 
 struct ChapterScreenEntry {
@@ -29,8 +34,10 @@ struct EditorContext {
     std::string selectedScreenId;
     std::string selectedScreenMapId;
     std::string requestedChapterSwitchId;
+    std::string requestedSpriteReference;
     bool dirty = false;
     bool requestEditScreenGraphics = false;
+    bool requestEditSprite = false;
     bool requestChapterSwitch = false;
     std::vector<TilePaletteEntry> tilePalette;
     std::vector<ChapterScreenEntry> chapterScreens;

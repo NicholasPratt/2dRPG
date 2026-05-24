@@ -112,7 +112,7 @@ On startup, `EditorApp` opens a chapter selector modal. The user must load an ex
 | Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor with `.sprite.json` round-trip |
 | Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
-| Enemy Paths | `EnemyPathEditorPanel` | Waypoint editor for enemy patrol paths |
+| Enemies | `EnemyPathEditorPanel` | Enemy instance editor with sprite ID, animation-state guidance, and linear/spline patrol paths |
 | Assets | *(inline)* | Asset directory listing |
 
 `WallFloorPaintPanel` is not a standalone top-level tab anymore. It is opened contextually from the Screens tab via `Edit Screen Graphics` and includes a Back to Screens button.
@@ -231,13 +231,14 @@ struct TileMap {
     int spawnX, spawnY;
     // Layer 0: floor   Layer 1: mid (player-level, collision)   Layer 2: ceiling
     std::array<std::vector<uint16_t>, 3> layers;
+    std::vector<MapObstacle> obstacles;
 };
 ```
 
-### `.admap` format (v3)
+### `.admap` format (v4)
 
 ```text
-ADMAP 3
+ADMAP 4
 id new_map
 tileset overworld
 size 24 16
@@ -250,10 +251,14 @@ layer 1
 ...
 layer 2
 0 0 0 ...
+obstacles 2
+obstacle 0 spikes 5 5 2 1 1.0 0.0 0.0
+obstacle 2 timed_spikes 8 5 2 1 1.0 1.0 0.5
 end
 ```
 
-Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) both load into `layers[1]` (mid layer); floor and ceiling default to zero.
+Obstacle fields: `type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`.
+Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) both load into `layers[1]` (mid layer); floor/ceiling default to zero. v3 files load with no obstacles.
 
 ### Map Editor
 
@@ -263,6 +268,7 @@ Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) bo
 - **Copy/paste**: "Select region" enters rubber-band mode → "Copy" copies selected tiles from active layer → "Paste" enters ghost-preview mode; click to stamp.
 - Tileset palette for selecting tile IDs; solid indicator per tile.
 - Test-game mode: arrow-key player movement with tile-based collision on the mid layer.
+- Obstacle edit mode: place/remove spike, pit, and timed-spike rectangles, assign a sprite ID, and jump directly to the sprite editor for that hazard sprite.
 - Save/load: `assets/game/maps/<id>.admap`.
 
 ---
@@ -310,7 +316,8 @@ Runtime behavior:
 - Spawns the player at the center of the start screen by default, falling back to the map spawn tile if the center is blocked.
 - Detects screen-boundary crossings when 30% of the player sprite has moved past an edge and follows north/south/east/west `ScreenLink` references.
 - Runs a sliding screen transition after validating the linked screen exists and the destination entry point is not blocked.
-- Loads `.adpath` files matching the active screen's `mapId` and advances runtime path entities along their waypoints.
+- Loads `.adpath` files matching the active screen's `mapId`, advances runtime path entities along linear or spline waypoints, and renders their referenced sprite sheet when available.
+- Evaluates `.admap` obstacles; active spikes, pits, and timed spikes respawn the player at the map spawn with a short cooldown.
 
 Current limitations:
 
@@ -408,29 +415,40 @@ Exported paint files (one set per screen, `<id>` = `mapId`):
 
 ---
 
-## Enemy Path Editor
+## Enemy Editor / Path Editor
 
 Implemented in `src/game/path.*` and `src/editor/panels/enemy_path_editor_panel.*`.
 
-Addresses spec §4.4 (waypoint paths / state definition).
+Addresses spec §4.4 (enemy instance identity, sprite reference, behavior state, waypoint/spline pathing).
 
 ### Data model
 
 ```cpp
 struct Waypoint { float x, y; };  // world pixels
 enum class Behavior { Idle, Patrol, Aggro };
-// Fields: id, mapId (ref), behavior, speed (px/s), loop, respawn, waypoints
+enum class PathCurveMode { Linear, Spline };
+struct EnemyCombatStats {
+    int maxHealth;
+    int contactDamage;
+    float hitboxWidth, hitboxHeight;
+    float attackCooldownSeconds;
+};
+// Fields: id, enemyId, spriteId, mapId (ref), behavior, curveMode, combat, speed (px/s), loop, respawn, waypoints
 ```
 
 The editor saves and loads through `game::saveEnemyPath` / `game::loadEnemyPath`, so editor and runtime share one parser.
 
-### `.adpath` format (v1)
+### `.adpath` format (v3)
 
 ```text
-ADPATH 1
+ADPATH 3
 id path_1
+enemy slime_1
+sprite slime
 map new_map
 behavior 1
+curve 1
+combat 3 1 12.0 12.0 1.0
 speed 64.0
 loop 1
 respawn 0
@@ -443,10 +461,15 @@ end
 ```
 
 `behavior`: 0=Idle, 1=Patrol, 2=Aggro.  
+`curve`: 0=Linear, 1=Spline.
+`combat`: max health, contact damage, hitbox width, hitbox height, contact-hit cooldown seconds. v1/v2 files still load with default combat values.
 Files saved to `assets/game/paths/<id>.adpath`.
 
 ### Editor features
 
+- Enemy identity fields: path ID, enemy ID, sprite ID.
+- `Edit Sprite` / `Open sprite states` jumps directly to the sprite editor for the enemy's sprite metadata.
+- Sprite animation states are authored in the sprite editor with frame `type` labels such as `idle`, `walk`, `attack`, `hurt`, and `dead`.
 - Canvas shows a 16px world-tile grid (zoom 0.5×–6×).
 - Optional map background: load any `.admap` mid layer as a tile reference.
 - Click empty area: add waypoint (snaps to grid if enabled).
@@ -454,8 +477,18 @@ Files saved to `assets/game/paths/<id>.adpath`.
 - Drag selected waypoint: move it.
 - Right-click waypoint: delete.
 - Delete key: delete selected waypoint.
-- Loop line drawn from last to first waypoint when loop is enabled.
+- Linear mode draws straight segments; Spline mode draws a Catmull-Rom curve through the waypoint chain.
+- Loop line/curve closes from last to first waypoint when loop is enabled.
 - Behavior (Idle/Patrol/Aggro), speed slider, loop checkbox, respawn checkbox.
+- Combat controls: health, contact damage, hitbox dimensions, and hit cooldown.
+
+Runtime:
+
+- `Engine::loadPathEntities` loads path-backed enemy instances for the active `mapId`.
+- `Engine::updatePaths` advances non-idle enemies. Linear mode targets each waypoint; spline mode samples the Catmull-Rom curve by approximate distance.
+- `Engine::loadObstacleSprites` also loads enemy sprites referenced by path entities.
+- Enemy sprites render via `.sprite.json` frame rectangles and the exported `<spriteId>_sheet.png` sheet; missing sprites fall back to debug red squares.
+- `Engine::updateEnemyCombat` applies contact damage when the player's box overlaps an enemy hitbox. The player has a short invulnerability window and respawns at the map spawn when health reaches zero.
 
 ---
 
@@ -489,7 +522,7 @@ Files saved to `assets/game/paths/<id>.adpath`.
 | §3.1 Chapters / Screens / Screen-Flip links | ✅ Data model + editor + basic runtime transition |
 | §3.1 Parallax / pseudo-3D | ✅ Editor preview + runtime floor/wall pre-baked PNG render |
 | §3.2 Display & tile dimensions locked to constants | ✅ All editors use `kTileSize`, `kScreenTilesW/H` from `constants.hpp` |
-| §3.3 Real-time combat / timed mechanics | ❌ Not yet |
+| §3.3 Real-time combat / timed mechanics | ✅ Basic contact damage, player health, invulnerability, respawn |
 | §3.3 Enemy respawn flag | ✅ `respawnEnemies` on `ChapterScreen` |
 | §4.1 Layout editor (macro view, screen management) | ✅ |
 | §4.2 3-layer tile maps (floor / mid / ceiling) | ✅ |
@@ -499,16 +532,18 @@ Files saved to `assets/game/paths/<id>.adpath`.
 | §4.3 Sprite & animation editor — per-sprite dirty buffers | ✅ Each sprite stashed/restored independently; saved only on chapter save |
 | §4.3 Sprite metadata round-trip | ✅ Runtime-facing `.sprite.json` parser plus editor import from metadata |
 | §4.3 Sprite & animation editor — tools & transforms | ✅ |
-| §4.4 Enemy waypoint paths | ✅ Shared `.adpath` format + editor + runtime path followers |
+| §4.4 Enemy waypoint/spline paths | ✅ Shared `.adpath` v3 format + editor + runtime path followers |
 | §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data; runtime currently moves non-idle paths |
+| §4.4 Enemy sprite references and animation-state authoring | ✅ Enemy paths reference sprite IDs; sprite frame types author states |
+| §4.4 Enemy combat data | ✅ Health, contact damage, hitbox, contact cooldown |
 | §5 Save/load (JSON, text formats) | ✅ |
 | §6 Runtime game engine (rendering, screen-flip) | ✅ Basic GLFW/OpenGL runtime shell |
 | §6 Runtime collision | ✅ Tile collision against `.admap` mid layer |
 
 ## Near-Term Priorities
 
-1. Add enemy/item game-library documents plus chapter import and placement UI.
-2. Add runtime animation playback over assigned character frame states.
+1. Add player attack actions, enemy defeat flow, drops, and per-screen defeated enemy persistence.
+2. Add item game-library documents plus chapter import and placement UI.
 3. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
 4. Persist defeated-enemy state per chapter/screen according to the respawn flags.
 5. Extend collision beyond nonzero-mid-layer solid tiles only when design needs require transparent/interaction flags.

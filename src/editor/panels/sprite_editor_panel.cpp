@@ -578,9 +578,9 @@ bool SpriteEditorPanel::saveForChapter(const EditorContext& context)
         }
         SpriteDocument live = std::move(document_);
         document_ = buf.document;
-        saveSpriteMetadata(context);
         exportFramePngs(context);
         exportSpriteSheetPng(context);
+        saveSpriteMetadata(context);
         buf.document = document_;  // capture updated sourcePng
         buf.dirty = false;
         document_ = std::move(live);
@@ -1220,6 +1220,7 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
     }
     if (ImGui::Button("Export sprite sheet PNG")) {
         exportSpriteSheetPng(context);
+        saveSpriteMetadata(context);
     }
     if (ImGui::Button("Import source PNG")) {
         importPng(context);
@@ -1314,8 +1315,9 @@ void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
     metadata.tags = document_.tags;
     metadata.frames.clear();
     metadata.frames.reserve(document_.frames.size());
-    for (const SpriteFrame& frame : document_.frames) {
-        metadata.frames.push_back({frame.x, frame.y, frame.width, frame.height, frame.durationMs, frame.type});
+    for (int i = 0; i < static_cast<int>(document_.frames.size()); ++i) {
+        const SpriteFrame& frame = document_.frames[static_cast<std::size_t>(i)];
+        metadata.frames.push_back({i * document_.canvasSize[0], 0, document_.canvasSize[0], document_.canvasSize[1], frame.durationMs, frame.type});
     }
 
     std::string ignoredError;

@@ -103,6 +103,7 @@ private:
 
     // Tile stamp
     int stampTileIndex_ = -1;
+    int stampFrameIndex_ = 0;
 
     // Per-screen graphics buffers
     std::string currentScreenId_;

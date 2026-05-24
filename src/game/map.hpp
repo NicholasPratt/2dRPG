@@ -8,6 +8,24 @@
 
 namespace adventure::game {
 
+enum class ObstacleType {
+    Spike = 0,
+    Pit = 1,
+    TimedSpike = 2,
+};
+
+struct MapObstacle {
+    ObstacleType type = ObstacleType::Spike;
+    std::string spriteId;
+    int x = 0;
+    int y = 0;
+    int width = 1;
+    int height = 1;
+    float activeSeconds = 1.0f;
+    float inactiveSeconds = 1.0f;
+    float phaseSeconds = 0.0f;
+};
+
 struct TileMap {
     std::string id = "new_map";
     std::string tilesetId;
@@ -21,6 +39,7 @@ struct TileMap {
         std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
         std::vector<uint16_t>(static_cast<std::size_t>(24 * 16), 0u),
     };
+    std::vector<MapObstacle> obstacles;
 };
 
 [[nodiscard]] bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);

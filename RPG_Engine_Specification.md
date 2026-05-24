@@ -33,6 +33,7 @@ The goal is to develop a 2D Action RPG engine and integrated development environ
 - **Screen Transitions:** Crossing a screen edge follows the current `ChapterScreen` north/south/east/west link and performs a sliding transition. The transition triggers when 30% of the player sprite has crossed the edge, only if the destination screen exists and the destination entry point is not blocked.
 - **Collision:** The current runtime collision model treats any nonzero `.admap` mid-layer cell as solid.
 - **Playable Character:** The runtime resolves the playable character through the active chapter, then the project library, then a legacy fallback scan of character files. The selected character's idle frame PNG is rendered as the player.
+- **Obstacles:** `.admap` files can store spike, pit, and timed-spike obstacle rectangles. Obstacles may reference sprite-editor sprites by ID and active hazards respawn the player at the map spawn.
 
 ## 4. The Integrated Editor (Critical Component)
 The editor is **state-dependent** and context-aware, tracking exactly what the user is editing at all times.
@@ -54,6 +55,7 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Screen Graphics Mode:** Clicking "Edit Screen Graphics" transitions the user directly into Wall/Floor Paint for that specific screen. [cite: 1]
 - **Context-Aware Graphics:** Wall/Floor Paint is accessed from the Screens tab as a context-specific subview. It includes a Back to Screens button and screen selector so graphics edits stay tied to chapter screens.
 - **Graphics Preview:** The Screens tab can display scaled-down previews from each screen's exported `<mapId>_preview.png` behind the structural tile/wall overlay.
+- **Map Logic Mode:** From Screen Graphics, the editor can switch to map logic editing for the same screen. This exposes tile layers, spawn placement, obstacles, and hazard sprite references without leaving screen context.
 
 ### 4.3. Graphic & Sprite Editing
 - **Pixel Painting:** Integrated tools comparable to MS Paint or Piskel for tiles and sprites. [cite: 1]
@@ -72,16 +74,21 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Per-Sprite Isolation:** The sprite editor holds each open sprite document in its own in-memory buffer. Switching sprites stashes the current document; returning to a sprite restores it from memory. All dirty sprite documents are flushed to disk (metadata JSON + sprite-sheet PNG) on chapter save.
 
 ### 4.4. Enemy AI & Pathing
-- **Waypoint Paths:** Users can draw waypoint paths for enemies directly in the editor. [cite: 1]
-- **Runtime Movement:** Runtime path entities load `.adpath` files for the active screen `mapId` and advance along waypoints using speed in pixels per second.
+- **Enemy Editor:** Users can define enemy instances with enemy ID, sprite ID, behavior state, movement curve mode, speed, respawn flag, and map reference.
+- **Combat Data:** Enemy instances store max health, contact damage, hitbox size, and hit cooldown data. Runtime contact damage uses those values and gives the player a short invulnerability window.
+- **Waypoint and Spline Paths:** Users can draw waypoint paths for enemies directly in the editor. Paths may be linear polylines or smoothed Catmull-Rom splines. [cite: 1]
+- **Sprite Editing Link:** Enemy sprite IDs open directly in the sprite editor. Sprite frame `type` labels define animation states such as `idle`, `walk`, `attack`, `hurt`, and `dead`.
+- **Runtime Movement:** Runtime path entities load `.adpath` files for the active screen `mapId` and advance along waypoints using speed in pixels per second. Linear and spline paths are both supported.
+- **Runtime Enemy Sprites:** Runtime path entities render the sprite sheet referenced by the enemy path's sprite ID when available, falling back to debug rectangles when missing.
 
 ## 5. Data & Persistence
 - **Asset Storage:** Assets are stored in portable formats (JSON/binary) for engine use. [cite: 1]
 - **Game Project Library:** `assets/game/project.adgame` stores game-level reusable asset references, currently character IDs and default playable character ID.
 - **Screen Tile Maps:** Screen tile data is stored as `.admap` files under `assets/game/maps/`. [cite: 1]
+- **Map Obstacles:** `.admap` v4 stores obstacle rectangles with type, sprite ID, size, and timing data. Older `.admap` versions remain loadable.
 - **Chapter Files:** Chapter layout and metadata stored as `.adchapter` files under `assets/game/chapters/`. Current chapter files store screen layout, imported character IDs, and chapter playable character ID. [cite: 1]
 - **Character Files:** Reusable character sheets are stored under `assets/game/characters/*.adcharacter`. Character documents store name, bio, base sprite metadata path, playable flag, animation slots, and per-frame animation assignments.
-- **Enemy Paths:** Enemy waypoint data is stored as `.adpath` files under `assets/game/paths/` and is parsed by `src/game/path.*`.
+- **Enemy Paths:** Enemy waypoint/spline data is stored as `.adpath` files under `assets/game/paths/` and is parsed by `src/game/path.*`. Current path files include enemy ID, sprite ID, behavior, curve mode, combat data, speed, loop, respawn, and waypoint data.
 - **Game-Ready Graphics:** Wall/Floor Paint exports floor, wall, and preview PNGs per screen to both `assets/raw/tilesets/` and `assets/game/tilesets/`, named `<mapId>_floor.png`, `<mapId>_wall.png`, `<mapId>_preview.png`. Writes are deferred until chapter save.
 - **Sprite Sheets:** The sprite editor exports `<id>_sheet.png` and individual `<id>_frame_<n>.png` files to `assets/raw/sprites/`, and metadata to `assets/game/sprites/<id>.sprite.json` on chapter save. Multiple open sprites are buffered in memory and all dirty ones are flushed together.
 - **Sprite Metadata:** `.sprite.json` is runtime-facing and parsed by `src/game/sprite.*`; the sprite editor can reopen metadata and import the referenced sheet pixels. Sprite frames include animation type labels.
@@ -95,12 +102,12 @@ Implemented:
 - Integrated editor tabs for chapters/screens, maps, wall/floor paint, sprites, tilesets, characters, and enemy paths.
 - Per-screen wall/floor paint buffers and per-sprite document buffers flushed on chapter save.
 - Character document save/load, playable character selection, sprite frame assignment, and runtime playable-character texture loading.
-- Basic runtime shell with fixed-step update, pre-baked PNG rendering, tile collision, screen-link transitions, playable character rendering, and path-following entities.
+- Basic runtime shell with fixed-step update, pre-baked PNG rendering, tile collision, screen-link transitions, playable character rendering, sprite-backed hazards, linear/spline path-following enemies, and contact-damage combat.
 
 Planned:
 
-- Runtime sprite animation playback beyond the current selected idle-frame texture.
-- Enemy and item game-library documents and chapter imports/placements.
+- Player attack actions, enemy defeat/drop flow, and defeated-state persistence.
+- Enemy and item game-library documents plus chapter import/placement UX beyond the current path-backed enemy instances.
 - Defeated-enemy state registry and persistence.
 - Shader/core-profile renderer to replace fixed-pipeline OpenGL.
 - Explicit collision/interaction flags, only when gameplay needs exceed binary mid-layer collision.

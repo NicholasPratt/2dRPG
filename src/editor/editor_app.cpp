@@ -107,11 +107,24 @@ void EditorApp::draw()
         if (!context_.selectedScreenMapId.empty()) {
             layoutEditor_.saveDirtyMaps(context_);
             wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
+            mapEditor_.openMapId(context_, context_.selectedScreenMapId);
         }
         screenGraphicsMode_ = true;
+        screenMapLogicMode_ = false;
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
         spriteEditorLaunchedFromCharacter_ = false;
+    }
+
+    if (context_.requestEditSprite) {
+        context_.requestEditSprite = false;
+        if (!context_.requestedSpriteReference.empty()) {
+            spriteEditor_.openSpriteReference(context_.requestedSpriteReference);
+            context_.requestedSpriteReference.clear();
+        }
+        spriteEditorLaunchedFromCharacter_ = false;
+        requestedTab_ = MainTab::Sprites;
+        hasRequestedTab_ = true;
     }
 
     if (ImGui::BeginTabBar("EditorMainTabs")) {
@@ -162,8 +175,20 @@ void EditorApp::draw()
                 }
                 ImGui::SameLine();
                 ImGui::Text("Editing graphics for %s", context_.selectedScreenId.empty() ? context_.selectedScreenMapId.c_str() : context_.selectedScreenId.c_str());
+                ImGui::SameLine();
+                if (ImGui::Button(screenMapLogicMode_ ? "Paint Graphics" : "Map Logic", ImVec2(130.0f, 30.0f))) {
+                    screenMapLogicMode_ = !screenMapLogicMode_;
+                    if (screenMapLogicMode_ && !context_.selectedScreenMapId.empty()) {
+                        wallFloorPaint_.saveForChapter(context_);
+                        mapEditor_.openMapId(context_, context_.selectedScreenMapId);
+                    }
+                }
                 ImGui::Separator();
-                wallFloorPaint_.draw(context_);
+                if (screenMapLogicMode_) {
+                    mapEditor_.draw(context_);
+                } else {
+                    wallFloorPaint_.draw(context_);
+                }
             } else {
                 layoutEditor_.draw(context_);
             }
@@ -181,7 +206,7 @@ void EditorApp::draw()
         }
 
         ImGuiTabItemFlags enemyPathTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::EnemyPaths ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Enemy Paths", nullptr, enemyPathTabFlags)) {
+        if (ImGui::BeginTabItem("Enemies", nullptr, enemyPathTabFlags)) {
             if (enemyPathTabFlags != 0) {
                 hasRequestedTab_ = false;
             }
@@ -351,6 +376,7 @@ void EditorApp::chooseChapter(const std::string& chapterId)
         spriteEditor_.resetDocumentBuffers();
         startupChapterChosen_ = true;
         screenGraphicsMode_ = false;
+        screenMapLogicMode_ = false;
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
 
@@ -375,6 +401,7 @@ void EditorApp::createChapter()
     spriteEditor_.resetDocumentBuffers();
     startupChapterChosen_ = true;
     screenGraphicsMode_ = false;
+    screenMapLogicMode_ = false;
     requestedTab_ = MainTab::Layout;
     hasRequestedTab_ = true;
     refreshChapterList();

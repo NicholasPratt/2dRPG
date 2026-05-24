@@ -10,6 +10,7 @@ namespace {
 constexpr int kMaxMapDimension = 512;
 constexpr int kMaxTileId = 65535;
 constexpr int kLayerCount = 3;
+constexpr int kMaxObstacles = 2048;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -30,7 +31,32 @@ bool validMapShape(const TileMap& map)
             return false;
         }
     }
+    if (map.obstacles.size() > kMaxObstacles) {
+        return false;
+    }
+    for (const MapObstacle& obstacle : map.obstacles) {
+        if (obstacle.x < 0 || obstacle.y < 0 || obstacle.width <= 0 || obstacle.height <= 0 ||
+            obstacle.x + obstacle.width > map.width || obstacle.y + obstacle.height > map.height ||
+            obstacle.activeSeconds <= 0.0f || obstacle.inactiveSeconds < 0.0f) {
+            return false;
+        }
+    }
     return true;
+}
+
+int obstacleTypeToInt(ObstacleType type)
+{
+    return static_cast<int>(type);
+}
+
+bool obstacleTypeFromInt(int value, ObstacleType& type)
+{
+    switch (value) {
+        case 0: type = ObstacleType::Spike; return true;
+        case 1: type = ObstacleType::Pit; return true;
+        case 2: type = ObstacleType::TimedSpike; return true;
+        default: return false;
+    }
 }
 
 void writeTileLayer(std::ofstream& output, const std::vector<uint16_t>& layer, int width, int height)
@@ -44,6 +70,16 @@ void writeTileLayer(std::ofstream& output, const std::vector<uint16_t>& layer, i
         }
         output << '\n';
     }
+}
+
+std::string encodedToken(const std::string& value)
+{
+    return value.empty() ? "-" : value;
+}
+
+std::string decodedToken(const std::string& value)
+{
+    return value == "-" ? std::string{} : value;
 }
 
 bool readTileLayer(std::ifstream& input, std::vector<uint16_t>& layer, int width, int height,
@@ -87,7 +123,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 3\n";
+    output << "ADMAP 4\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -99,6 +135,12 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
     for (int l = 0; l < kLayerCount; ++l) {
         output << "layer " << l << "\n";
         writeTileLayer(output, map.layers[l], map.width, map.height);
+    }
+    output << "obstacles " << map.obstacles.size() << "\n";
+    for (const MapObstacle& obstacle : map.obstacles) {
+        output << "obstacle " << obstacleTypeToInt(obstacle.type) << ' ' << encodedToken(obstacle.spriteId) << ' '
+               << obstacle.x << ' ' << obstacle.y << ' ' << obstacle.width << ' ' << obstacle.height << ' '
+               << obstacle.activeSeconds << ' ' << obstacle.inactiveSeconds << ' ' << obstacle.phaseSeconds << "\n";
     }
     output << "end\n";
 
@@ -120,7 +162,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 3) {
+    if (magic != "ADMAP" || version < 1 || version > 4) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -215,9 +257,39 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
             }
             input >> key;
         }
-        // key now holds "end" (consumed inside the loop's last iteration)
+        if (version >= 4 && key == "obstacles") {
+            int obstacleCount = 0;
+            input >> obstacleCount;
+            if (!input || obstacleCount < 0 || obstacleCount > kMaxObstacles) {
+                setError(errorMessage, "Invalid obstacle count.");
+                return false;
+            }
+            loaded.obstacles.reserve(static_cast<std::size_t>(obstacleCount));
+            for (int i = 0; i < obstacleCount; ++i) {
+                if (!(input >> key) || key != "obstacle") {
+                    setError(errorMessage, "Expected obstacle entry.");
+                    return false;
+                }
+                int typeValue = 0;
+                std::string spriteId;
+                MapObstacle obstacle;
+                input >> typeValue >> spriteId >> obstacle.x >> obstacle.y >> obstacle.width >> obstacle.height
+                      >> obstacle.activeSeconds >> obstacle.inactiveSeconds >> obstacle.phaseSeconds;
+                if (!input || !obstacleTypeFromInt(typeValue, obstacle.type)) {
+                    setError(errorMessage, "Invalid obstacle data.");
+                    return false;
+                }
+                obstacle.spriteId = decodedToken(spriteId);
+                loaded.obstacles.push_back(obstacle);
+            }
+            input >> key;
+        }
         if (key != "end") {
             setError(errorMessage, "Expected map end marker.");
+            return false;
+        }
+        if (!validMapShape(loaded)) {
+            setError(errorMessage, "Loaded map data is invalid.");
             return false;
         }
         map = std::move(loaded);
@@ -230,6 +302,10 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
         return false;
     }
 
+    if (!validMapShape(loaded)) {
+        setError(errorMessage, "Loaded map data is invalid.");
+        return false;
+    }
     map = std::move(loaded);
     return true;
 }

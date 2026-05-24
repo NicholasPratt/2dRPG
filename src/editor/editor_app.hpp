@@ -47,6 +47,7 @@ private:
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;
     bool screenGraphicsMode_ = false;
+    bool screenMapLogicMode_ = false;
     bool startupChapterChosen_ = false;
     bool pendingExit_ = false;
     bool exitAccepted_ = false;

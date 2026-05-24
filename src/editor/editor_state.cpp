@@ -30,15 +30,19 @@ bool saveEditorState(const std::filesystem::path& path, const EditorState& state
         output << '\n';
     };
 
-    output << "ADEDITOR 1\n";
+    output << "ADEDITOR 2\n";
     output << "selectedScreen " << (state.selectedScreenId.empty() ? "-" : state.selectedScreenId) << "\n";
     output << "tilePalette " << state.tilePalette.size() << "\n";
     for (const TilePaletteEntry& e : state.tilePalette) {
-        output << "entry " << (e.name.empty() ? "-" : e.name) << " " << e.widthPx << " " << e.heightPx << "\n";
-        output << "floor ";
-        writeHex(e.floor);
-        output << "wall ";
-        writeHex(e.wall);
+        output << "entry " << (e.name.empty() ? "-" : e.name) << " " << e.widthPx << " " << e.heightPx
+               << " " << e.frameDurationMs << " " << e.frames.size() << "\n";
+        for (const TilePaletteFrame& frame : e.frames) {
+            output << "frame\n";
+            output << "floor ";
+            writeHex(frame.floor);
+            output << "wall ";
+            writeHex(frame.wall);
+        }
     }
     output << "paintPalette ";
     writeHex(state.paintPalette);
@@ -63,7 +67,7 @@ bool loadEditorState(const std::filesystem::path& path, EditorState& state, std:
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADEDITOR" || version != 1) {
+    if (magic != "ADEDITOR" || version < 1 || version > 2) {
         setError(errorMessage, "Unsupported editor state file type or version.");
         return false;
     }
@@ -111,13 +115,40 @@ bool loadEditorState(const std::filesystem::path& path, EditorState& state, std:
         }
         if (e.name == "-") { e.name.clear(); }
 
-        if (!(input >> key) || key != "floor" || !readHex(e.floor)) {
-            setError(errorMessage, "Expected floor pixel data.");
-            return false;
-        }
-        if (!(input >> key) || key != "wall" || !readHex(e.wall)) {
-            setError(errorMessage, "Expected wall pixel data.");
-            return false;
+        if (version == 1) {
+            TilePaletteFrame frame;
+            if (!(input >> key) || key != "floor" || !readHex(frame.floor)) {
+                setError(errorMessage, "Expected floor pixel data.");
+                return false;
+            }
+            if (!(input >> key) || key != "wall" || !readHex(frame.wall)) {
+                setError(errorMessage, "Expected wall pixel data.");
+                return false;
+            }
+            e.frames.push_back(std::move(frame));
+        } else {
+            std::size_t frameCount = 0;
+            if (!(input >> e.frameDurationMs >> frameCount) || frameCount == 0) {
+                setError(errorMessage, "Expected animation frame data.");
+                return false;
+            }
+            e.frames.reserve(frameCount);
+            for (std::size_t frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+                TilePaletteFrame frame;
+                if (!(input >> key) || key != "frame") {
+                    setError(errorMessage, "Expected frame keyword.");
+                    return false;
+                }
+                if (!(input >> key) || key != "floor" || !readHex(frame.floor)) {
+                    setError(errorMessage, "Expected floor pixel data.");
+                    return false;
+                }
+                if (!(input >> key) || key != "wall" || !readHex(frame.wall)) {
+                    setError(errorMessage, "Expected wall pixel data.");
+                    return false;
+                }
+                e.frames.push_back(std::move(frame));
+            }
         }
         loaded.tilePalette.push_back(std::move(e));
     }

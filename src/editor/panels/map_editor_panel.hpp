@@ -2,6 +2,7 @@
 
 #include "editor/editor_context.hpp"
 #include "game/constants.hpp"
+#include "game/map.hpp"
 #include "game/tileset.hpp"
 
 #include "imgui.h"
@@ -31,6 +32,14 @@ private:
     float playerX_ = static_cast<float>(game::kTileSize);
     float playerY_ = static_cast<float>(game::kTileSize);
     uint16_t selectedTileId_ = 1;
+    bool obstacleMode_ = false;
+    int activeObstacleType_ = 0;
+    int obstacleW_ = 1;
+    int obstacleH_ = 1;
+    float obstacleActiveSeconds_ = 1.0f;
+    float obstacleInactiveSeconds_ = 1.0f;
+    float obstaclePhaseSeconds_ = 0.0f;
+    std::array<char, 64> obstacleSpriteId_{'s', 'p', 'i', 'k', 'e', 's', '\0'};
     std::array<char, 64> mapId_{'n', 'e', 'w', '_', 'm', 'a', 'p', '\0'};
     std::array<char, 64> tilesetId_{'\0'};
     std::array<std::vector<uint16_t>, 3> layers_ = {
@@ -39,6 +48,7 @@ private:
         std::vector<uint16_t>(static_cast<std::size_t>(game::kScreenTilesW * game::kScreenTilesH), 0u),
     };
     game::TilesetDef loadedTileset_;
+    std::vector<game::MapObstacle> obstacles_;
     bool tilesetLoaded_ = false;
     std::string status_;
 
@@ -54,6 +64,7 @@ private:
     static constexpr int kMaxUndoSteps = 50;
     struct MapUndoState {
         std::array<std::vector<uint16_t>, 3> layers;
+        std::vector<game::MapObstacle> obstacles;
     };
     std::vector<MapUndoState> undoStack_;
 
@@ -67,6 +78,9 @@ private:
     void drawToolbar(EditorContext& context);
     void drawTilesetPalette();
     void drawGrid(EditorContext& context);
+    void drawObstacles(ImDrawList* drawList, ImVec2 origin) const;
+    void placeObstacle(int x, int y);
+    void eraseObstacleAt(int x, int y);
     void drawWallOutlines(ImDrawList* drawList, ImVec2 origin) const;
     void drawTestGame();
     void startTestGame();
