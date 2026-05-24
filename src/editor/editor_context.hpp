@@ -39,6 +39,8 @@ struct EditorContext {
     std::string requestedSpriteReference;
     bool dirty = false;
     bool requestEditScreenGraphics = false;
+    bool requestEditEnemies = false;
+    bool requestEditEnemyTypes = false;
     bool requestEditSprite = false;
     bool requestChapterSwitch = false;
     std::vector<TilePaletteEntry> tilePalette;

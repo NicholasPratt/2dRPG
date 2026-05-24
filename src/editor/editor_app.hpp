@@ -27,13 +27,18 @@ public:
 private:
     enum class MainTab {
         Characters,
-        Sprites,
         Layout,
         Tilesets,
         WallFloorPaint,
-        EnemyTypes,
-        EnemyPaths,
         Assets,
+    };
+
+    enum class ScreenEditMode {
+        Layout,
+        Graphics,
+        Enemies,
+        EnemyTypes,
+        Sprite,
     };
 
     EditorContext context_;
@@ -47,8 +52,11 @@ private:
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;
-    bool screenGraphicsMode_ = false;
     bool screenMapLogicMode_ = false;
+    ScreenEditMode screenEditMode_ = ScreenEditMode::Layout;
+    ScreenEditMode spriteReturnMode_ = ScreenEditMode::Layout;
+    std::vector<game::EnemyPlacement> enemyPlacementSnapshot_;
+    std::vector<game::EnemyType> enemyTypeSnapshot_;
     bool startupChapterChosen_ = false;
     bool pendingExit_ = false;
     bool exitAccepted_ = false;
@@ -68,6 +76,11 @@ private:
     void completeChapterSwitch(bool saveFirst);
     void saveCurrentChapterAndExports();
     void launchGame();
+    void enterScreenMode(ScreenEditMode mode);
+    void drawScreensTab();
+    void drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving);
+    void exitScreenModeSaving();
+    void exitScreenModeDiscarding();
 };
 
 } // namespace adventure::editor

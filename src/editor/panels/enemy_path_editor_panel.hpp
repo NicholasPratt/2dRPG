@@ -19,6 +19,7 @@ class EnemyPathEditorPanel {
 public:
     void draw(EditorContext& context);
     void drawTypes(EditorContext& context);
+    void saveProjectEnemyTypes(EditorContext& context);
 
 private:
     enum class Behavior { Idle = 0, Patrol = 1, Aggro = 2 };
@@ -74,7 +75,6 @@ private:
     void drawWaypointList(EditorContext& context);
     void drawCanvas(EditorContext& context);
     void loadBgMap(EditorContext& context);
-    void saveProjectEnemyTypes(EditorContext& context);
     void loadProjectEnemyTypes(EditorContext& context);
     void createPlacement(EditorContext& context);
     void selectPlacement(EditorContext& context, int index);

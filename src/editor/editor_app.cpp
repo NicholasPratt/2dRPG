@@ -109,11 +109,28 @@ void EditorApp::draw()
             wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
             mapEditor_.openMapId(context_, context_.selectedScreenMapId);
         }
-        screenGraphicsMode_ = true;
+        enterScreenMode(ScreenEditMode::Graphics);
         screenMapLogicMode_ = false;
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
         spriteEditorLaunchedFromCharacter_ = false;
+    }
+
+    if (context_.requestEditEnemies) {
+        context_.requestEditEnemies = false;
+        if (!context_.selectedScreenId.empty()) {
+            layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+        }
+        enterScreenMode(ScreenEditMode::Enemies);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
+    if (context_.requestEditEnemyTypes) {
+        context_.requestEditEnemyTypes = false;
+        enterScreenMode(ScreenEditMode::EnemyTypes);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
     }
 
     if (context_.requestEditSprite) {
@@ -123,44 +140,29 @@ void EditorApp::draw()
             context_.requestedSpriteReference.clear();
         }
         spriteEditorLaunchedFromCharacter_ = false;
-        requestedTab_ = MainTab::Sprites;
+        spriteReturnMode_ = screenEditMode_ == ScreenEditMode::Sprite ? ScreenEditMode::Layout : screenEditMode_;
+        enterScreenMode(ScreenEditMode::Sprite);
+        requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
     }
 
     if (ImGui::BeginTabBar("EditorMainTabs")) {
-        ImGuiTabItemFlags characterTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Characters ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Characters", nullptr, characterTabFlags)) {
-            if (characterTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            if (auto spriteToOpen = characterEditor_.draw(context_)) {
-                spriteEditor_.openCharacterSpriteReference(*spriteToOpen);
-                spriteEditorLaunchedFromCharacter_ = true;
-                requestedTab_ = MainTab::Sprites;
-                hasRequestedTab_ = true;
-            }
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags spriteTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Sprites ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Sprites", nullptr, spriteTabFlags)) {
-            if (spriteTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            if (spriteEditorLaunchedFromCharacter_) {
-                if (ImGui::Button("< Return to Character", ImVec2(190.0f, 30.0f))) {
-                    spriteEditor_.saveForChapter(context_);
-                    characterEditor_.setSelectedSpriteReference(context_, spriteEditor_.spriteMetadataReference(context_));
-                    spriteEditorLaunchedFromCharacter_ = false;
-                    requestedTab_ = MainTab::Characters;
+        if (screenEditMode_ == ScreenEditMode::Layout) {
+            ImGuiTabItemFlags characterTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Characters ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Characters", nullptr, characterTabFlags)) {
+                if (characterTabFlags != 0) {
+                    hasRequestedTab_ = false;
+                }
+                if (auto spriteToOpen = characterEditor_.draw(context_)) {
+                    spriteEditor_.openCharacterSpriteReference(*spriteToOpen);
+                    spriteEditorLaunchedFromCharacter_ = true;
+                    spriteReturnMode_ = ScreenEditMode::Layout;
+                    enterScreenMode(ScreenEditMode::Sprite);
+                    requestedTab_ = MainTab::Layout;
                     hasRequestedTab_ = true;
                 }
-                ImGui::SameLine();
-                ImGui::TextUnformatted("Editing character sprite");
-                ImGui::Separator();
+                ImGui::EndTabItem();
             }
-            spriteEditor_.draw(context_);
-            ImGui::EndTabItem();
         }
 
         ImGuiTabItemFlags layoutTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Layout ? ImGuiTabItemFlags_SetSelected : 0;
@@ -168,88 +170,170 @@ void EditorApp::draw()
             if (layoutTabFlags != 0) {
                 hasRequestedTab_ = false;
             }
-            spriteEditorLaunchedFromCharacter_ = false;
-            if (screenGraphicsMode_) {
-                if (ImGui::Button("< Back to Screens", ImVec2(180.0f, 30.0f))) {
-                    screenGraphicsMode_ = false;
+            drawScreensTab();
+            ImGui::EndTabItem();
+        }
+
+        if (screenEditMode_ == ScreenEditMode::Layout) {
+            ImGuiTabItemFlags tilesetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Tilesets ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Tilesets", nullptr, tilesetsTabFlags)) {
+                if (tilesetsTabFlags != 0) {
+                    hasRequestedTab_ = false;
                 }
-                ImGui::SameLine();
-                ImGui::Text("Editing graphics for %s", context_.selectedScreenId.empty() ? context_.selectedScreenMapId.c_str() : context_.selectedScreenId.c_str());
-                ImGui::SameLine();
-                if (ImGui::Button(screenMapLogicMode_ ? "Paint Graphics" : "Map Logic", ImVec2(130.0f, 30.0f))) {
-                    screenMapLogicMode_ = !screenMapLogicMode_;
-                    if (screenMapLogicMode_ && !context_.selectedScreenMapId.empty()) {
-                        wallFloorPaint_.saveForChapter(context_);
-                        mapEditor_.openMapId(context_, context_.selectedScreenMapId);
-                    }
+                spriteEditorLaunchedFromCharacter_ = false;
+                tilesetEditor_.draw(context_);
+                ImGui::EndTabItem();
+            }
+
+            ImGuiTabItemFlags assetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Assets ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Assets", nullptr, assetsTabFlags)) {
+                if (assetsTabFlags != 0) {
+                    hasRequestedTab_ = false;
                 }
-                ImGui::Separator();
-                if (screenMapLogicMode_) {
-                    mapEditor_.draw(context_);
-                } else {
-                    wallFloorPaint_.draw(context_);
-                }
-            } else {
-                layoutEditor_.draw(context_);
+                spriteEditorLaunchedFromCharacter_ = false;
+                ImGui::Text("Raw sprites: %s", context_.assets.rawSpritePath().string().c_str());
+                ImGui::Text("Raw character sprites: %s", context_.assets.rawCharacterSpritePath().string().c_str());
+                ImGui::Text("Raw tilesets: %s", context_.assets.rawTilesetPath().string().c_str());
+                ImGui::Text("Game sprites: %s", context_.assets.gameSpritePath().string().c_str());
+                ImGui::Text("Game character sprites: %s", context_.assets.gameCharacterSpritePath().string().c_str());
+                ImGui::Text("Game characters: %s", context_.assets.gameCharacterPath().string().c_str());
+                ImGui::Text("Game chapters: %s", context_.assets.gameChapterPath().string().c_str());
+                ImGui::Text("Game maps: %s", context_.assets.gameMapPath().string().c_str());
+                ImGui::Text("Game tilesets: %s", context_.assets.gameTilesetPath().string().c_str());
+                ImGui::EndTabItem();
             }
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags tilesetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Tilesets ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Tilesets", nullptr, tilesetsTabFlags)) {
-            if (tilesetsTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            spriteEditorLaunchedFromCharacter_ = false;
-            tilesetEditor_.draw(context_);
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags enemyPathTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::EnemyPaths ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Enemies", nullptr, enemyPathTabFlags)) {
-            if (enemyPathTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            spriteEditorLaunchedFromCharacter_ = false;
-            if (!context_.selectedScreenId.empty()) {
-                layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
-            }
-            enemyPathEditor_.draw(context_);
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags enemyTypesTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::EnemyTypes ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Enemy Types", nullptr, enemyTypesTabFlags)) {
-            if (enemyTypesTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            spriteEditorLaunchedFromCharacter_ = false;
-            enemyPathEditor_.drawTypes(context_);
-            ImGui::EndTabItem();
-        }
-
-        ImGuiTabItemFlags assetsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Assets ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Assets", nullptr, assetsTabFlags)) {
-            if (assetsTabFlags != 0) {
-                hasRequestedTab_ = false;
-            }
-            spriteEditorLaunchedFromCharacter_ = false;
-            ImGui::Text("Raw sprites: %s", context_.assets.rawSpritePath().string().c_str());
-            ImGui::Text("Raw character sprites: %s", context_.assets.rawCharacterSpritePath().string().c_str());
-            ImGui::Text("Raw tilesets: %s", context_.assets.rawTilesetPath().string().c_str());
-            ImGui::Text("Game sprites: %s", context_.assets.gameSpritePath().string().c_str());
-            ImGui::Text("Game character sprites: %s", context_.assets.gameCharacterSpritePath().string().c_str());
-            ImGui::Text("Game characters: %s", context_.assets.gameCharacterPath().string().c_str());
-            ImGui::Text("Game chapters: %s", context_.assets.gameChapterPath().string().c_str());
-            ImGui::Text("Game maps: %s", context_.assets.gameMapPath().string().c_str());
-            ImGui::Text("Game tilesets: %s", context_.assets.gameTilesetPath().string().c_str());
-            ImGui::EndTabItem();
         }
 
         ImGui::EndTabBar();
     }
 
     ImGui::End();
+}
+
+void EditorApp::enterScreenMode(ScreenEditMode mode)
+{
+    if (mode == ScreenEditMode::Enemies && !context_.selectedScreenId.empty()) {
+        layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+        enemyPlacementSnapshot_ = context_.selectedScreenEnemies;
+    } else if (mode == ScreenEditMode::EnemyTypes) {
+        enemyTypeSnapshot_ = context_.enemyTypes;
+    }
+    screenEditMode_ = mode;
+}
+
+void EditorApp::drawScreensTab()
+{
+    switch (screenEditMode_) {
+        case ScreenEditMode::Layout:
+            layoutEditor_.draw(context_);
+            break;
+        case ScreenEditMode::Graphics:
+            drawScopedEditHeader(screenMapLogicMode_ ? "Editing Screen Logic" : "Editing Screen Graphics", true, true);
+            ImGui::SameLine();
+            if (ImGui::Button(screenMapLogicMode_ ? "Paint Graphics" : "Map Logic", ImVec2(130.0f, 30.0f))) {
+                screenMapLogicMode_ = !screenMapLogicMode_;
+                if (screenMapLogicMode_ && !context_.selectedScreenMapId.empty()) {
+                    wallFloorPaint_.saveForChapter(context_);
+                    mapEditor_.openMapId(context_, context_.selectedScreenMapId);
+                }
+            }
+            ImGui::Separator();
+            if (screenMapLogicMode_) {
+                mapEditor_.draw(context_);
+            } else {
+                wallFloorPaint_.draw(context_);
+            }
+            break;
+        case ScreenEditMode::Enemies:
+            drawScopedEditHeader("Editing Screen Enemies", true, true);
+            ImGui::Separator();
+            enemyPathEditor_.draw(context_);
+            break;
+        case ScreenEditMode::EnemyTypes:
+            drawScopedEditHeader("Editing Enemy Types", true, true);
+            ImGui::Separator();
+            enemyPathEditor_.drawTypes(context_);
+            break;
+        case ScreenEditMode::Sprite:
+            drawScopedEditHeader("Editing Sprite", true, true);
+            ImGui::Separator();
+            spriteEditor_.draw(context_);
+            break;
+    }
+}
+
+void EditorApp::drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving)
+{
+    ImGui::TextUnformatted(title);
+    ImGui::SameLine();
+    ImGui::TextDisabled("Screen: %s", context_.selectedScreenId.empty() ? "(none)" : context_.selectedScreenId.c_str());
+    ImGui::SameLine();
+    if (saveAndExit && ImGui::Button("Save and Exit", ImVec2(140.0f, 30.0f))) {
+        exitScreenModeSaving();
+    }
+    ImGui::SameLine();
+    if (exitWithoutSaving && ImGui::Button("Exit without Saving", ImVec2(170.0f, 30.0f))) {
+        exitScreenModeDiscarding();
+    }
+}
+
+void EditorApp::exitScreenModeSaving()
+{
+    switch (screenEditMode_) {
+        case ScreenEditMode::Graphics:
+            if (screenMapLogicMode_) {
+                mapEditor_.saveMap(context_);
+                (void)layoutEditor_.saveCurrentChapter(context_);
+            } else {
+                wallFloorPaint_.saveForChapter(context_);
+                (void)layoutEditor_.saveCurrentChapter(context_);
+            }
+            break;
+        case ScreenEditMode::Enemies:
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            (void)layoutEditor_.saveCurrentChapter(context_);
+            break;
+        case ScreenEditMode::EnemyTypes:
+            enemyPathEditor_.saveProjectEnemyTypes(context_);
+            break;
+        case ScreenEditMode::Sprite:
+            spriteEditor_.saveForChapter(context_);
+            if (spriteEditorLaunchedFromCharacter_) {
+                characterEditor_.setSelectedSpriteReference(context_, spriteEditor_.spriteMetadataReference(context_));
+                spriteEditorLaunchedFromCharacter_ = false;
+            }
+            break;
+        case ScreenEditMode::Layout:
+            break;
+    }
+    screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ : ScreenEditMode::Layout;
+}
+
+void EditorApp::exitScreenModeDiscarding()
+{
+    switch (screenEditMode_) {
+        case ScreenEditMode::Graphics:
+            wallFloorPaint_.resetScreenBuffers();
+            if (!context_.selectedScreenMapId.empty()) {
+                wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
+                mapEditor_.openMapId(context_, context_.selectedScreenMapId);
+            }
+            break;
+        case ScreenEditMode::Enemies:
+            context_.selectedScreenEnemies = enemyPlacementSnapshot_;
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            break;
+        case ScreenEditMode::EnemyTypes:
+            context_.enemyTypes = enemyTypeSnapshot_;
+            break;
+        case ScreenEditMode::Sprite:
+            spriteEditor_.resetDocumentBuffers();
+            spriteEditorLaunchedFromCharacter_ = false;
+            break;
+        case ScreenEditMode::Layout:
+            break;
+    }
+    screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ : ScreenEditMode::Layout;
 }
 
 void EditorApp::requestExit()
@@ -388,7 +472,7 @@ void EditorApp::chooseChapter(const std::string& chapterId)
         wallFloorPaint_.resetScreenBuffers();
         spriteEditor_.resetDocumentBuffers();
         startupChapterChosen_ = true;
-        screenGraphicsMode_ = false;
+        screenEditMode_ = ScreenEditMode::Layout;
         screenMapLogicMode_ = false;
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
@@ -413,7 +497,7 @@ void EditorApp::createChapter()
     wallFloorPaint_.resetScreenBuffers();
     spriteEditor_.resetDocumentBuffers();
     startupChapterChosen_ = true;
-    screenGraphicsMode_ = false;
+    screenEditMode_ = ScreenEditMode::Layout;
     screenMapLogicMode_ = false;
     requestedTab_ = MainTab::Layout;
     hasRequestedTab_ = true;

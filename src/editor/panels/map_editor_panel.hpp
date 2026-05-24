@@ -18,6 +18,7 @@ class MapEditorPanel {
 public:
     void draw(EditorContext& context);
     void openMapId(EditorContext& context, const std::string& mapId);
+    void saveMap(EditorContext& context);
 
 private:
     enum class EditMode { Paint, Select, Paste };
@@ -89,7 +90,6 @@ private:
     [[nodiscard]] bool isSolid(uint16_t tileId) const;
     [[nodiscard]] bool playerCanMoveTo(float x, float y) const;
     [[nodiscard]] bool solidAtPixel(float x, float y) const;
-    void saveMap(EditorContext& context);
     void loadMap(EditorContext& context);
     void loadTileset(EditorContext& context);
     [[nodiscard]] uint16_t& tileAt(int x, int y, int layer);

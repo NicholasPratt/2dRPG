@@ -535,6 +535,18 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
     }
 
     ImGui::Spacing();
+    if (ImGui::Button("Edit Enemies", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditEnemies = true;
+    }
+
+    if (ImGui::Button("Edit Enemy Types", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditEnemyTypes = true;
+    }
+
     if (ImGui::Button("Edit Screen Graphics", ImVec2(-1.0f, 34.0f))) {
         // EditorApp consumes this request and opens the map/pixel editor on this screen's map.
         // The wall/mid layer remains outlined there for spatial context.
