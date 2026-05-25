@@ -1,5 +1,6 @@
 #include "editor/panels/sprite_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "game/sprite.hpp"
 
 #include <algorithm>
@@ -625,12 +626,11 @@ void SpriteEditorPanel::drawTopBar()
 
     const float controlsStart = std::max(ImGui::GetCursorPosX() + 16.0f, ImGui::GetWindowWidth() - 360.0f);
     ImGui::SameLine(controlsStart);
-    ImGui::Checkbox("Grid", &showGrid_);
+    ui::checkbox("Grid", "##SpriteGrid", &showGrid_, 42.0f);
     ImGui::SameLine();
-    ImGui::Checkbox("Onion", &onionSkin_);
+    ui::checkbox("Onion", "##SpriteOnion", &onionSkin_, 50.0f);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(120.0f);
-    ImGui::SliderInt("Zoom", &zoom_, 2, 32);
+    ui::sliderInt("Zoom", "##SpriteZoom", &zoom_, 2, 32, 90.0f, 48.0f);
     ImGui::EndChild();
 
     if (openNewSpritePopup_) {
@@ -762,7 +762,7 @@ void SpriteEditorPanel::drawLeftRail()
     sectionHeader("Tools");
     for (int i = 0; i < static_cast<int>(std::size(kToolNames)); ++i) {
         drawToolButton(kToolNames[i], kToolNames[i], i);
-        if (i % 4 != 3) {
+        if (i % 2 != 1) {
             ImGui::SameLine();
         }
     }
@@ -779,7 +779,7 @@ void SpriteEditorPanel::drawLeftRail()
             brushSize_ = brushSizes[i];
         }
         ImGui::PopStyleColor(2);
-        if (i + 1 < static_cast<int>(std::size(brushSizes))) {
+        if (i % 2 != 1 && i + 1 < static_cast<int>(std::size(brushSizes))) {
             ImGui::SameLine();
         }
         ImGui::PopID();
@@ -955,12 +955,11 @@ void SpriteEditorPanel::drawRightInspector(EditorContext& context)
 {
     sectionHeader("Preview");
     drawPreview(ImVec2(-1.0f, 178.0f));
-    ImGui::Checkbox("Run animation", &runAnimationPreview_);
+    ui::checkbox("Run animation", "##SpriteRunAnimation", &runAnimationPreview_, 118.0f);
     if (!runAnimationPreview_) {
         previewTimeSeconds_ = 0.0f;
     }
-    ImGui::SetNextItemWidth(160.0f);
-    ImGui::SliderInt("FPS", &playbackFps_, 1, 30);
+    ui::sliderInt("FPS", "##SpritePreviewFps", &playbackFps_, 1, 30, 120.0f, 44.0f);
 
     sectionHeader("Layers");
     drawLayers();
@@ -973,7 +972,6 @@ void SpriteEditorPanel::drawRightInspector(EditorContext& context)
     if (ImGui::Button("Flip V", ImVec2(62.0f, 34.0f))) {
         flipVertical();
     }
-    ImGui::SameLine();
     if (ImGui::Button("Rotate", ImVec2(72.0f, 34.0f))) {
         rotateClockwise();
     }
@@ -1149,12 +1147,12 @@ void SpriteEditorPanel::drawLayers()
 
     for (int i = 0; i < static_cast<int>(document_.layers.size()); ++i) {
         ImGui::PushID(i);
-        ImGui::Checkbox("Visible", &document_.layers[i].visible);
+        ui::checkbox("Visible", "##LayerVisible", &document_.layers[i].visible, 58.0f);
         ImGui::SameLine();
         if (ImGui::Selectable(document_.layers[i].name.c_str(), selectedLayer_ == i)) {
             selectedLayer_ = i;
         }
-        ImGui::SliderFloat("Opacity", &document_.layers[i].opacity, 0.0f, 1.0f);
+        ui::sliderFloat("Opacity", "##LayerOpacity", &document_.layers[i].opacity, 0.0f, 1.0f, "%.2f", 120.0f, 62.0f);
         ImGui::PopID();
     }
 }

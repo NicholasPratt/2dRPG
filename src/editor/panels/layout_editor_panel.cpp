@@ -1,5 +1,6 @@
 #include "editor/panels/layout_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "imgui.h"
 #include "stb_image.h"
 
@@ -182,8 +183,7 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
 {
     ImGui::TextUnformatted("Screen Layout");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(96.0f);
-    ImGui::SliderInt("Tile px", &layoutTileSize_, 4, 18);
+    ui::sliderInt("Tile px", "##LayoutTilePx", &layoutTileSize_, 4, 18, 96.0f, 78.0f);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(92.0f);
     ImGui::InputScalar("Paint tile", ImGuiDataType_U16, &layoutSelectedTileId_);
@@ -204,11 +204,10 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         saveDirtyMaps(context);
     }
     ImGui::SameLine();
-    ImGui::Checkbox("Graphics preview", &showGraphicsPreview_);
+    ui::checkbox("Graphics preview", "##LayoutGraphicsPreview", &showGraphicsPreview_, 128.0f);
     if (showGraphicsPreview_) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(96.0f);
-        ImGui::SliderFloat("Preview alpha", &graphicsPreviewOpacity_, 0.15f, 1.0f, "%.2f");
+        ImGui::SameLine(300.0f);
+        ui::sliderFloat("Preview alpha", "##LayoutPreviewAlpha", &graphicsPreviewOpacity_, 0.15f, 1.0f, "%.2f", 96.0f, 110.0f);
     }
     ImGui::Separator();
 
@@ -492,7 +491,7 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
     }
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("Respawn enemies on re-enter", &screen.respawnEnemies)) {
+    if (ui::checkbox("Respawn enemies on re-enter", "##RespawnEnemiesOnReenter", &screen.respawnEnemies, 190.0f)) {
         context.markDirty();
     }
     ImGui::TextDisabled("Off = defeated enemies stay gone (spec default).");

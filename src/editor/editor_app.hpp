@@ -63,17 +63,27 @@ private:
     bool pendingChapterSwitch_ = false;
     std::string pendingChapterId_;
     std::string playStatus_;
+    std::filesystem::path workspaceRoot_;
+    std::string currentProjectId_;
+    std::array<char, 64> newProjectId_{'p', 'r', 'o', 'j', 'e', 'c', 't', '_', '1', '\0'};
     std::array<char, 64> newChapterId_{'c', 'h', 'a', 'p', 't', 'e', 'r', '_', '1', '\0'};
+    std::vector<std::string> projectIds_;
     std::vector<std::string> chapterIds_;
 
     void drawStartupChapterModal();
     void drawUnsavedChangesModal();
     void drawChapterMenu();
+    void refreshProjectList();
     void refreshChapterList();
+    void selectProject(const std::string& projectId);
     void chooseChapter(const std::string& chapterId);
     void createChapter();
+    void createProjectAndChapter();
+    void ensureProjectDirectories() const;
+    [[nodiscard]] std::filesystem::path projectsRoot() const;
     void requestChapterSwitch(const std::string& chapterId);
     void completeChapterSwitch(bool saveFirst);
+    void saveActiveEditingScope();
     void saveCurrentChapterAndExports();
     void launchGame();
     void enterScreenMode(ScreenEditMode mode);

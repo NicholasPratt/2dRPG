@@ -1,14 +1,17 @@
 #include "editor/panels/enemy_path_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 #include "game/map.hpp"
 #include "game/path.hpp"
 #include "game/project.hpp"
 #include "imgui.h"
+#include "stb_image.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
 #include <fstream>
 #include <system_error>
 
@@ -43,6 +46,31 @@ void copyToBuffer(std::array<char, 64>& buffer, const std::string& value)
     std::memcpy(buffer.data(), value.data(), std::min(value.size(), buffer.size() - 1));
 }
 
+std::vector<std::uint32_t> rgbaToPixels(const unsigned char* rgba, int width, int height)
+{
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width * height));
+    for (int i = 0; i < width * height; ++i) {
+        const int j = i * 4;
+        pixels[static_cast<std::size_t>(i)] =
+            (static_cast<std::uint32_t>(rgba[j + 3]) << 24) |
+            (static_cast<std::uint32_t>(rgba[j + 2]) << 16) |
+            (static_cast<std::uint32_t>(rgba[j + 1]) << 8) |
+             static_cast<std::uint32_t>(rgba[j + 0]);
+    }
+    return pixels;
+}
+
+std::uint8_t alphaOf(std::uint32_t color)
+{
+    return static_cast<std::uint8_t>((color >> 24u) & 0xffu);
+}
+
+ImU32 packedColor(std::uint32_t color, float opacity)
+{
+    const auto alpha = static_cast<std::uint8_t>(static_cast<float>(alphaOf(color)) * std::clamp(opacity, 0.0f, 1.0f));
+    return IM_COL32((color >> 0u) & 0xffu, (color >> 8u) & 0xffu, (color >> 16u) & 0xffu, alpha);
+}
+
 } // namespace
 
 void EnemyPathEditorPanel::draw(EditorContext& context)
@@ -57,6 +85,7 @@ void EnemyPathEditorPanel::draw(EditorContext& context)
     if (std::string(mapId_.data()) != context.selectedScreenMapId && !context.selectedScreenMapId.empty()) {
         copyToBuffer(mapId_, context.selectedScreenMapId);
         loadBgMap(context);
+        loadScreenGraphics(context);
     }
     if (selectedPlacement_ >= static_cast<int>(context.selectedScreenEnemies.size())) {
         selectedPlacement_ = static_cast<int>(context.selectedScreenEnemies.size()) - 1;
@@ -71,7 +100,11 @@ void EnemyPathEditorPanel::draw(EditorContext& context)
     ImGui::BeginChild("EnemyPlacementList", ImVec2(leftWidth, 0.0f), true);
     drawPlacementList(context);
     ImGui::Separator();
-    drawWaypointList(context);
+    if (canvasMode_ == CanvasMode::EditSplines) {
+        drawWaypointList(context);
+    } else {
+        ImGui::TextWrapped("Select Edit splines to change the selected enemy path.");
+    }
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -150,7 +183,30 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     if (ImGui::Button("Reload screen background")) {
         copyToBuffer(mapId_, context.selectedScreenMapId);
         loadBgMap(context);
+        loadScreenGraphics(context);
     }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Enemy canvas mode");
+    const auto modeButton = [this](CanvasMode mode, const char* label) {
+        const bool selected = canvasMode_ == mode;
+        if (selected) {
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(74, 128, 214, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(86, 146, 240, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(62, 110, 194, 255));
+        }
+        const bool clicked = ImGui::Button(label, ImVec2(180.0f, 38.0f));
+        if (selected) {
+            ImGui::PopStyleColor(3);
+        }
+        if (clicked) {
+            canvasMode_ = mode;
+            dragging_ = false;
+        }
+    };
+    modeButton(CanvasMode::AddEnemies, "ADD ENEMIES");
+    ImGui::SameLine();
+    modeButton(CanvasMode::EditSplines, "EDIT SPLINES");
 
     ImGui::TextUnformatted("Behavior:");
     for (int b = 0; b < 3; ++b) {
@@ -173,29 +229,31 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
         }
     }
 
-    ImGui::SameLine(0.0f, 24.0f);
-    ImGui::SetNextItemWidth(120.0f);
-    if (ImGui::SliderFloat("Speed override", &speed_, 0.0f, 256.0f, "%.0f px/s")) {
+    ImGui::Spacing();
+    if (ui::sliderFloat("Speed override", "##EnemySpeedOverride", &speed_, 0.0f, 256.0f, "%.0f px/s", 120.0f, 110.0f)) {
         writeCurrentPlacement(context);
     }
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Loop", &loop_)) {
+    ImGui::SameLine(260.0f);
+    if (ui::checkbox("Loop", "##EnemyLoop", &loop_, 54.0f)) {
         writeCurrentPlacement(context);
     }
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Respawn enemy", &respawn_)) {
+    ImGui::SameLine(360.0f);
+    if (ui::checkbox("Respawn enemy", "##EnemyRespawn", &respawn_, 110.0f)) {
         writeCurrentPlacement(context);
     }
 
-    ImGui::SetNextItemWidth(80.0f);
-    ImGui::SliderFloat("Zoom", &zoom_, 0.5f, 6.0f, "%.1fx");
+    ui::sliderFloat("Zoom", "##EnemyEditorZoom", &zoom_, 0.5f, 6.0f, "%.1fx", 80.0f, 54.0f);
     ImGui::SameLine();
-    ImGui::Checkbox("Snap to grid", &snapToGrid_);
+    ui::checkbox("Snap to grid", "##EnemySnapToGrid", &snapToGrid_, 96.0f);
 
     drawAnimationStateHelper(context);
 
     ImGui::Text("Placements save inside the selected screen in chapter %s.", context.currentChapterId.c_str());
-    ImGui::TextDisabled("Click empty area: add waypoint   Click near waypoint: select   Drag selected: move   Right-click: delete");
+    if (canvasMode_ == CanvasMode::AddEnemies) {
+        ImGui::TextDisabled("Add enemies: click empty area to place, click a marker to select, right-click marker to delete.");
+    } else {
+        ImGui::TextDisabled("Edit splines: click empty area to add waypoint, click waypoint to select, drag selected to move, right-click to delete.");
+    }
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
@@ -361,7 +419,11 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(origin, {origin.x + canvasW, origin.y + canvasH}, IM_COL32(20, 22, 28, 255));
 
-    // Map background: floor, walls, ceiling, and obstacles from the selected screen.
+    if (floorGraphics_.loaded) {
+        drawPixelLayer(dl, origin, floorGraphics_, canvasW, canvasH, 1.0f);
+    }
+
+    // Map background: layers, walls, ceiling, and obstacles from the selected screen.
     if (bgMapLoaded_) {
         for (int layer = 0; layer < 3; ++layer) {
             for (int y = 0; y < bgMap_.height; ++y) {
@@ -389,6 +451,10 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
         }
     }
 
+    if (wallGraphics_.loaded) {
+        drawPixelLayer(dl, origin, wallGraphics_, canvasW, canvasH, 0.9f);
+    }
+
     // Grid lines
     for (int gy = 0; gy <= worldTilesH; ++gy) {
         dl->AddLine({origin.x, origin.y + gy * tileCanvas},
@@ -399,7 +465,21 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
             {origin.x + gx * tileCanvas, origin.y + canvasH}, IM_COL32(50, 55, 65, 200));
     }
 
-    // Path lines between consecutive waypoints
+    // Enemy anchors for every placement on the screen.
+    for (int i = 0; i < static_cast<int>(context.selectedScreenEnemies.size()); ++i) {
+        const game::EnemyPlacement& placement = context.selectedScreenEnemies[static_cast<std::size_t>(i)];
+        const Waypoint anchor = placementAnchor(placement);
+        const ImVec2 center{origin.x + anchor.x * zoom_, origin.y + anchor.y * zoom_};
+        const bool selected = i == selectedPlacement_;
+        dl->AddCircleFilled(center, selected ? 8.0f : 6.0f,
+            selected ? IM_COL32(255, 170, 60, 255) : IM_COL32(225, 95, 80, 235));
+        dl->AddCircle(center, selected ? 9.0f : 7.0f, IM_COL32(20, 20, 24, 230), 0, 2.0f);
+        if (!placement.id.empty()) {
+            dl->AddText({center.x + 9.0f, center.y - 7.0f}, IM_COL32(245, 245, 245, 220), placement.id.c_str());
+        }
+    }
+
+    // Path lines between consecutive waypoints for the selected placement.
     const ImU32 lineCol = IM_COL32(80, 210, 120, 200);
     const ImU32 loopLineCol = IM_COL32(80, 210, 120, 100);
     if (curveMode_ == CurveMode::Spline && waypoints_.size() >= 3) {
@@ -428,17 +508,19 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
         }
     }
 
-    // Waypoint circles
-    for (int i = 0; i < static_cast<int>(waypoints_.size()); ++i) {
-        const ImVec2 center{origin.x + waypoints_[i].x * zoom_, origin.y + waypoints_[i].y * zoom_};
-        const bool sel = (i == selectedWaypoint_);
-        dl->AddCircleFilled(center, kWaypointRadius,
-            sel ? IM_COL32(255, 220, 50, 255) : IM_COL32(80, 210, 120, 255));
-        dl->AddCircle(center, kWaypointRadius, IM_COL32(10, 15, 20, 220));
-        char idx[8];
-        std::snprintf(idx, sizeof(idx), "%d", i);
-        dl->AddText({center.x + kWaypointRadius + 2.0f, center.y - 6.0f},
-            IM_COL32(220, 230, 240, 200), idx);
+    // Waypoint circles are editable only in spline mode, but remain visible for context.
+    if (selectedPlacement_ >= 0) {
+        for (int i = 0; i < static_cast<int>(waypoints_.size()); ++i) {
+            const ImVec2 center{origin.x + waypoints_[i].x * zoom_, origin.y + waypoints_[i].y * zoom_};
+            const bool sel = (i == selectedWaypoint_);
+            dl->AddCircleFilled(center, kWaypointRadius,
+                sel ? IM_COL32(255, 220, 50, 255) : IM_COL32(80, 210, 120, 255));
+            dl->AddCircle(center, kWaypointRadius, IM_COL32(10, 15, 20, 220));
+            char idx[8];
+            std::snprintf(idx, sizeof(idx), "%d", i);
+            dl->AddText({center.x + kWaypointRadius + 2.0f, center.y - 6.0f},
+                IM_COL32(220, 230, 240, 200), idx);
+        }
     }
 
     // Handle input
@@ -449,6 +531,47 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const float wx = (mouse.x - origin.x) / zoom_;
     const float wy = (mouse.y - origin.y) / zoom_;
+
+    int nearestPlacement = -1;
+    float nearestPlacementDist = kHitRadius / zoom_;
+    for (int i = 0; i < static_cast<int>(context.selectedScreenEnemies.size()); ++i) {
+        const Waypoint anchor = placementAnchor(context.selectedScreenEnemies[static_cast<std::size_t>(i)]);
+        const float dx = anchor.x - wx;
+        const float dy = anchor.y - wy;
+        const float d = std::sqrt(dx * dx + dy * dy);
+        if (d < nearestPlacementDist) {
+            nearestPlacementDist = d;
+            nearestPlacement = i;
+        }
+    }
+
+    if (canvasMode_ == CanvasMode::AddEnemies) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (nearestPlacement >= 0) {
+                selectPlacement(context, nearestPlacement);
+            } else {
+                float ax = wx;
+                float ay = wy;
+                if (snapToGrid_) {
+                    ax = snapValue(ax);
+                    ay = snapValue(ay);
+                }
+                createPlacementAt(context, std::clamp(ax, 0.0f, worldW), std::clamp(ay, 0.0f, worldH));
+            }
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && nearestPlacement >= 0) {
+            context.selectedScreenEnemies.erase(context.selectedScreenEnemies.begin() + nearestPlacement);
+            selectedPlacement_ = std::clamp(selectedPlacement_, -1, static_cast<int>(context.selectedScreenEnemies.size()) - 1);
+            if (selectedPlacement_ >= 0) {
+                selectPlacement(context, selectedPlacement_);
+            } else {
+                waypoints_.clear();
+                selectedWaypoint_ = -1;
+            }
+            context.markDirty();
+        }
+        return;
+    }
 
     // Find nearest waypoint
     int nearest = -1;
@@ -536,6 +659,44 @@ void EnemyPathEditorPanel::loadBgMap(EditorContext& context)
     status_ = "Loaded map background: " + mapPath.generic_string();
 }
 
+void EnemyPathEditorPanel::loadScreenGraphics(EditorContext& context)
+{
+    const std::string id(mapId_.data());
+    floorGraphics_ = {};
+    wallGraphics_ = {};
+    if (id.empty()) {
+        return;
+    }
+
+    const auto loadLayer = [](const std::filesystem::path& path, PixelLayer& layer) {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        unsigned char* data = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+        if (data == nullptr || width <= 0 || height <= 0) {
+            if (data != nullptr) {
+                stbi_image_free(data);
+            }
+            return false;
+        }
+        layer.width = width;
+        layer.height = height;
+        layer.pixels = rgbaToPixels(data, width, height);
+        layer.loaded = true;
+        stbi_image_free(data);
+        return true;
+    };
+
+    (void)loadLayer(context.assets.rawTilesetPath() / (id + "_floor.png"), floorGraphics_);
+    (void)loadLayer(context.assets.rawTilesetPath() / (id + "_wall.png"), wallGraphics_);
+    if (!floorGraphics_.loaded) {
+        (void)loadLayer(context.assets.gameTilesetPath() / (id + "_floor.png"), floorGraphics_);
+    }
+    if (!wallGraphics_.loaded) {
+        (void)loadLayer(context.assets.gameTilesetPath() / (id + "_wall.png"), wallGraphics_);
+    }
+}
+
 void EnemyPathEditorPanel::saveProjectEnemyTypes(EditorContext& context)
 {
     game::GameProject project;
@@ -572,6 +733,11 @@ void EnemyPathEditorPanel::loadProjectEnemyTypes(EditorContext& context)
 
 void EnemyPathEditorPanel::createPlacement(EditorContext& context)
 {
+    createPlacementAt(context, static_cast<float>(game::kTileSize * 2), static_cast<float>(game::kTileSize * 2));
+}
+
+void EnemyPathEditorPanel::createPlacementAt(EditorContext& context, float x, float y)
+{
     game::EnemyPlacement placement;
     placement.id = "enemy_" + std::to_string(context.selectedScreenEnemies.size() + 1);
     if (!context.enemyTypes.empty()) {
@@ -579,7 +745,7 @@ void EnemyPathEditorPanel::createPlacement(EditorContext& context)
         placement.typeId = type.id;
         placement.speedOverride = type.speed;
     }
-    placement.waypoints.push_back({static_cast<float>(game::kTileSize * 2), static_cast<float>(game::kTileSize * 2)});
+    placement.waypoints.push_back({x, y});
     context.selectedScreenEnemies.push_back(placement);
     selectPlacement(context, static_cast<int>(context.selectedScreenEnemies.size()) - 1);
     context.markDirty();
@@ -637,6 +803,56 @@ void EnemyPathEditorPanel::writeCurrentPlacement(EditorContext& context)
 ImVec2 EnemyPathEditorPanel::waypointToCanvas(ImVec2 origin, const Waypoint& waypoint) const
 {
     return {origin.x + waypoint.x * zoom_, origin.y + waypoint.y * zoom_};
+}
+
+EnemyPathEditorPanel::Waypoint EnemyPathEditorPanel::placementAnchor(const game::EnemyPlacement& placement) const
+{
+    if (!placement.waypoints.empty()) {
+        return {placement.waypoints.front().x, placement.waypoints.front().y};
+    }
+    return {static_cast<float>(game::kTileSize * 2), static_cast<float>(game::kTileSize * 2)};
+}
+
+void EnemyPathEditorPanel::drawPixelLayer(ImDrawList* dl, ImVec2 origin, const PixelLayer& layer, float targetW, float targetH, float opacity) const
+{
+    if (!layer.loaded || layer.width <= 0 || layer.height <= 0 ||
+        layer.pixels.size() != static_cast<std::size_t>(layer.width * layer.height)) {
+        return;
+    }
+
+    const float pixelW = targetW / static_cast<float>(layer.width);
+    const float pixelH = targetH / static_cast<float>(layer.height);
+    for (int y = 0; y < layer.height; ++y) {
+        int runStart = -1;
+        std::uint32_t runColor = 0u;
+        for (int x = 0; x <= layer.width; ++x) {
+            const std::uint32_t color = x < layer.width
+                ? layer.pixels[static_cast<std::size_t>(y) * layer.width + x]
+                : 0u;
+            const bool visible = x < layer.width && alphaOf(color) > 0u;
+            if (!visible) {
+                if (runStart >= 0) {
+                    dl->AddRectFilled(
+                        {origin.x + static_cast<float>(runStart) * pixelW, origin.y + static_cast<float>(y) * pixelH},
+                        {origin.x + static_cast<float>(x) * pixelW, origin.y + static_cast<float>(y + 1) * pixelH},
+                        packedColor(runColor, opacity));
+                    runStart = -1;
+                }
+                continue;
+            }
+            if (runStart < 0) {
+                runStart = x;
+                runColor = color;
+            } else if (color != runColor) {
+                dl->AddRectFilled(
+                    {origin.x + static_cast<float>(runStart) * pixelW, origin.y + static_cast<float>(y) * pixelH},
+                    {origin.x + static_cast<float>(x) * pixelW, origin.y + static_cast<float>(y + 1) * pixelH},
+                    packedColor(runColor, opacity));
+                runStart = x;
+                runColor = color;
+            }
+        }
+    }
 }
 
 EnemyPathEditorPanel::Waypoint EnemyPathEditorPanel::splinePoint(int segment, float t) const

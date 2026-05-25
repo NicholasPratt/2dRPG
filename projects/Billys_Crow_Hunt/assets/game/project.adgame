@@ -1,0 +1,9 @@
+ADGAME 2
+id game
+playable hero
+characters 1
+character hero
+chapters 1
+chapter Farm_House
+enemy_types 0
+end

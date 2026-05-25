@@ -4,12 +4,17 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <vector>
 #include <system_error>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -42,6 +47,9 @@ std::filesystem::path findProjectRoot()
     const std::filesystem::path cwd = std::filesystem::current_path(error);
     const std::filesystem::path executableDir = runningExecutableDirectory();
     const std::vector<std::filesystem::path> candidates = {
+#if defined(ADVENTURE_SOURCE_ROOT)
+        std::filesystem::path(ADVENTURE_SOURCE_ROOT),
+#endif
         cwd,
         cwd.parent_path(),
         executableDir,
@@ -53,7 +61,8 @@ std::filesystem::path findProjectRoot()
         if (candidate.empty()) {
             continue;
         }
-        if (std::filesystem::exists(candidate / "assets", error)) {
+        if (std::filesystem::exists(candidate / "CMakeLists.txt", error) &&
+            std::filesystem::exists(candidate / "assets/game/chapters", error)) {
             return std::filesystem::weakly_canonical(candidate, error);
         }
     }
@@ -61,16 +70,76 @@ std::filesystem::path findProjectRoot()
     return cwd.empty() ? std::filesystem::path(".") : cwd;
 }
 
+bool launchDetachedProcess(const std::filesystem::path& executable,
+    const std::filesystem::path& chapterPath,
+    const std::filesystem::path& projectRoot,
+    const std::filesystem::path& logPath,
+    std::string& errorMessage)
+{
+    std::error_code error;
+    std::filesystem::create_directories(logPath.parent_path(), error);
+
+    const std::string executableString = executable.string();
+    const std::string chapterString = chapterPath.string();
+    const std::string projectRootString = projectRoot.string();
+    const std::string logString = logPath.string();
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        errorMessage = std::string("fork failed: ") + std::strerror(errno);
+        return false;
+    }
+
+    if (pid == 0) {
+        if (chdir(projectRootString.c_str()) != 0) {
+            _exit(126);
+        }
+
+        const int logFd = open(logString.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        if (logFd >= 0) {
+            dup2(logFd, STDOUT_FILENO);
+            dup2(logFd, STDERR_FILENO);
+            close(logFd);
+        }
+
+        execl(executableString.c_str(), executableString.c_str(), chapterString.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    return true;
+}
+
+std::string sanitizedId(const char* value, const char* fallback)
+{
+    std::string id;
+    for (const char* p = value; p != nullptr && *p != '\0'; ++p) {
+        const unsigned char ch = static_cast<unsigned char>(*p);
+        if (std::isalnum(ch) || *p == '_' || *p == '-') {
+            id.push_back(static_cast<char>(ch));
+        } else if (*p == ' ' || *p == '.') {
+            id.push_back('_');
+        }
+    }
+    if (id.empty()) {
+        id = fallback;
+    }
+    return id;
+}
+
 } // namespace
 
 EditorApp::EditorApp()
 {
-    context_.assets.projectRoot = findProjectRoot();
+    workspaceRoot_ = findProjectRoot();
+    context_.assets.projectRoot = workspaceRoot_;
 }
 
 void EditorApp::draw()
 {
-    if (chapterIds_.empty()) {
+    if (projectIds_.empty()) {
+        refreshProjectList();
+    }
+    if (!currentProjectId_.empty() && chapterIds_.empty()) {
         refreshChapterList();
     }
 
@@ -272,8 +341,16 @@ void EditorApp::drawScopedEditHeader(const char* title, bool saveAndExit, bool e
         exitScreenModeSaving();
     }
     ImGui::SameLine();
+    if (saveAndExit && ImGui::Button("Save and Play", ImVec2(140.0f, 30.0f))) {
+        launchGame();
+    }
+    ImGui::SameLine();
     if (exitWithoutSaving && ImGui::Button("Exit without Saving", ImVec2(170.0f, 30.0f))) {
         exitScreenModeDiscarding();
+    }
+    if (!playStatus_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", playStatus_.c_str());
     }
 }
 
@@ -349,6 +426,9 @@ void EditorApp::requestExit()
 void EditorApp::refreshChapterList()
 {
     chapterIds_.clear();
+    if (currentProjectId_.empty()) {
+        return;
+    }
     std::error_code error;
     const std::filesystem::path chapterDir = context_.assets.gameChapterPath();
     if (!std::filesystem::exists(chapterDir, error)) {
@@ -364,6 +444,56 @@ void EditorApp::refreshChapterList()
         }
     }
     std::sort(chapterIds_.begin(), chapterIds_.end());
+}
+
+std::filesystem::path EditorApp::projectsRoot() const
+{
+    return workspaceRoot_ / "projects";
+}
+
+void EditorApp::refreshProjectList()
+{
+    projectIds_.clear();
+    std::error_code error;
+    const std::filesystem::path root = projectsRoot();
+    if (!std::filesystem::exists(root, error)) {
+        return;
+    }
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(root, error)) {
+        if (error) {
+            break;
+        }
+        if (entry.is_directory(error) && std::filesystem::exists(entry.path() / "assets/game/chapters", error)) {
+            projectIds_.push_back(entry.path().filename().string());
+        }
+    }
+    std::sort(projectIds_.begin(), projectIds_.end());
+}
+
+void EditorApp::ensureProjectDirectories() const
+{
+    std::error_code error;
+    std::filesystem::create_directories(context_.assets.rawSpritePath(), error);
+    std::filesystem::create_directories(context_.assets.rawCharacterSpritePath(), error);
+    std::filesystem::create_directories(context_.assets.rawTilesetPath(), error);
+    std::filesystem::create_directories(context_.assets.gameSpritePath(), error);
+    std::filesystem::create_directories(context_.assets.gameCharacterSpritePath(), error);
+    std::filesystem::create_directories(context_.assets.gameCharacterPath(), error);
+    std::filesystem::create_directories(context_.assets.gameChapterPath(), error);
+    std::filesystem::create_directories(context_.assets.gameMapPath(), error);
+    std::filesystem::create_directories(context_.assets.gameTilesetPath(), error);
+    std::filesystem::create_directories(context_.assets.gameAnimationPath(), error);
+    std::filesystem::create_directories(context_.assets.gamePalettePath(), error);
+    std::filesystem::create_directories(context_.assets.gamePathPath(), error);
+}
+
+void EditorApp::selectProject(const std::string& projectId)
+{
+    currentProjectId_ = projectId;
+    context_.assets.projectRoot = projectsRoot() / currentProjectId_;
+    ensureProjectDirectories();
+    chapterIds_.clear();
+    refreshChapterList();
 }
 
 void EditorApp::drawChapterMenu()
@@ -400,29 +530,48 @@ void EditorApp::drawChapterMenu()
 
 void EditorApp::drawStartupChapterModal()
 {
-    ImGui::OpenPopup("Select Chapter");
+    ImGui::OpenPopup("Open Project");
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f},
         ImGuiCond_Always, {0.5f, 0.5f});
-    if (ImGui::BeginPopupModal("Select Chapter", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Open a chapter to start editing.");
+    if (ImGui::BeginPopupModal("Open Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Choose a project folder and chapter.");
         ImGui::Separator();
 
-        if (chapterIds_.empty()) {
-            ImGui::TextDisabled("No chapter files found.");
+        if (projectIds_.empty()) {
+            ImGui::TextDisabled("No project folders found.");
         }
-        for (const std::string& chapterId : chapterIds_) {
-            if (ImGui::Button(chapterId.c_str(), ImVec2(260.0f, 32.0f))) {
-                chooseChapter(chapterId);
-                ImGui::CloseCurrentPopup();
+        for (const std::string& projectId : projectIds_) {
+            ImGui::PushID(projectId.c_str());
+            const bool selected = projectId == currentProjectId_;
+            if (ImGui::Selectable(projectId.c_str(), selected, 0, ImVec2(360.0f, 30.0f))) {
+                selectProject(projectId);
+            }
+            ImGui::PopID();
+        }
+
+        if (!currentProjectId_.empty()) {
+            ImGui::Spacing();
+            ImGui::Text("Chapters in %s", currentProjectId_.c_str());
+            if (chapterIds_.empty()) {
+                ImGui::TextDisabled("No chapter files found.");
+            }
+            for (const std::string& chapterId : chapterIds_) {
+                if (ImGui::Button(chapterId.c_str(), ImVec2(360.0f, 32.0f))) {
+                    chooseChapter(chapterId);
+                    ImGui::CloseCurrentPopup();
+                }
             }
         }
 
         ImGui::Spacing();
-        ImGui::SetNextItemWidth(260.0f);
-        ImGui::InputText("New id", newChapterId_.data(), newChapterId_.size());
-        if (ImGui::Button("Create Chapter", ImVec2(260.0f, 32.0f))) {
-            createChapter();
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::InputText("Project name", newProjectId_.data(), newProjectId_.size());
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::InputText("Chapter name", newChapterId_.data(), newChapterId_.size());
+        if (ImGui::Button("Create / Open Project", ImVec2(360.0f, 34.0f))) {
+            createProjectAndChapter();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -468,6 +617,9 @@ void EditorApp::drawUnsavedChangesModal()
 
 void EditorApp::chooseChapter(const std::string& chapterId)
 {
+    if (currentProjectId_.empty()) {
+        return;
+    }
     if (layoutEditor_.loadChapterById(context_, chapterId)) {
         wallFloorPaint_.resetScreenBuffers();
         spriteEditor_.resetDocumentBuffers();
@@ -493,7 +645,28 @@ void EditorApp::chooseChapter(const std::string& chapterId)
 
 void EditorApp::createChapter()
 {
+    if (currentProjectId_.empty()) {
+        return;
+    }
     layoutEditor_.createChapter(context_, newChapterId_.data());
+    game::TileMap map;
+    map.id = context_.selectedScreenMapId.empty() ? "screen_1_map" : context_.selectedScreenMapId;
+    map.width = game::kScreenTilesW;
+    map.height = game::kScreenTilesH;
+    const std::size_t mapSize = static_cast<std::size_t>(map.width * map.height);
+    for (auto& layer : map.layers) {
+        layer.assign(mapSize, 0u);
+    }
+    for (int y = 0; y < map.height; ++y) {
+        for (int x = 0; x < map.width; ++x) {
+            if (x == 0 || y == 0 || x + 1 == map.width || y + 1 == map.height) {
+                map.layers[1][static_cast<std::size_t>(y) * map.width + x] = 1u;
+            }
+        }
+    }
+    std::string mapError;
+    (void)game::saveTileMap(context_.assets.gameMapPath() / (map.id + ".admap"), map, &mapError);
+    (void)layoutEditor_.saveCurrentChapter(context_);
     wallFloorPaint_.resetScreenBuffers();
     spriteEditor_.resetDocumentBuffers();
     startupChapterChosen_ = true;
@@ -502,6 +675,23 @@ void EditorApp::createChapter()
     requestedTab_ = MainTab::Layout;
     hasRequestedTab_ = true;
     refreshChapterList();
+}
+
+void EditorApp::createProjectAndChapter()
+{
+    const std::string projectId = sanitizedId(newProjectId_.data(), "project_1");
+    const std::string chapterId = sanitizedId(newChapterId_.data(), "chapter_1");
+    selectProject(projectId);
+
+    std::memset(newChapterId_.data(), 0, newChapterId_.size());
+    std::memcpy(newChapterId_.data(), chapterId.data(), std::min(chapterId.size(), newChapterId_.size() - 1));
+
+    if (std::find(chapterIds_.begin(), chapterIds_.end(), chapterId) != chapterIds_.end()) {
+        chooseChapter(chapterId);
+    } else {
+        createChapter();
+    }
+    refreshProjectList();
 }
 
 void EditorApp::requestChapterSwitch(const std::string& chapterId)
@@ -531,6 +721,8 @@ void EditorApp::completeChapterSwitch(bool saveFirst)
 
 void EditorApp::saveCurrentChapterAndExports()
 {
+    saveActiveEditingScope();
+
     const bool charactersSaved = characterEditor_.saveForChapter(context_);
     spriteEditor_.saveForChapter(context_);
     const bool graphicsSaved = wallFloorPaint_.saveForChapter(context_);
@@ -549,6 +741,33 @@ void EditorApp::saveCurrentChapterAndExports()
     }
 
     refreshChapterList();
+}
+
+void EditorApp::saveActiveEditingScope()
+{
+    switch (screenEditMode_) {
+        case ScreenEditMode::Graphics:
+            if (screenMapLogicMode_) {
+                mapEditor_.saveMap(context_);
+            } else {
+                wallFloorPaint_.saveForChapter(context_);
+            }
+            break;
+        case ScreenEditMode::Enemies:
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            break;
+        case ScreenEditMode::EnemyTypes:
+            enemyPathEditor_.saveProjectEnemyTypes(context_);
+            break;
+        case ScreenEditMode::Sprite:
+            spriteEditor_.saveForChapter(context_);
+            if (spriteEditorLaunchedFromCharacter_) {
+                characterEditor_.setSelectedSpriteReference(context_, spriteEditor_.spriteMetadataReference(context_));
+            }
+            break;
+        case ScreenEditMode::Layout:
+            break;
+    }
 }
 
 void EditorApp::launchGame()
@@ -606,17 +825,16 @@ void EditorApp::launchGame()
     }
 
     const std::filesystem::path logPath = projectRoot / "build" / "adventure_game_window.log";
-    const std::string command =
-        "cd \"" + projectRoot.string() + "\" && \"" +
-        executable.string() + "\" \"" +
-        chapterPath.string() + "\" > \"" +
-        logPath.string() + "\" 2>&1 &";
+    if (access(executable.string().c_str(), X_OK) != 0) {
+        playStatus_ = "Game executable is not runnable: " + executable.string();
+        return;
+    }
 
-    const int result = std::system(command.c_str());
-    if (result == 0) {
-        playStatus_ = "Launched game: " + executable.filename().string() + " (Esc closes it)";
+    std::string launchError;
+    if (launchDetachedProcess(executable, chapterPath, projectRoot, logPath, launchError)) {
+        playStatus_ = "Launched game: " + executable.filename().string() + " (log: " + logPath.filename().string() + ")";
     } else {
-        playStatus_ = "Failed to launch game. See build/adventure_game_window.log";
+        playStatus_ = "Failed to launch game: " + launchError;
     }
 }
 

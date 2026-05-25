@@ -4,7 +4,7 @@ This project is a C++ 2D RPG engine and integrated editor scaffold targeting a S
 
 The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
-The current asset architecture separates reusable game-library assets from chapter usage. Reusable assets such as characters live in `assets/game/characters/` and are indexed by `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
+The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters and enemy types live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
 
 ## Current Layout
 
@@ -30,6 +30,16 @@ The current asset architecture separates reusable game-library assets from chapt
       palettes/                     # planned palette data
       paths/                        # .adpath enemy waypoint paths
       tilesets/                     # .tileset.json tileset definitions
+  projects/
+    <project>/
+      assets/
+        raw/                        # project-local editable/source PNG exports
+        game/                       # project-local runtime assets and project.adgame
+          chapters/                 # project .adchapter files
+          maps/                     # project .admap files
+          sprites/                  # project .sprite.json files
+          characters/               # project .adcharacter files
+          tilesets/                 # project screen graphics and tileset definitions
   external/
     imgui/                          # Dear ImGui source and backends
     stb/                            # stb_image for PNG loading
@@ -43,6 +53,7 @@ The current asset architecture separates reusable game-library assets from chapt
       asset_directories.hpp/.cpp    # central asset root paths
       editor_app.hpp/.cpp           # top-level ImGui tabs
       editor_context.hpp            # shared editor context
+      imgui_widgets.hpp             # shared label-left checkbox/slider helpers
       stb_image_impl.cpp            # stb_image implementation unit
       panels/
         character_editor_panel.hpp/.cpp
@@ -83,11 +94,14 @@ cmake --build build --parallel
 ./build/adventure_game_smoke
 ./build/adventure_game_smoke assets/game/maps/new_map.admap assets/game/chapters/chapter_1.adchapter
 ./build/adventure_editor_smoke
-./build/adventure_game_window
+./build/adventure_game_window       # direct launch: opens project/chapter picker
+./build/adventure_game_window projects/<project>/assets/game/chapters/<chapter>.adchapter
 ./build/adventure_editor_window   # macOS: emits OpenGL deprecation warnings, harmless
 ```
 
-From the editor, `Chapter > Save and Play Game` saves the current game/chapter data and launches `adventure_game_window` as a separate runtime process. Escape closes the game window.
+From the editor, `Chapter > Save and Play Game` and scoped `Save and Play` buttons save the current project/chapter data and launch `adventure_game_window` as a separate runtime process with an explicit chapter path. The game executable derives its runtime asset root from that chapter path, so editor launches use the selected project folder. Escape closes the game window.
+
+When `adventure_game_window` is launched without arguments it scans `projects/<project>/assets/game/chapters/*.adchapter` and the repo-root fallback assets, then shows a small ImGui picker asking which project/chapter to load.
 
 ## Dependency Direction
 
@@ -102,7 +116,7 @@ Runtime modules in `src/game` must not include editor headers or ImGui headers.
 
 ## Editor App Tabs
 
-On startup, `EditorApp` opens a chapter selector modal. The user must load an existing chapter or create a new one before the main editor workflow is shown. Closing the editor or switching chapters prompts to save or discard unsaved work.
+On startup, `EditorApp` opens an `Open Project` modal. The user selects an existing project folder and chapter, or enters a project name and chapter name to create/open `projects/<project>/`. Closing the editor or switching chapters prompts to save or discard unsaved work.
 
 `EditorApp` owns these top-level ImGui tabs (in order):
 
@@ -130,24 +144,31 @@ struct GameProject {
     std::string id;
     std::string playableCharacterId;
     std::vector<std::string> characterIds;
+    std::vector<std::string> chapterIds;
+    std::vector<EnemyType> enemyTypes;
 };
 ```
 
 Format:
 
 ```text
-ADGAME 1
+ADGAME 2
 id game
 playable hero
 characters 2
 character hero
 character shopkeeper
+chapters 1
+chapter chapter_1
+enemy_types 1
+enemy_type slime slime 3 1 12.0 12.0 1.0 64.0
 end
 ```
 
 Editor behavior:
 
 - `CharacterEditorPanel::saveForChapter` saves reusable character documents and writes `project.adgame`.
+- `EnemyPathEditorPanel::saveProjectEnemyTypes` saves reusable enemy type definitions into `project.adgame`.
 - Character documents remain reusable library assets under `assets/game/characters/`.
 - Chapters import character ids from the current character library and store the chapter playable character id.
 
@@ -241,10 +262,10 @@ struct TileMap {
 ADMAP 4
 id new_map
 tileset overworld
-size 24 16
+size 48 32
 spawn 1 1
 layer 0
-0 0 0 ... (24 values) ...
+0 0 0 ... (48 values) ...
 layer 1
 1 1 1 1 1 ... 1
 1 0 0 ... 1
@@ -306,6 +327,8 @@ Implemented in `src/game/engine.*` and `src/app/main_game.cpp`. Built as `advent
 Runtime behavior:
 
 - Initializes a GLFW/OpenGL window and runs a fixed 60 Hz update loop.
+- Direct launch with no arguments opens a project/chapter picker populated by scanning `projects/<project>/assets/game/chapters/*.adchapter` and repo-root fallback chapters.
+- Launch with a chapter path skips the picker. If the path is inside `assets/game/chapters`, the runtime derives `projectRoot` from that chapter path so maps, screen PNGs, sprites, characters, and project data load from the same project folder.
 - Loads the selected chapter, resolves `Chapter::startScreenId`, then loads the active screen's `.admap`.
 - Resolves the playable character from the active chapter/project library and loads its assigned idle frame PNG as the player texture.
 - Uses `ChapterScreen::mapId` as the screen asset key for `.admap`, wall/floor PNGs, and `.adpath` map references.
@@ -383,20 +406,32 @@ Export/import paths:
 Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 
 - Two-layer pixel painter: Floor and Wall.
-- Canvas is fixed at `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (384 × 256 px). Resize controls have been removed — the size is locked to the screen constants.
-- Tools: Pencil, Eraser, Fill, Line, Rect, Select, **TileStamp**, **TileErase**.
+- Canvas is fixed at `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (768 × 512 px). Resize controls have been removed — the size is locked to the screen constants.
+- The canvas fills the available screen-graphics workspace instead of being confined to a fixed half-height preview area.
+- Tools: Pencil, Eraser, Fill, Line, Rect, Select, **Tile Draw**, **Tile Select**, **Tile Paste**, **Stamp**, **Tile Fill**, **Tile Erase**.
 - Brush shapes: Square, Circle, Spray, Dither.
 - Snap modes: None, Full tile, Half tile, Quarter tile.
 - Palette, brush size, layer visibility/opacity controls.
+- Shared editor checkbox/slider helpers render labels on the left and the control on the right.
+- Left-side tool buttons are arranged in two-column rows so labels remain readable.
 - **Tile boundary grid:** a subtle overlay marks tile boundaries on the canvas.
 - Zoom range 1–16 (opens at zoom 2 when loaded from a screen).
 - When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay.
-- Parallax preview: animated floor scroll behind the wall layer.
 - Undo stack (up to 50 steps).
 
 ### Tile palette system
 
-In Select mode, a region can be snapped to the tile grid and added to the chapter-wide tile palette (`EditorContext::tilePalette`, a `std::vector<TilePaletteEntry>`). Each entry stores the floor and wall pixel data for the selected tile region. The **TileStamp** tool picks an entry from the palette and stamps it onto any screen; **TileErase** clears whole tile cells (makes them transparent) without affecting other pixels.
+`Tile Select` selects exactly one 16×16 tile cell. The selected tile can be copied, pasted, or added to the chapter-wide tile palette (`EditorContext::tilePalette`, a `std::vector<TilePaletteEntry>`). Each entry stores the floor and wall pixel data for the selected tile cell.
+
+Tile tools:
+
+- **Tile Draw:** fills the active 16×16 tile cell with the selected color. Dragging paints like a pen and records one undo snapshot for the stroke.
+- **Tile Paste:** pastes a copied 16×16 tile cell at the hovered tile coordinate.
+- **Stamp:** stamps the selected tile-palette entry onto the canvas. Dragging stamps each new tile cell once and records one undo snapshot for the stroke.
+- **Tile Fill:** flood-fills contiguous matching tile cells using copies of the selected tile-palette entry.
+- **Tile Erase:** clears whole tile cells without affecting neighbouring pixels.
+
+Tile palette entries are static in this panel. Animated tile assets are authored in the Sprite editor.
 
 ### Per-screen dirty buffer system
 
@@ -471,11 +506,10 @@ Files saved to `assets/game/paths/<id>.adpath`.
 - `Edit Sprite` / `Open sprite states` jumps directly to the sprite editor for the enemy's sprite metadata.
 - Sprite animation states are authored in the sprite editor with frame `type` labels such as `idle`, `walk`, `attack`, `hurt`, and `dead`.
 - Canvas shows a 16px world-tile grid (zoom 0.5×–6×).
-- Optional map background: load any `.admap` mid layer as a tile reference.
-- Click empty area: add waypoint (snaps to grid if enabled).
-- Click near existing waypoint: select it.
-- Drag selected waypoint: move it.
-- Right-click waypoint: delete.
+- The canvas shows the selected screen's structural map, wall/floor graphics, grid, enemy anchors, and selected path for context.
+- Canvas mode buttons separate placement from path editing:
+  - **ADD ENEMIES:** click empty area to create an enemy placement; click a marker to select; right-click marker to delete.
+  - **EDIT SPLINES:** click empty area to add a waypoint; click near existing waypoint to select; drag selected waypoint to move it; right-click waypoint to delete.
 - Delete key: delete selected waypoint.
 - Linear mode draws straight segments; Spline mode draws a Catmull-Rom curve through the waypoint chain.
 - Loop line/curve closes from last to first waypoint when loop is enabled.
@@ -494,7 +528,7 @@ Runtime:
 
 ## Asset Directories
 
-`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot` (default: current working directory).
+`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot`. In normal editor use `projectRoot` is `projects/<project>/`; direct repo fallback use can still point at the repository root.
 
 | Field | Default |
 |-------|---------|
@@ -528,7 +562,7 @@ Runtime:
 | §4.2 3-layer tile maps (floor / mid / ceiling) | ✅ |
 | §4.2 Copy/paste tiles | ✅ |
 | §4.3 Pixel painting — per-screen isolation & dirty buffers | ✅ Each screen has its own in-memory buffer; PNGs written only on chapter save |
-| §4.3 Pixel painting — tile palette & stamp tool | ✅ Select → Add to palette → TileStamp / TileErase across all screens |
+| §4.3 Pixel painting — tile palette & stamp tool | ✅ Tile Select → Add Palette → Stamp / Tile Fill / Tile Erase across all screens |
 | §4.3 Sprite & animation editor — per-sprite dirty buffers | ✅ Each sprite stashed/restored independently; saved only on chapter save |
 | §4.3 Sprite metadata round-trip | ✅ Runtime-facing `.sprite.json` parser plus editor import from metadata |
 | §4.3 Sprite & animation editor — tools & transforms | ✅ |

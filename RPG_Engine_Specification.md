@@ -19,7 +19,8 @@ The goal is to develop a 2D Action RPG engine and integrated development environ
 
 ### 3.2. Display & Tile Dimensions
 - **Tile Size:** 16 × 16 pixels (`kTileSize = 16`). All sprites and tileset tiles are fixed to this size.
-- **Screen Size:** 24 × 16 tiles (`kScreenTilesW = 24`, `kScreenTilesH = 16`), giving a native resolution of 384 × 256 pixels per screen.
+- **Screen Size:** 48 × 32 tiles (`kScreenTilesW = 48`, `kScreenTilesH = 32`), giving a native resolution of 768 × 512 pixels per screen.
+- **Pixel Scale:** The screen is larger in tile count for modern displays, but the tile size and pixel-art unit size remain unchanged at 16 px.
 - These values are defined in `src/game/constants.hpp` and are the single source of truth for all editors and engine code.
 
 ### 3.3. Combat & Persistence
@@ -40,12 +41,14 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 
 ### 4.1. Project & Chapter Management
 `EditorApp` coordinates the high-level chapter lifecycle and delegates file I/O to runtime-facing game modules and editor panels.
-- **Startup Flow:** Upon opening, the editor must prompt the user to select an existing chapter or create a new one. [cite: 1]
+- **Startup Flow:** Upon opening, the editor must prompt the user for a project and chapter. Existing projects are loaded from `projects/<project>/`; new projects create their own project folder with `assets/game/...` and `assets/raw/...` subfolders.
+- **Project Isolation:** Every project owns its own assets, chapters, maps, sprites, characters, screen graphics, enemy types, and project manifest. Editor and runtime asset lookup must use the selected project folder, not stale repo-root assets.
 - **Session Safety:** Exiting the editor or switching chapters must trigger a prompt to save or discard changes. [cite: 1]
 - **Exporting:** Saving a chapter must automatically generate/update PNG sprite sheets for all edited sprites, save dirty screen maps, and export wall/floor paint graphics into game-ready PNGs for every modified screen. [cite: 1]
 - **Dirty-Buffer System:** Both the sprite editor and wall/floor paint panel hold unsaved edits in per-asset in-memory buffers (keyed by asset ID) during the session. Disk writes happen only when the chapter is saved. Switching chapters clears all buffers so data from one chapter cannot bleed into another.
-- **Game Library Save:** Character sheets are saved as reusable game-library assets. `assets/game/project.adgame` records available character IDs and the project default playable character. `.adchapter` files record imported character IDs and chapter playable character ID.
-- **Save and Play:** `Chapter > Save and Play Game` saves editor data, then launches the separate `adventure_game_window` runtime executable. Escape closes the game window.
+- **Game Library Save:** Character sheets and enemy types are saved as reusable game-library assets. `assets/game/project.adgame` records available character IDs, chapter IDs, enemy type definitions, and the project default playable character. `.adchapter` files record imported character IDs and chapter playable character ID.
+- **Save and Play:** `Chapter > Save and Play Game` and scoped editor `Save and Play` controls save active editor data, then launch the separate `adventure_game_window` runtime executable with the selected chapter path. Runtime asset lookup is derived from that chapter's project folder. Escape closes the game window.
+- **Direct Runtime Launch:** Opening `adventure_game_window` directly scans `projects/<project>/assets/game/chapters/*.adchapter` plus repository fallback assets and asks the user which project/chapter to load.
 - **State Registry:** Maintains a registry of defeated enemies and handles the "Dirty Flag" system for modified screens.
 
 ### 4.2. Layout & Map Editor (ScreenEditor)
@@ -59,6 +62,7 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 
 ### 4.3. Graphic & Sprite Editing
 - **Pixel Painting:** Integrated tools comparable to MS Paint or Piskel for tiles and sprites. [cite: 1]
+- **Screen Graphics Workspace:** The screen graphics editor may use the full available editor workspace; it is not confined to a half-height preview area.
 - **Wall/Floor Paint Layers:**
     - **Floor Layer:** Base walkable texture (`<mapId>_floor.png`).
     - **Wall/Object Layer:** Rendered over actors and guided by the structural `.admap` mid layer.
@@ -70,11 +74,14 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Playable Character Selection:** Character sheets include a Playable Character checkbox. Only one character is playable at a time.
 - **Frame Assignment:** Character sheets show exported sprite frame PNGs as individual thumbnails. Each frame can be assigned to an animation state via dropdown or custom text. Multiple frames may share a state such as `walk`.
 - **Per-Screen Graphics Isolation:** Each screen has its own set of floor/wall/preview PNGs (named `<mapId>_floor.png` etc.). Edits are held in per-screen in-memory buffers during the session and written to disk only on chapter save.
-- **Tile Palette System:** In Select mode, a region on the canvas can be snapped to the tile grid and added to a chapter-wide tile palette. Palette entries store floor and wall pixel data for the selected region. The **TileStamp** tool pastes a palette entry onto any screen; the **TileErase** tool clears entire tile cells (makes them transparent). This accelerates level creation by reusing hand-crafted tile art across multiple screens.
+- **Tile-Based Screen Graphics Tools:** The screen graphics editor includes `Tile Draw`, `Tile Select`, `Tile Paste`, `Stamp`, `Tile Fill`, and `Tile Erase`. `Tile Draw` fills a full 16×16 tile cell with the selected color and supports drag painting. `Tile Select` selects exactly one tile cell for copy/paste or palette capture. `Stamp` places the selected palette tile and supports drag painting across tile cells. `Tile Fill` flood-fills contiguous matching tiles with copies of the selected palette tile. `Tile Erase` clears full tile cells.
+- **Tile Palette System:** Tile selections can be added to a chapter-wide tile palette. Palette entries store floor and wall pixel data for the selected tile. Tile palette entries are static in the screen graphics editor; animation is authored through the Sprite editor rather than an in-panel animation preview.
 - **Per-Sprite Isolation:** The sprite editor holds each open sprite document in its own in-memory buffer. Switching sprites stashes the current document; returning to a sprite restores it from memory. All dirty sprite documents are flushed to disk (metadata JSON + sprite-sheet PNG) on chapter save.
 
 ### 4.4. Enemy AI & Pathing
-- **Enemy Editor:** Users can define enemy instances with enemy ID, sprite ID, behavior state, movement curve mode, speed, respawn flag, and map reference.
+- **Enemy Editor:** Users can define reusable enemy types and per-screen enemy placements with enemy ID, sprite ID, behavior state, movement curve mode, speed, respawn flag, and map reference.
+- **Enemy Screen Context:** When editing enemies for a screen, the editor must show the screen wall map, graphics, features, and grid as context behind the enemy markers and paths.
+- **Enemy Editing Modes:** Adding enemies and editing enemy splines are separate canvas states. Add Enemies mode places/selects/deletes enemy anchors. Edit Splines mode edits the selected enemy's waypoint/spline path.
 - **Combat Data:** Enemy instances store max health, contact damage, hitbox size, and hit cooldown data. Runtime contact damage uses those values and gives the player a short invulnerability window.
 - **Waypoint and Spline Paths:** Users can draw waypoint paths for enemies directly in the editor. Paths may be linear polylines or smoothed Catmull-Rom splines. [cite: 1]
 - **Sprite Editing Link:** Enemy sprite IDs open directly in the sprite editor. Sprite frame `type` labels define animation states such as `idle`, `walk`, `attack`, `hurt`, and `dead`.
@@ -83,7 +90,8 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 
 ## 5. Data & Persistence
 - **Asset Storage:** Assets are stored in portable formats (JSON/binary) for engine use. [cite: 1]
-- **Game Project Library:** `assets/game/project.adgame` stores game-level reusable asset references, currently character IDs and default playable character ID.
+- **Project Folders:** Active projects are stored under `projects/<project>/`. Each project has its own `assets/game/...` and `assets/raw/...` tree. The repo-root `assets/` tree is retained as a fallback/default asset set, but new editor work should live in project folders.
+- **Game Project Library:** `assets/game/project.adgame` stores game-level reusable asset references, currently character IDs, chapter IDs, enemy type definitions, and default playable character ID.
 - **Screen Tile Maps:** Screen tile data is stored as `.admap` files under `assets/game/maps/`. [cite: 1]
 - **Map Obstacles:** `.admap` v4 stores obstacle rectangles with type, sprite ID, size, and timing data. Older `.admap` versions remain loadable.
 - **Chapter Files:** Chapter layout and metadata stored as `.adchapter` files under `assets/game/chapters/`. Current chapter files store screen layout, imported character IDs, and chapter playable character ID. [cite: 1]
@@ -99,10 +107,11 @@ Implemented:
 
 - Chapter, map, tileset, enemy path, and sprite metadata load/save modules in `src/game`.
 - Project-level game library load/save module in `src/game/project.*`.
+- Project-folder startup flow in the editor and project/chapter picker in the direct runtime executable.
 - Integrated editor tabs for chapters/screens, maps, wall/floor paint, sprites, tilesets, characters, and enemy paths.
 - Per-screen wall/floor paint buffers and per-sprite document buffers flushed on chapter save.
 - Character document save/load, playable character selection, sprite frame assignment, and runtime playable-character texture loading.
-- Basic runtime shell with fixed-step update, pre-baked PNG rendering, tile collision, screen-link transitions, playable character rendering, sprite-backed hazards, linear/spline path-following enemies, and contact-damage combat.
+- Basic runtime shell with fixed-step update, direct-launch project selection, pre-baked PNG rendering, tile collision, screen-link transitions, playable character rendering, sprite-backed hazards, linear/spline path-following enemies, and contact-damage combat.
 
 Planned:
 

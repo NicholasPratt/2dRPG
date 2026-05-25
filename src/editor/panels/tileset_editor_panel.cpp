@@ -1,5 +1,6 @@
 #include "editor/panels/tileset_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "imgui.h"
 
 #include <algorithm>
@@ -147,7 +148,7 @@ void TilesetEditorPanel::drawTileList()
         ImGui::SameLine();
 
         // Solid checkbox
-        ImGui::Checkbox("Solid", &tile.solid);
+        ui::checkbox("Solid", "##TileSolid", &tile.solid, 42.0f);
         ImGui::SameLine();
 
         // Delete button

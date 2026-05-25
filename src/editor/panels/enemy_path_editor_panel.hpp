@@ -24,10 +24,18 @@ public:
 private:
     enum class Behavior { Idle = 0, Patrol = 1, Aggro = 2 };
     enum class CurveMode { Linear = 0, Spline = 1 };
+    enum class CanvasMode { AddEnemies = 0, EditSplines = 1 };
 
     struct Waypoint {
         float x = 0.0f; // world pixels
         float y = 0.0f;
+    };
+
+    struct PixelLayer {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint32_t> pixels;
+        bool loaded = false;
     };
 
     // Placement identity
@@ -55,16 +63,19 @@ private:
     std::vector<Waypoint> waypoints_;
     int selectedWaypoint_ = -1;
     bool dragging_ = false;
+    CanvasMode canvasMode_ = CanvasMode::AddEnemies;
 
     // Canvas display
     float zoom_ = 2.0f; // canvas pixels per world pixel
     bool snapToGrid_ = true;
 
-    // Optional map background (mid layer only, for reference)
+    // Optional map background for the selected screen.
     game::TileMap bgMap_;
     game::TilesetDef bgTileset_;
     bool bgMapLoaded_ = false;
     bool bgTilesetLoaded_ = false;
+    PixelLayer floorGraphics_;
+    PixelLayer wallGraphics_;
 
     std::string status_;
 
@@ -75,12 +86,16 @@ private:
     void drawWaypointList(EditorContext& context);
     void drawCanvas(EditorContext& context);
     void loadBgMap(EditorContext& context);
+    void loadScreenGraphics(EditorContext& context);
     void loadProjectEnemyTypes(EditorContext& context);
     void createPlacement(EditorContext& context);
+    void createPlacementAt(EditorContext& context, float x, float y);
     void selectPlacement(EditorContext& context, int index);
     void writeCurrentPlacement(EditorContext& context);
+    void drawPixelLayer(ImDrawList* dl, ImVec2 origin, const PixelLayer& layer, float targetW, float targetH, float opacity) const;
     [[nodiscard]] float snapValue(float v) const;
     [[nodiscard]] ImVec2 waypointToCanvas(ImVec2 origin, const Waypoint& waypoint) const;
+    [[nodiscard]] Waypoint placementAnchor(const game::EnemyPlacement& placement) const;
     [[nodiscard]] Waypoint splinePoint(int segment, float t) const;
 };
 

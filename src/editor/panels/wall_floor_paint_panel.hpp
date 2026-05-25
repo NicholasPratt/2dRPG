@@ -33,7 +33,7 @@ public:
 
 private:
     enum class ActiveLayer { Floor = 0, Wall = 1 };
-    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select, TileStamp, TileErase };
+    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase };
     enum class BrushShape { Square = 0, Circle, Spray, Dither };
     enum class SnapMode { None = 0, Full, Half, Quarter };
 
@@ -120,7 +120,10 @@ private:
     void drawPalette();
     void drawTilePalette(EditorContext& context);
     void addToTilePalette(EditorContext& context);
+    void addTileSelectionToPalette(EditorContext& context);
     void stampTile(int x, int y, const TilePaletteEntry& tile);
+    void floodFillTile(int x, int y, const TilePaletteEntry& tile);
+    void fillTile(int x, int y, std::uint32_t color);
     void eraseTile(int x, int y);
     void drawCanvas(EditorContext& context);
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
@@ -145,6 +148,7 @@ private:
     void floodFill(PaintLayer& layer, int startX, int startY, std::uint32_t color);
     void clearActiveLayer();
     void copyPixelSelection();
+    void copyTileSelection();
     void pastePixelClipboard(int x, int y);
     std::vector<unsigned char> layerRgba(const PaintLayer& layer) const;
     std::vector<unsigned char> compositeRgba(bool parallaxPreview) const;

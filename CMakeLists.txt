@@ -49,6 +49,10 @@ target_include_directories(adventure_editor PUBLIC
     external/stb
 )
 
+target_compile_definitions(adventure_editor PRIVATE
+    ADVENTURE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+
 target_link_libraries(adventure_editor PUBLIC
     imgui
     adventure_game
@@ -82,11 +86,19 @@ if(OpenGL_FOUND AND GLFW3_FOUND)
         src/app/main_game.cpp
         src/game/engine.cpp
         src/editor/stb_image_impl.cpp
+        external/imgui/backends/imgui_impl_glfw.cpp
+        external/imgui/backends/imgui_impl_opengl2.cpp
     )
 
     target_include_directories(adventure_game_window PRIVATE
+        external/imgui
+        external/imgui/backends
         external/stb
         ${GLFW3_INCLUDE_DIRS}
+    )
+
+    target_compile_definitions(adventure_game_window PRIVATE
+        ADVENTURE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
     )
 
     target_compile_options(adventure_game_window PRIVATE
@@ -98,6 +110,7 @@ if(OpenGL_FOUND AND GLFW3_FOUND)
     )
 
     target_link_libraries(adventure_game_window PRIVATE
+        imgui
         adventure_game
         OpenGL::GL
         ${GLFW3_LIBRARIES}

@@ -1,5 +1,6 @@
 #include "editor/panels/map_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "game/map.hpp"
 #include "imgui.h"
 
@@ -149,12 +150,11 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
         context.markDirty();
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::SliderInt("Tile px", &tileSize_, kMinTileSize, kMaxTileSize)) {
+    if (ui::sliderInt("Tile px", "##MapTilePx", &tileSize_, kMinTileSize, kMaxTileSize, 100.0f, 70.0f)) {
         tileSize_ = std::clamp(tileSize_, kMinTileSize, kMaxTileSize);
     }
 
-    ImGui::Checkbox("Obstacle edit", &obstacleMode_);
+    ui::checkbox("Obstacle edit", "##MapObstacleEdit", &obstacleMode_, 104.0f);
     if (!obstacleMode_) {
         ImGui::SameLine();
         ImGui::TextUnformatted("Layer:");

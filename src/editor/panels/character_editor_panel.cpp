@@ -1,5 +1,6 @@
 #include "editor/panels/character_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "game/project.hpp"
 #include "game/sprite.hpp"
 #include "imgui.h"
@@ -451,7 +452,7 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
     if (ImGui::InputText("Name", character.name.data(), character.name.size())) {
         context.markDirty();
     }
-    if (ImGui::Checkbox("Playable character", &character.playable)) {
+    if (ui::checkbox("Playable character", "##PlayableCharacter", &character.playable, 128.0f)) {
         if (character.playable) {
             for (int i = 0; i < static_cast<int>(characters_.size()); ++i) {
                 if (i != selectedCharacter_) {

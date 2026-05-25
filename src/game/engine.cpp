@@ -186,7 +186,7 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
-    window_ = glfwCreateWindow(kScreenTilesW * kTileSize * 2, kScreenTilesH * kTileSize * 2, "Adventure Runtime", nullptr, nullptr);
+    window_ = glfwCreateWindow(kScreenTilesW * kTileSize, kScreenTilesH * kTileSize, "Adventure Runtime", nullptr, nullptr);
     if (window_ == nullptr) {
         setError(errorMessage, "Failed to create runtime window.");
         return false;
