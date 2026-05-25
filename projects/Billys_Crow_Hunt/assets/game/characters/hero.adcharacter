@@ -31,5 +31,7 @@ anim "swim" "assets/game/sprites/new_sprite.sprite.json"
 anim "dash" "assets/game/sprites/new_sprite.sprite.json"
 anim "block_break" "assets/game/sprites/new_sprite.sprite.json"
 anim "revive" "assets/game/sprites/new_sprite.sprite.json"
-frames 0
+frames 2
+frame 0 "idle" "assets/raw/sprites/new_sprite_frame_1.png"
+frame 1 "idle" "assets/raw/sprites/new_sprite_frame_2.png"
 end

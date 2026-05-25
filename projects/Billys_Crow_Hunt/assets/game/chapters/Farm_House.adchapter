@@ -1,14 +1,23 @@
 ADCHAPTER 4
 id Farm_House
 start screen_1
-playable hero
-characters 1
+playable billy
+characters 2
 character hero
+character billy
 screens 2
 screen screen_1 screen_1_map 0 0
 links - - - screen_2
 respawn 0
-enemies 0
+enemies 1
+enemy enemy_1 enemy_1 1 0 64 1 0 7
+wp 128 80
+wp 416 96
+wp 704 112
+wp 720 208
+wp 688 416
+wp 512 448
+wp 224 224
 screen screen_2 screen_2_map -1 0
 links - - screen_1 -
 respawn 0

@@ -1043,18 +1043,16 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
                     continue;
                 }
                 const auto idx = static_cast<std::size_t>(cy * pixelClipboard_.width + cx);
-                const std::uint32_t fc = pixelClipboard_.floor[idx];
-                const std::uint32_t wc = pixelClipboard_.wall[idx];
+                const std::uint32_t c = activeLayer_ == ActiveLayer::Floor
+                    ? pixelClipboard_.floor[idx]
+                    : pixelClipboard_.wall[idx];
+                if (alphaOf(c) == 0u) {
+                    continue;
+                }
                 const ImVec2 pMin{origin.x + static_cast<float>(tx) * pixelSize, origin.y + static_cast<float>(ty) * pixelSize};
                 const ImVec2 pMax{pMin.x + pixelSize, pMin.y + pixelSize};
-                if (alphaOf(fc) > 0u) {
-                    drawList->AddRectFilled(pMin, pMax,
-                        IM_COL32((fc >> 0) & 0xff, (fc >> 8) & 0xff, (fc >> 16) & 0xff, 120));
-                }
-                if (alphaOf(wc) > 0u) {
-                    drawList->AddRectFilled(pMin, pMax,
-                        IM_COL32((wc >> 0) & 0xff, (wc >> 8) & 0xff, (wc >> 16) & 0xff, 120));
-                }
+                drawList->AddRectFilled(pMin, pMax,
+                    IM_COL32((c >> 0) & 0xff, (c >> 8) & 0xff, (c >> 16) & 0xff, 120));
                 drawList->AddRect(pMin, pMax, IM_COL32(200, 200, 255, 100));
             }
         }
@@ -1762,11 +1760,16 @@ void WallFloorPaintPanel::pastePixelClipboard(int x, int y)
     if (!hasPixelClipboard_) {
         return;
     }
+    const std::vector<std::uint32_t>& src = activeLayer_ == ActiveLayer::Floor
+        ? pixelClipboard_.floor
+        : pixelClipboard_.wall;
     for (int cy = 0; cy < pixelClipboard_.height; ++cy) {
         for (int cx = 0; cx < pixelClipboard_.width; ++cx) {
             const std::size_t idx = static_cast<std::size_t>(cy * pixelClipboard_.width + cx);
-            setPixel(floor_, x + cx, y + cy, pixelClipboard_.floor[idx]);
-            setPixel(wall_, x + cx, y + cy, pixelClipboard_.wall[idx]);
+            const std::uint32_t color = src[idx];
+            if ((color >> 24) != 0) {
+                setPixel(activeLayer(), x + cx, y + cy, color);
+            }
         }
     }
 }
