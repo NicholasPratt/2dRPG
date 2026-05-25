@@ -202,6 +202,13 @@ void EditorApp::draw()
         hasRequestedTab_ = true;
     }
 
+    if (context_.requestEditItems) {
+        context_.requestEditItems = false;
+        enterScreenMode(ScreenEditMode::Items);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
     if (context_.requestEditSprite) {
         context_.requestEditSprite = false;
         if (!context_.requestedSpriteReference.empty()) {
@@ -230,6 +237,15 @@ void EditorApp::draw()
                     requestedTab_ = MainTab::Layout;
                     hasRequestedTab_ = true;
                 }
+                ImGui::EndTabItem();
+            }
+
+            ImGuiTabItemFlags weaponsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Weapons ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Weapons", nullptr, weaponsTabFlags)) {
+                if (weaponsTabFlags != 0) {
+                    hasRequestedTab_ = false;
+                }
+                weaponEditor_.draw(context_);
                 ImGui::EndTabItem();
             }
         }
@@ -286,6 +302,17 @@ void EditorApp::enterScreenMode(ScreenEditMode mode)
         enemyPlacementSnapshot_ = context_.selectedScreenEnemies;
     } else if (mode == ScreenEditMode::EnemyTypes) {
         enemyTypeSnapshot_ = context_.enemyTypes;
+    } else if (mode == ScreenEditMode::Items && !context_.selectedScreenMapId.empty()) {
+        // Load items from the current screen's map
+        game::TileMap map;
+        if (game::loadTileMap(context_.assets.gameMapPath() / (context_.selectedScreenMapId + ".admap"), map, nullptr)) {
+            context_.selectedScreenItems = map.items;
+        } else {
+            context_.selectedScreenItems.clear();
+        }
+        context_.selectedScreenItemsMapId = context_.selectedScreenMapId;
+        itemPlacementSnapshot_ = context_.selectedScreenItems;
+        itemPlacementEditor_.openForScreen(context_);
     }
     screenEditMode_ = mode;
 }
@@ -322,6 +349,11 @@ void EditorApp::drawScreensTab()
             drawScopedEditHeader("Editing Enemy Types", true, true);
             ImGui::Separator();
             enemyPathEditor_.drawTypes(context_);
+            break;
+        case ScreenEditMode::Items:
+            drawScopedEditHeader("Placing Screen Items", true, true);
+            ImGui::Separator();
+            itemPlacementEditor_.draw(context_);
             break;
         case ScreenEditMode::Sprite:
             drawScopedEditHeader("Editing Sprite", true, true);
@@ -373,6 +405,9 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::EnemyTypes:
             enemyPathEditor_.saveProjectEnemyTypes(context_);
             break;
+        case ScreenEditMode::Items:
+            itemPlacementEditor_.saveForScreen(context_);
+            break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);
             if (spriteEditorLaunchedFromCharacter_) {
@@ -402,6 +437,9 @@ void EditorApp::exitScreenModeDiscarding()
             break;
         case ScreenEditMode::EnemyTypes:
             context_.enemyTypes = enemyTypeSnapshot_;
+            break;
+        case ScreenEditMode::Items:
+            context_.selectedScreenItems = itemPlacementSnapshot_;
             break;
         case ScreenEditMode::Sprite:
             spriteEditor_.resetDocumentBuffers();
@@ -623,6 +661,7 @@ void EditorApp::chooseChapter(const std::string& chapterId)
     if (layoutEditor_.loadChapterById(context_, chapterId)) {
         wallFloorPaint_.resetScreenBuffers();
         spriteEditor_.resetDocumentBuffers();
+        weaponEditor_.loadWeapons(context_);
         startupChapterChosen_ = true;
         screenEditMode_ = ScreenEditMode::Layout;
         screenMapLogicMode_ = false;
@@ -758,6 +797,9 @@ void EditorApp::saveActiveEditingScope()
             break;
         case ScreenEditMode::EnemyTypes:
             enemyPathEditor_.saveProjectEnemyTypes(context_);
+            break;
+        case ScreenEditMode::Items:
+            itemPlacementEditor_.saveForScreen(context_);
             break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);

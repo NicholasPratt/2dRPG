@@ -16,6 +16,23 @@ enum class ObstacleType {
     TimedSpike = 2,
 };
 
+enum class ItemPickupType {
+    Weapon = 0,
+    Ammo = 1,
+    Health = 2,
+};
+
+struct MapItemPlacement {
+    std::string id;
+    ItemPickupType pickupType = ItemPickupType::Ammo;
+    std::string targetId;  // Weapon: weapon def id; Ammo: ammoTypeId; Health: unused
+    int quantity = 5;      // Ammo: count added; Health: hp restored; Weapon: unused
+    float x = 0.0f;
+    float y = 0.0f;
+    bool respawn = false;
+    std::string spriteId;
+};
+
 struct MapObstacle {
     ObstacleType type = ObstacleType::Spike;
     std::string spriteId;
@@ -42,6 +59,7 @@ struct TileMap {
         std::vector<uint16_t>(static_cast<std::size_t>(kScreenTilesW * kScreenTilesH), 0u),
     };
     std::vector<MapObstacle> obstacles;
+    std::vector<MapItemPlacement> items;
 };
 
 [[nodiscard]] bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);

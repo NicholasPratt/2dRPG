@@ -7,7 +7,9 @@
 #include "editor/panels/map_editor_panel.hpp"
 #include "editor/panels/sprite_editor_panel.hpp"
 #include "editor/panels/tileset_editor_panel.hpp"
+#include "editor/panels/item_placement_panel.hpp"
 #include "editor/panels/wall_floor_paint_panel.hpp"
+#include "editor/panels/weapon_editor_panel.hpp"
 
 #include <array>
 #include <filesystem>
@@ -27,6 +29,7 @@ public:
 private:
     enum class MainTab {
         Characters,
+        Weapons,
         Layout,
         Tilesets,
         WallFloorPaint,
@@ -38,6 +41,7 @@ private:
         Graphics,
         Enemies,
         EnemyTypes,
+        Items,
         Sprite,
     };
 
@@ -49,6 +53,8 @@ private:
     TilesetEditorPanel tilesetEditor_;
     WallFloorPaintPanel wallFloorPaint_;
     EnemyPathEditorPanel enemyPathEditor_;
+    WeaponEditorPanel weaponEditor_;
+    ItemPlacementPanel itemPlacementEditor_;
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;
@@ -57,6 +63,7 @@ private:
     ScreenEditMode spriteReturnMode_ = ScreenEditMode::Layout;
     std::vector<game::EnemyPlacement> enemyPlacementSnapshot_;
     std::vector<game::EnemyType> enemyTypeSnapshot_;
+    std::vector<game::MapItemPlacement> itemPlacementSnapshot_;
     bool startupChapterChosen_ = false;
     bool pendingExit_ = false;
     bool exitAccepted_ = false;

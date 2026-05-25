@@ -11,6 +11,7 @@ constexpr int kMaxMapDimension = 512;
 constexpr int kMaxTileId = 65535;
 constexpr int kLayerCount = 3;
 constexpr int kMaxObstacles = 2048;
+constexpr int kMaxItems = 1024;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -123,7 +124,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 4\n";
+    output << "ADMAP 5\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -141,6 +142,17 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         output << "obstacle " << obstacleTypeToInt(obstacle.type) << ' ' << encodedToken(obstacle.spriteId) << ' '
                << obstacle.x << ' ' << obstacle.y << ' ' << obstacle.width << ' ' << obstacle.height << ' '
                << obstacle.activeSeconds << ' ' << obstacle.inactiveSeconds << ' ' << obstacle.phaseSeconds << "\n";
+    }
+    output << "items " << map.items.size() << "\n";
+    for (const MapItemPlacement& item : map.items) {
+        output << "item " << encodedToken(item.id)
+               << ' ' << static_cast<int>(item.pickupType)
+               << ' ' << encodedToken(item.targetId)
+               << ' ' << item.quantity
+               << ' ' << item.x
+               << ' ' << item.y
+               << ' ' << (item.respawn ? 1 : 0)
+               << ' ' << encodedToken(item.spriteId) << "\n";
     }
     output << "end\n";
 
@@ -162,7 +174,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 4) {
+    if (magic != "ADMAP" || version < 1 || version > 5) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -281,6 +293,44 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                 }
                 obstacle.spriteId = decodedToken(spriteId);
                 loaded.obstacles.push_back(obstacle);
+            }
+            input >> key;
+        }
+        if (version >= 5 && key == "items") {
+            int itemCount = 0;
+            input >> itemCount;
+            if (!input || itemCount < 0 || itemCount > kMaxItems) {
+                setError(errorMessage, "Invalid item count.");
+                return false;
+            }
+            loaded.items.reserve(static_cast<std::size_t>(itemCount));
+            for (int i = 0; i < itemCount; ++i) {
+                if (!(input >> key) || key != "item") {
+                    setError(errorMessage, "Expected item entry.");
+                    return false;
+                }
+                MapItemPlacement item;
+                std::string idToken;
+                std::string targetIdToken;
+                std::string spriteIdToken;
+                int pickupTypeValue = 0;
+                int respawnValue = 0;
+                input >> idToken >> pickupTypeValue >> targetIdToken >> item.quantity
+                      >> item.x >> item.y >> respawnValue >> spriteIdToken;
+                if (!input) {
+                    setError(errorMessage, "Invalid item data.");
+                    return false;
+                }
+                item.id = decodedToken(idToken);
+                item.targetId = decodedToken(targetIdToken);
+                item.spriteId = decodedToken(spriteIdToken);
+                item.respawn = (respawnValue != 0);
+                switch (pickupTypeValue) {
+                    case 1: item.pickupType = ItemPickupType::Ammo; break;
+                    case 2: item.pickupType = ItemPickupType::Health; break;
+                    default: item.pickupType = ItemPickupType::Weapon; break;
+                }
+                loaded.items.push_back(item);
             }
             input >> key;
         }

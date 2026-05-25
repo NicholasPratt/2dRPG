@@ -24,6 +24,9 @@ constexpr float kPlayerSizePx = 12.0f;
 constexpr float kScreenTransitionExitRatio = 0.30f;
 constexpr float kHazardRespawnCooldownSeconds = 0.75f;
 constexpr float kPlayerDamageInvulnerableSeconds = 0.65f;
+constexpr float kMeleeActiveSeconds = 0.15f;
+constexpr float kItemPickupRadius = 12.0f;
+constexpr float kProjectileHalfSize = 4.0f;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -162,7 +165,7 @@ Engine::~Engine()
     destroyTexture(floorTexture_);
     destroyTexture(wallTexture_);
     destroyTexture(playerTexture_);
-    for (auto& [id, sprite] : obstacleSprites_) {
+    for (auto& [id, sprite] : loadedSprites_) {
         destroyTexture(sprite.texture);
     }
     if (window_ != nullptr) {
@@ -205,6 +208,7 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
         return false;
     }
     loadPlayableCharacter();
+    loadWeapons();
     const float centerX = screenWidthPx() * 0.5f;
     const float centerY = screenHeightPx() * 0.5f;
     if (playerCanOccupy(centerX, centerY)) {
@@ -270,7 +274,9 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     }
 
     loadPathEntities();
-    loadObstacleSprites();
+    loadItemEntities();
+    projectiles_.clear();
+    loadAllSprites();
     std::cout << "Loaded screen " << screen->id << " map " << activeMap_.id << "\n";
     return true;
 }
@@ -309,6 +315,45 @@ void Engine::destroyTexture(Texture& texture)
         glDeleteTextures(1, &id);
     }
     texture = {};
+}
+
+void Engine::loadWeapons()
+{
+    meleeWeapon_.reset();
+    rangedWeapon_.reset();
+    ammo_.clear();
+
+    GameProject project;
+    if (!loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+        return;
+    }
+
+    if (project.startingWeaponId.empty()) {
+        return;
+    }
+
+    for (const WeaponDef& w : project.weaponDefs) {
+        if (w.id == project.startingWeaponId) {
+            if (w.type == WeaponType::Melee) {
+                meleeWeapon_ = w;
+            } else {
+                rangedWeapon_ = w;
+                const std::string ammoKey = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
+                ammo_[ammoKey] = 0;
+            }
+            break;
+        }
+    }
+}
+
+void Engine::loadItemEntities()
+{
+    itemEntities_.clear();
+    for (const MapItemPlacement& placement : activeMap_.items) {
+        RuntimeItemEntity entity;
+        entity.placement = placement;
+        itemEntities_.push_back(entity);
+    }
 }
 
 void Engine::loadPathEntities()
@@ -390,41 +435,43 @@ void Engine::loadPathEntities()
     }
 }
 
-void Engine::loadObstacleSprites()
+void Engine::loadSpriteById(const std::string& spriteId)
 {
-    for (auto& [id, sprite] : obstacleSprites_) {
+    if (spriteId.empty() || loadedSprites_.find(spriteId) != loadedSprites_.end()) {
+        return;
+    }
+    const std::filesystem::path spriteDir = assetPath(projectRoot_, "assets/game/sprites");
+    RuntimeSprite runtime;
+    std::string error;
+    const std::filesystem::path metadataPath = spriteDir / (spriteId + ".sprite.json");
+    if (!loadSpriteMetadata(metadataPath, runtime.metadata, &error)) {
+        loadedSprites_[spriteId] = std::move(runtime);
+        return;
+    }
+    std::filesystem::path sourcePath = runtime.metadata.source;
+    if (sourcePath.empty()) {
+        sourcePath = std::filesystem::path("assets/raw/sprites") / (spriteId + "_sheet.png");
+    }
+    sourcePath = sourcePath.is_absolute() ? sourcePath : projectRoot_ / sourcePath;
+    runtime.loaded = loadTexture(sourcePath, runtime.texture, nullptr);
+    loadedSprites_[spriteId] = std::move(runtime);
+}
+
+void Engine::loadAllSprites()
+{
+    for (auto& [id, sprite] : loadedSprites_) {
         destroyTexture(sprite.texture);
     }
-    obstacleSprites_.clear();
-
-    const std::filesystem::path spriteDir = assetPath(projectRoot_, "assets/game/sprites");
-    auto loadSprite = [&](const std::string& spriteId) {
-        if (spriteId.empty() || obstacleSprites_.find(spriteId) != obstacleSprites_.end()) {
-            return;
-        }
-
-        RuntimeSprite runtime;
-        std::string error;
-        const std::filesystem::path metadataPath = spriteDir / (spriteId + ".sprite.json");
-        if (!loadSpriteMetadata(metadataPath, runtime.metadata, &error)) {
-            obstacleSprites_[spriteId] = std::move(runtime);
-            return;
-        }
-
-        std::filesystem::path sourcePath = runtime.metadata.source;
-        if (sourcePath.empty()) {
-            sourcePath = std::filesystem::path("assets/raw/sprites") / (spriteId + "_sheet.png");
-        }
-        sourcePath = sourcePath.is_absolute() ? sourcePath : projectRoot_ / sourcePath;
-        runtime.loaded = loadTexture(sourcePath, runtime.texture, nullptr);
-        obstacleSprites_[spriteId] = std::move(runtime);
-    };
+    loadedSprites_.clear();
 
     for (const MapObstacle& obstacle : activeMap_.obstacles) {
-        loadSprite(obstacle.spriteId);
+        loadSpriteById(obstacle.spriteId);
     }
     for (const RuntimePathEntity& entity : pathEntities_) {
-        loadSprite(entity.path.spriteId);
+        loadSpriteById(entity.path.spriteId);
+    }
+    for (const RuntimeItemEntity& item : itemEntities_) {
+        loadSpriteById(item.placement.spriteId);
     }
 }
 
@@ -551,9 +598,12 @@ void Engine::update(float dt)
     }
 
     updatePlayer(dt);
+    updateAttack(dt);
+    updateProjectiles(dt);
     updateHazards(dt);
     updateEnemyCombat(dt);
     updatePaths(dt);
+    updateItemPickups();
 }
 
 void Engine::updatePlayer(float dt)
@@ -572,6 +622,8 @@ void Engine::updatePlayer(float dt)
     if (len > 0.0f) {
         dx /= len;
         dy /= len;
+        playerFacingX_ = dx;
+        playerFacingY_ = dy;
     }
 
     const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * dt;
@@ -626,6 +678,163 @@ void Engine::updatePlayer(float dt)
     }
     if (!canLeaveSouth || crossedSouth) {
         playerY_ = std::min(playerY_, height - half);
+    }
+}
+
+void Engine::updateAttack(float dt)
+{
+    meleeCooldownSeconds_ = std::max(0.0f, meleeCooldownSeconds_ - dt);
+    rangedCooldownSeconds_ = std::max(0.0f, rangedCooldownSeconds_ - dt);
+    meleeActiveSeconds_ = std::max(0.0f, meleeActiveSeconds_ - dt);
+
+    if (meleeWeapon_.has_value() && glfwGetKey(window_, GLFW_KEY_Z) == GLFW_PRESS &&
+        meleeCooldownSeconds_ <= 0.0f) {
+        meleeCooldownSeconds_ = meleeWeapon_->attackCooldown;
+        meleeActiveSeconds_ = kMeleeActiveSeconds;
+        checkMeleeHits();
+    }
+
+    if (rangedWeapon_.has_value() && glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS &&
+        rangedCooldownSeconds_ <= 0.0f) {
+        const std::string ammoKey = rangedWeapon_->ammoTypeId.empty() ? rangedWeapon_->id : rangedWeapon_->ammoTypeId;
+        const int available = ammo_.count(ammoKey) ? ammo_.at(ammoKey) : 0;
+        if (available >= rangedWeapon_->ammoPerShot) {
+            ammo_[ammoKey] -= rangedWeapon_->ammoPerShot;
+            rangedCooldownSeconds_ = rangedWeapon_->attackCooldown;
+            RuntimeProjectile proj;
+            const float offset = kPlayerSizePx * 0.5f + 2.0f;
+            proj.x = playerX_ + playerFacingX_ * offset;
+            proj.y = playerY_ + playerFacingY_ * offset;
+            proj.vx = playerFacingX_ * rangedWeapon_->projectileSpeed;
+            proj.vy = playerFacingY_ * rangedWeapon_->projectileSpeed;
+            proj.maxDistance = rangedWeapon_->range;
+            proj.damage = rangedWeapon_->damage;
+            proj.spriteId = rangedWeapon_->spriteId;
+            projectiles_.push_back(proj);
+        }
+    }
+}
+
+void Engine::checkMeleeHits()
+{
+    if (!meleeWeapon_.has_value()) {
+        return;
+    }
+    const float reach = meleeWeapon_->range;
+    for (RuntimePathEntity& entity : pathEntities_) {
+        if (entity.health <= 0) {
+            continue;
+        }
+        const float ex = entity.x - playerX_;
+        const float ey = entity.y - playerY_;
+        const float dist = std::sqrt(ex * ex + ey * ey);
+        if (dist > reach) {
+            continue;
+        }
+        const float dot = (dist > 0.0f) ? (ex * playerFacingX_ + ey * playerFacingY_) / dist : 1.0f;
+        if (dot < 0.3f) {
+            continue;
+        }
+        entity.health = std::max(0, entity.health - meleeWeapon_->damage);
+    }
+}
+
+void Engine::updateProjectiles(float dt)
+{
+    for (RuntimeProjectile& proj : projectiles_) {
+        if (proj.dead) {
+            continue;
+        }
+        const float step = std::sqrt(proj.vx * proj.vx + proj.vy * proj.vy) * dt;
+        proj.x += proj.vx * dt;
+        proj.y += proj.vy * dt;
+        proj.distanceTraveled += step;
+
+        if (proj.distanceTraveled >= proj.maxDistance) {
+            proj.dead = true;
+            continue;
+        }
+
+        if (solidAtPixel(proj.x, proj.y)) {
+            proj.dead = true;
+            continue;
+        }
+
+        for (RuntimePathEntity& entity : pathEntities_) {
+            if (entity.health <= 0) {
+                continue;
+            }
+            const float halfW = entity.path.combat.hitboxWidth * 0.5f;
+            const float halfH = entity.path.combat.hitboxHeight * 0.5f;
+            if (proj.x + kProjectileHalfSize > entity.x - halfW &&
+                proj.x - kProjectileHalfSize < entity.x + halfW &&
+                proj.y + kProjectileHalfSize > entity.y - halfH &&
+                proj.y - kProjectileHalfSize < entity.y + halfH) {
+                entity.health = std::max(0, entity.health - proj.damage);
+                proj.dead = true;
+                break;
+            }
+        }
+    }
+
+    projectiles_.erase(
+        std::remove_if(projectiles_.begin(), projectiles_.end(), [](const RuntimeProjectile& p) { return p.dead; }),
+        projectiles_.end());
+}
+
+void Engine::updateItemPickups()
+{
+    for (RuntimeItemEntity& item : itemEntities_) {
+        if (item.collected) {
+            continue;
+        }
+        if (playerOverlapsItem(item)) {
+            collectItem(item);
+        }
+    }
+}
+
+bool Engine::playerOverlapsItem(const RuntimeItemEntity& item) const
+{
+    const float dx = item.placement.x - playerX_;
+    const float dy = item.placement.y - playerY_;
+    return std::sqrt(dx * dx + dy * dy) <= kItemPickupRadius;
+}
+
+void Engine::collectItem(RuntimeItemEntity& item)
+{
+    item.collected = true;
+    switch (item.placement.pickupType) {
+        case ItemPickupType::Weapon: {
+            GameProject project;
+            if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+                for (const WeaponDef& w : project.weaponDefs) {
+                    if (w.id == item.placement.targetId) {
+                        if (w.type == WeaponType::Melee) {
+                            meleeWeapon_ = w;
+                        } else {
+                            rangedWeapon_ = w;
+                            const std::string key = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
+                            if (ammo_.find(key) == ammo_.end()) {
+                                ammo_[key] = 0;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+        case ItemPickupType::Ammo: {
+            const std::string& key = item.placement.targetId;
+            if (!key.empty()) {
+                ammo_[key] += item.placement.quantity;
+            }
+            break;
+        }
+        case ItemPickupType::Health:
+            playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + item.placement.quantity);
+            break;
     }
 }
 
@@ -890,9 +1099,9 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
-        auto spriteIt = obstacleSprites_.find(entity.path.spriteId);
-        if (spriteIt != obstacleSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
-            const SpriteFrameDef* frame = obstacleSpriteFrame(spriteIt->second);
+        auto spriteIt = loadedSprites_.find(entity.path.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
             if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
                 const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
                 const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
@@ -914,9 +1123,9 @@ void Engine::render()
         const float w = static_cast<float>(obstacle.width * kTileSize);
         const float h = static_cast<float>(obstacle.height * kTileSize);
 
-        auto spriteIt = obstacleSprites_.find(obstacle.spriteId);
-        if (spriteIt != obstacleSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
-            const SpriteFrameDef* frame = obstacleSpriteFrame(spriteIt->second);
+        auto spriteIt = loadedSprites_.find(obstacle.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
             if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
                 const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
                 const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
@@ -944,6 +1153,8 @@ void Engine::render()
         renderFilledRect(x, y, w, h, r, g, b, a);
     }
 
+    renderItems();
+
     if (playerTexture_.id != 0) {
         const float drawW = static_cast<float>(playerTexture_.width);
         const float drawH = static_cast<float>(playerTexture_.height);
@@ -952,6 +1163,9 @@ void Engine::render()
         renderFilledRect(playerX_ - kPlayerSizePx * 0.5f, playerY_ - kPlayerSizePx * 0.5f,
             kPlayerSizePx, kPlayerSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
     }
+
+    renderMeleeFlash();
+    renderProjectiles();
 
     if (wallTexture_.id != 0) {
         renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
@@ -968,12 +1182,7 @@ void Engine::render()
         renderFilledRect(entity.x - barW * 0.5f, entity.y - entity.path.combat.hitboxHeight * 0.5f - 5.0f, barW * pct, barH, 0.95f, 0.20f, 0.16f, 0.95f);
     }
 
-    const float heartW = 8.0f;
-    for (int i = 0; i < playerMaxHealth_; ++i) {
-        const bool filled = i < playerHealth_;
-        renderFilledRect(8.0f + static_cast<float>(i) * (heartW + 2.0f), 8.0f, heartW, 6.0f,
-            filled ? 0.90f : 0.16f, filled ? 0.08f : 0.08f, filled ? 0.12f : 0.09f, 0.95f);
-    }
+    renderHud();
 
     glPopMatrix();
 }
@@ -997,19 +1206,17 @@ void Engine::renderTextureRegion(const Texture& texture, float x, float y, float
     glDisable(GL_TEXTURE_2D);
 }
 
-const SpriteFrameDef* Engine::obstacleSpriteFrame(const RuntimeSprite& sprite) const
+const SpriteFrameDef* Engine::spriteFrame(const RuntimeSprite& sprite) const
 {
     if (sprite.metadata.frames.empty()) {
         return nullptr;
     }
-
     const int totalMs = std::accumulate(sprite.metadata.frames.begin(), sprite.metadata.frames.end(), 0, [](int total, const SpriteFrameDef& frame) {
         return total + std::max(1, frame.durationMs);
     });
     if (totalMs <= 0) {
         return &sprite.metadata.frames.front();
     }
-
     int t = static_cast<int>(std::fmod(runtimeSeconds_ * 1000.0f, static_cast<float>(totalMs)));
     for (const SpriteFrameDef& frame : sprite.metadata.frames) {
         t -= std::max(1, frame.durationMs);
@@ -1030,6 +1237,112 @@ void Engine::renderFilledRect(float x, float y, float width, float height, float
     glVertex2f(x + width, y + height);
     glVertex2f(x, y + height);
     glEnd();
+}
+
+void Engine::renderItems() const
+{
+    for (const RuntimeItemEntity& item : itemEntities_) {
+        if (item.collected) {
+            continue;
+        }
+        const float x = item.placement.x;
+        const float y = item.placement.y;
+        const float r = 7.0f;
+        float cr = 1.0f, cg = 1.0f, cb = 0.2f;
+        if (item.placement.pickupType == ItemPickupType::Ammo) { cr = 0.2f; cg = 0.8f; cb = 1.0f; }
+        else if (item.placement.pickupType == ItemPickupType::Health) { cr = 0.2f; cg = 0.9f; cb = 0.3f; }
+
+        auto spriteIt = loadedSprites_.find(item.placement.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            if (frame != nullptr) {
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                renderTextureRegion(spriteIt->second.texture, x - r, y - r, r * 2.0f, r * 2.0f, u0, v0, u1, v1);
+                continue;
+            }
+        }
+
+        // Diamond fallback
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(cr, cg, cb, 0.92f);
+        glBegin(GL_QUADS);
+        glVertex2f(x,       y - r);
+        glVertex2f(x + r,   y);
+        glVertex2f(x,       y + r);
+        glVertex2f(x - r,   y);
+        glEnd();
+    }
+}
+
+void Engine::renderProjectiles() const
+{
+    for (const RuntimeProjectile& proj : projectiles_) {
+        auto spriteIt = loadedSprites_.find(proj.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            if (frame != nullptr) {
+                const float drawW = static_cast<float>(frame->width);
+                const float drawH = static_cast<float>(frame->height);
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                renderTextureRegion(spriteIt->second.texture, proj.x - drawW * 0.5f, proj.y - drawH * 0.5f, drawW, drawH, u0, v0, u1, v1);
+                continue;
+            }
+        }
+        renderFilledRect(proj.x - kProjectileHalfSize, proj.y - kProjectileHalfSize,
+            kProjectileHalfSize * 2.0f, kProjectileHalfSize * 2.0f, 1.0f, 0.85f, 0.1f, 0.95f);
+    }
+}
+
+void Engine::renderMeleeFlash() const
+{
+    if (meleeActiveSeconds_ <= 0.0f || !meleeWeapon_.has_value()) {
+        return;
+    }
+    const float reach = meleeWeapon_->range;
+    const float hw = reach * 0.5f;
+    const float cx = playerX_ + playerFacingX_ * (kPlayerSizePx * 0.5f + hw);
+    const float cy = playerY_ + playerFacingY_ * (kPlayerSizePx * 0.5f + hw);
+    const float alpha = std::clamp(meleeActiveSeconds_ / kMeleeActiveSeconds, 0.0f, 1.0f) * 0.55f;
+    renderFilledRect(cx - hw, cy - hw, reach, reach, 1.0f, 0.95f, 0.2f, alpha);
+}
+
+void Engine::renderHud() const
+{
+    const float heartW = 8.0f;
+    for (int i = 0; i < playerMaxHealth_; ++i) {
+        const bool filled = i < playerHealth_;
+        renderFilledRect(8.0f + static_cast<float>(i) * (heartW + 2.0f), 8.0f, heartW, 6.0f,
+            filled ? 0.90f : 0.16f, filled ? 0.08f : 0.08f, filled ? 0.12f : 0.09f, 0.95f);
+    }
+
+    float hudY = 18.0f;
+
+    if (meleeWeapon_.has_value()) {
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(1.0f, 0.9f, 0.3f, 0.85f);
+        glBegin(GL_QUADS);
+        glVertex2f(8.0f,  hudY);
+        glVertex2f(18.0f, hudY);
+        glVertex2f(18.0f, hudY + 6.0f);
+        glVertex2f(8.0f,  hudY + 6.0f);
+        glEnd();
+        hudY += 9.0f;
+    }
+
+    if (rangedWeapon_.has_value()) {
+        const std::string ammoKey = rangedWeapon_->ammoTypeId.empty() ? rangedWeapon_->id : rangedWeapon_->ammoTypeId;
+        const int ammoCount = ammo_.count(ammoKey) ? ammo_.at(ammoKey) : 0;
+        const float barMax = 20.0f;
+        const float barW = std::min(static_cast<float>(ammoCount), barMax) * 2.0f;
+        renderFilledRect(8.0f, hudY, 40.0f, 4.0f, 0.08f, 0.08f, 0.08f, 0.6f);
+        renderFilledRect(8.0f, hudY, barW, 4.0f, 0.2f, 0.8f, 1.0f, 0.9f);
+    }
 }
 
 } // namespace adventure::game

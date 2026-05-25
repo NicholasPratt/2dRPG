@@ -4,9 +4,13 @@ start screen_1
 playable hero
 characters 1
 character hero
-screens 1
+screens 2
 screen screen_1 screen_1_map 0 0
-links - - - -
+links - - - screen_2
+respawn 0
+enemies 0
+screen screen_2 screen_2_map -1 0
+links - - screen_1 -
 respawn 0
 enemies 0
 end

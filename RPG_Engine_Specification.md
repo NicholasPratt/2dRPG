@@ -108,15 +108,20 @@ Implemented:
 - Chapter, map, tileset, enemy path, and sprite metadata load/save modules in `src/game`.
 - Project-level game library load/save module in `src/game/project.*`.
 - Project-folder startup flow in the editor and project/chapter picker in the direct runtime executable.
-- Integrated editor tabs for chapters/screens, maps, wall/floor paint, sprites, tilesets, characters, and enemy paths.
+- Integrated editor tabs for chapters/screens, maps, wall/floor paint, sprites, tilesets, characters, enemy paths, and **weapons**.
 - Per-screen wall/floor paint buffers and per-sprite document buffers flushed on chapter save.
 - Character document save/load, playable character selection, sprite frame assignment, and runtime playable-character texture loading.
 - Basic runtime shell with fixed-step update, direct-launch project selection, pre-baked PNG rendering, tile collision, screen-link transitions, playable character rendering, sprite-backed hazards, linear/spline path-following enemies, and contact-damage combat.
+- **Weapon system:** `WeaponDef` data model (melee + ranged) stored in `.adgame` v3. Editor `Weapons` tab to create/edit weapon definitions and set the project starting weapon.
+- **Item placement system:** `MapItemPlacement` (weapon/ammo/health pickups) stored in `.admap` v5 items section. Editor `Edit Items` per-screen canvas to place/delete/configure pickups.
+- **Runtime attack:** Z key for melee (hitbox sweep in facing direction, brief flash), X key for ranged (projectile with configurable speed/range). Both keys respect per-weapon cooldowns. Melee shows a direction-matched yellow flash; projectiles render as sprites or yellow rectangles.
+- **Runtime item collection:** player walks over item pickup to collect it. Weapon pickup equips the weapon to the melee/ranged slot. Ammo pickup adds to the ammo pool. Health pickup restores HP.
+- **HUD additions:** melee-weapon indicator bar and ammo pool bar rendered above the health hearts.
 
 Planned:
 
-- Player attack actions, enemy defeat/drop flow, and defeated-state persistence.
+- Enemy defeat persistence (respawn flags respected, registry per chapter/screen).
 - Enemy and item game-library documents plus chapter import/placement UX beyond the current path-backed enemy instances.
-- Defeated-enemy state registry and persistence.
+- Player attack animations; enemy hurt/death state transitions.
 - Shader/core-profile renderer to replace fixed-pipeline OpenGL.
 - Explicit collision/interaction flags, only when gameplay needs exceed binary mid-layer collision.

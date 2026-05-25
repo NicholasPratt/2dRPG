@@ -1,4 +1,4 @@
-ADGAME 2
+ADGAME 3
 id game
 playable hero
 characters 1
@@ -6,4 +6,6 @@ character hero
 chapters 1
 chapter Farm_House
 enemy_types 0
+weapon_defs 0
+starting_weapon pocket
 end

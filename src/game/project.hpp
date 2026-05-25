@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/weapon.hpp"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -20,9 +22,11 @@ struct EnemyType {
 struct GameProject {
     std::string id = "game";
     std::string playableCharacterId;
+    std::string startingWeaponId;
     std::vector<std::string> characterIds;
     std::vector<std::string> chapterIds;
     std::vector<EnemyType> enemyTypes;
+    std::vector<WeaponDef> weaponDefs;
 };
 
 [[nodiscard]] bool saveGameProject(const std::filesystem::path& path, const GameProject& project, std::string* errorMessage = nullptr);

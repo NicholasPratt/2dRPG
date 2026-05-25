@@ -24,6 +24,7 @@ add_library(adventure_game STATIC
     src/game/map.cpp
     src/game/sprite.cpp
     src/game/tileset.cpp
+    # weapon.hpp is header-only; no .cpp needed
 )
 
 target_include_directories(adventure_game PUBLIC
@@ -37,11 +38,13 @@ add_library(adventure_editor STATIC
     src/editor/stb_image_impl.cpp
     src/editor/panels/character_editor_panel.cpp
     src/editor/panels/enemy_path_editor_panel.cpp
+    src/editor/panels/item_placement_panel.cpp
     src/editor/panels/layout_editor_panel.cpp
     src/editor/panels/map_editor_panel.cpp
     src/editor/panels/sprite_editor_panel.cpp
     src/editor/panels/tileset_editor_panel.cpp
     src/editor/panels/wall_floor_paint_panel.cpp
+    src/editor/panels/weapon_editor_panel.cpp
 )
 
 target_include_directories(adventure_editor PUBLIC

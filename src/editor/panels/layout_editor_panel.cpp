@@ -546,6 +546,12 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         context.requestEditEnemyTypes = true;
     }
 
+    if (ImGui::Button("Edit Items", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditItems = true;
+    }
+
     if (ImGui::Button("Edit Screen Graphics", ImVec2(-1.0f, 34.0f))) {
         // EditorApp consumes this request and opens the map/pixel editor on this screen's map.
         // The wall/mid layer remains outlined there for spatial context.

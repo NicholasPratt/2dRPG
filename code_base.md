@@ -58,19 +58,22 @@ The current asset architecture separates reusable game-library assets from chapt
       panels/
         character_editor_panel.hpp/.cpp
         enemy_path_editor_panel.hpp/.cpp
+        item_placement_panel.hpp/.cpp    # place weapon/ammo/health pickups on screens (ScreenEditMode::Items)
         layout_editor_panel.hpp/.cpp
         map_editor_panel.hpp/.cpp        # legacy/detail map panel; not a top-level tab
         sprite_editor_panel.hpp/.cpp
         tileset_editor_panel.hpp/.cpp
         wall_floor_paint_panel.hpp/.cpp
+        weapon_editor_panel.hpp/.cpp     # create/edit WeaponDef game-library assets (Weapons tab)
     game/
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink types and .adchapter load/save
-      engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision
-      map.hpp/.cpp                  # TileMap type and .admap load/save
+      engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
+      map.hpp/.cpp                  # TileMap type and .admap load/save (v5 adds item placements)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save
-      project.hpp/.cpp              # GameProject type and .adgame load/save
+      project.hpp/.cpp              # GameProject type and .adgame load/save (v3 adds weapon defs)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
+      weapon.hpp                    # WeaponDef struct (header-only; stored in project.adgame)
 ```
 
 ## Build Targets
@@ -123,6 +126,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 | Tab | Panel | Purpose |
 |-----|-------|---------|
 | Characters | `CharacterEditorPanel` | Character sheets with sprite references |
+| Weapons | `WeaponEditorPanel` | Create/edit project-level WeaponDefs (melee + ranged) and set starting weapon |
 | Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor with `.sprite.json` round-trip |
 | Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |

@@ -43,7 +43,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 2\n";
+    output << "ADGAME 3\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -61,6 +61,19 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << type.hitboxWidth << ' ' << type.hitboxHeight << ' '
                << type.attackCooldownSeconds << ' ' << type.speed << "\n";
     }
+    output << "weapon_defs " << project.weaponDefs.size() << "\n";
+    for (const WeaponDef& w : project.weaponDefs) {
+        output << "weapon_def " << w.id
+               << ' ' << static_cast<int>(w.type)
+               << ' ' << w.damage
+               << ' ' << w.range
+               << ' ' << w.attackCooldown
+               << ' ' << w.projectileSpeed
+               << ' ' << (w.spriteId.empty() ? "-" : w.spriteId)
+               << ' ' << (w.ammoTypeId.empty() ? "-" : w.ammoTypeId)
+               << ' ' << w.ammoPerShot << "\n";
+    }
+    output << "starting_weapon " << (project.startingWeaponId.empty() ? "-" : project.startingWeaponId) << "\n";
     output << "end\n";
     return static_cast<bool>(output);
 }
@@ -76,7 +89,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 2) {
+    if (magic != "ADGAME" || version < 1 || version > 3) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -124,6 +137,28 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             }
             if (!type.id.empty()) {
                 loaded.enemyTypes.push_back(std::move(type));
+            }
+        } else if (version >= 3 && key == "weapon_defs") {
+            std::size_t count = 0;
+            input >> count;
+            loaded.weaponDefs.reserve(count);
+        } else if (version >= 3 && key == "weapon_def") {
+            WeaponDef w;
+            int weaponType = 0;
+            std::string spriteId;
+            std::string ammoTypeId;
+            input >> w.id >> weaponType >> w.damage >> w.range >> w.attackCooldown
+                  >> w.projectileSpeed >> spriteId >> ammoTypeId >> w.ammoPerShot;
+            w.type = (weaponType == 1) ? WeaponType::Ranged : WeaponType::Melee;
+            w.spriteId = (spriteId == "-") ? std::string{} : spriteId;
+            w.ammoTypeId = (ammoTypeId == "-") ? std::string{} : ammoTypeId;
+            if (!w.id.empty()) {
+                loaded.weaponDefs.push_back(std::move(w));
+            }
+        } else if (version >= 3 && key == "starting_weapon") {
+            input >> loaded.startingWeaponId;
+            if (loaded.startingWeaponId == "-") {
+                loaded.startingWeaponId.clear();
             }
         } else if (key == "end") {
             break;

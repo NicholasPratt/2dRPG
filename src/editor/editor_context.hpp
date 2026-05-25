@@ -2,6 +2,7 @@
 
 #include "editor/asset_directories.hpp"
 #include "game/chapter.hpp"
+#include "game/map.hpp"
 #include "game/project.hpp"
 
 #include <cstdint>
@@ -48,8 +49,13 @@ struct EditorContext {
     std::vector<game::EnemyPlacement> selectedScreenEnemies;
     std::string selectedScreenEnemiesOwnerId;
     std::vector<game::EnemyType> enemyTypes;
+    std::vector<game::WeaponDef> weaponDefs;
+    std::string startingWeaponId;
+    std::vector<game::MapItemPlacement> selectedScreenItems;
+    std::string selectedScreenItemsMapId;
     std::vector<std::string> importedCharacterIds;
     std::string playableCharacterId;
+    bool requestEditItems = false;
 
     void markDirty() { dirty = true; }
 };
