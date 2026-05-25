@@ -77,7 +77,9 @@ private:
     TileMap activeMap_;
     Texture floorTexture_;
     Texture wallTexture_;
-    Texture playerTexture_;
+    Texture prevFloorTexture_;
+    Texture prevWallTexture_;
+    RuntimeSprite playerSprite_;
     std::vector<RuntimePathEntity> pathEntities_;
     std::unordered_map<std::string, RuntimeSprite> loadedSprites_;
     std::vector<RuntimeProjectile> projectiles_;
@@ -89,6 +91,9 @@ private:
     float playerY_ = 0.0f;
     float playerFacingX_ = 1.0f;
     float playerFacingY_ = 0.0f;
+    float playerAnimSeconds_ = 0.0f;
+    std::string playerActionType_ = "idle";
+    bool playerIsMoving_ = false;
     int playerMaxHealth_ = 6;
     int playerHealth_ = 6;
     float meleeCooldownSeconds_ = 0.0f;
@@ -141,6 +146,8 @@ private:
     void renderTexture(const Texture& texture, float x, float y, float width, float height) const;
     void renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrame(const RuntimeSprite& sprite) const;
+    [[nodiscard]] const SpriteFrameDef* playerSpriteFrame(bool& flipHorizontal) const;
+    static std::string directionFromFacing(float fx, float fy);
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;
     void renderItems() const;
     void renderProjectiles() const;

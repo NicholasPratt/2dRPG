@@ -33,7 +33,7 @@ The goal is to develop a 2D Action RPG engine and integrated development environ
 - **Rendering:** The runtime renders pre-baked per-screen floor/wall PNGs and keeps `.admap` data for collision and structure.
 - **Screen Transitions:** Crossing a screen edge follows the current `ChapterScreen` north/south/east/west link and performs a sliding transition. The transition triggers when 30% of the player sprite has crossed the edge, only if the destination screen exists and the destination entry point is not blocked.
 - **Collision:** The current runtime collision model treats any nonzero `.admap` mid-layer cell as solid.
-- **Playable Character:** The runtime resolves the playable character through the active chapter, then the project library, then a legacy fallback scan of character files. The selected character's idle frame PNG is rendered as the player.
+- **Playable Character:** The runtime resolves the playable character through the active chapter, then the project library, then a legacy fallback scan of character files. The selected character's `sprite` field references a `.sprite.json` file; the engine loads that sprite metadata and its exported sheet PNG. The player is rendered using the direction-aware sprite animation system (see §4.3 and §4.4).
 - **Obstacles:** `.admap` files can store spike, pit, and timed-spike obstacle rectangles. Obstacles may reference sprite-editor sprites by ID and active hazards respawn the player at the map spawn.
 
 ## 4. The Integrated Editor (Critical Component)
@@ -72,7 +72,7 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Dynamic Character Editing:** Clicking "Edit Sprite" while a character is selected opens their specific sprite sheet for modification. [cite: 1]
 - **Return-to-Character Workflow:** Sprite editing launched from a character shows a Return to Character action. Returning saves/exports the sprite and refreshes the character's per-frame assignments.
 - **Playable Character Selection:** Character sheets include a Playable Character checkbox. Only one character is playable at a time.
-- **Frame Assignment:** Character sheets show exported sprite frame PNGs as individual thumbnails. Each frame can be assigned to an animation state via dropdown or custom text. Multiple frames may share a state such as `walk`.
+- **Frame Assignment:** In the sprite editor, each frame has an action type (e.g. `idle`, `walk`, `attack_1`), a facing direction (`E`, `W`, `N`, `S`, `NE`, `NW`, `SE`, `SW`, or empty for any direction), and a duration in ms. Multiple frames may share the same action + direction to form a looped animation clip. The runtime cycles through matching frames and auto-mirrors: if no west-facing frames exist, east-facing frames are flipped horizontally. The same mirroring applies for NW↔NE and SW↔SE.
 - **Per-Screen Graphics Isolation:** Each screen has its own set of floor/wall/preview PNGs (named `<mapId>_floor.png` etc.). Edits are held in per-screen in-memory buffers during the session and written to disk only on chapter save.
 - **Tile-Based Screen Graphics Tools:** The screen graphics editor includes `Tile Draw`, `Tile Select`, `Tile Paste`, `Stamp`, `Tile Fill`, and `Tile Erase`. `Tile Draw` fills a full 16×16 tile cell with the selected color and supports drag painting. `Tile Select` selects exactly one tile cell for copy/paste or palette capture. `Stamp` places the selected palette tile and supports drag painting across tile cells. `Tile Fill` flood-fills contiguous matching tiles with copies of the selected palette tile. `Tile Erase` clears full tile cells.
 - **Tile Palette System:** Tile selections can be added to a chapter-wide tile palette. Palette entries store floor and wall pixel data for the selected tile. Tile palette entries are static in the screen graphics editor; animation is authored through the Sprite editor rather than an in-panel animation preview.
@@ -99,7 +99,7 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Enemy Paths:** Enemy waypoint/spline data is stored as `.adpath` files under `assets/game/paths/` and is parsed by `src/game/path.*`. Current path files include enemy ID, sprite ID, behavior, curve mode, combat data, speed, loop, respawn, and waypoint data.
 - **Game-Ready Graphics:** Wall/Floor Paint exports floor, wall, and preview PNGs per screen to both `assets/raw/tilesets/` and `assets/game/tilesets/`, named `<mapId>_floor.png`, `<mapId>_wall.png`, `<mapId>_preview.png`. Writes are deferred until chapter save.
 - **Sprite Sheets:** The sprite editor exports `<id>_sheet.png` and individual `<id>_frame_<n>.png` files to `assets/raw/sprites/`, and metadata to `assets/game/sprites/<id>.sprite.json` on chapter save. Multiple open sprites are buffered in memory and all dirty ones are flushed together.
-- **Sprite Metadata:** `.sprite.json` is runtime-facing and parsed by `src/game/sprite.*`; the sprite editor can reopen metadata and import the referenced sheet pixels. Sprite frames include animation type labels.
+- **Sprite Metadata:** `.sprite.json` is runtime-facing and parsed by `src/game/sprite.*`; the sprite editor can reopen metadata and import the referenced sheet pixels. Each frame stores an action type label and an optional facing direction (`"E"`, `"W"`, `"N"`, `"S"`, `"NE"`, `"NW"`, `"SE"`, `"SW"`); omitting direction means the frame applies to any facing. The direction field is omitted from the JSON when empty for backward compatibility.
 
 ## 6. Implementation Status
 
@@ -117,6 +117,7 @@ Implemented:
 - **Runtime attack:** Z key for melee (hitbox sweep in facing direction, brief flash), X key for ranged (projectile with configurable speed/range). Both keys respect per-weapon cooldowns. Melee shows a direction-matched yellow flash; projectiles render as sprites or yellow rectangles.
 - **Runtime item collection:** player walks over item pickup to collect it. Weapon pickup equips the weapon to the melee/ranged slot. Ammo pickup adds to the ammo pool. Health pickup restores HP.
 - **HUD additions:** melee-weapon indicator bar and ammo pool bar rendered above the health hearts.
+- **Direction-aware player animation:** player sprite loaded from the character's `.sprite.json`. Action state (`idle`/`walk`) drives frame selection; 8-directional facing (`E/W/N/S/NE/NW/SE/SW`) selects directional frame subsets. W/NW/SW auto-mirror from E/NE/SE via horizontal texture flip. Animation timer resets on action-state change.
 
 Planned:
 

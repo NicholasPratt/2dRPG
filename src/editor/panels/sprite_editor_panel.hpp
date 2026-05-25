@@ -20,6 +20,7 @@ struct SpriteFrame {
     int height = game::kTileSize;
     int durationMs = 100;
     std::string type = "idle";
+    std::string direction;  // empty = any; "E","W","N","S","NE","NW","SE","SW"
 };
 
 struct SpriteLayer {

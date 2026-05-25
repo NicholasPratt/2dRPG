@@ -961,6 +961,68 @@ void SpriteEditorPanel::drawRightInspector(EditorContext& context)
     }
     ui::sliderInt("FPS", "##SpritePreviewFps", &playbackFps_, 1, 30, 120.0f, 44.0f);
 
+    sectionHeader("Frame");
+    if (selectedFrame_ >= 0 && selectedFrame_ < static_cast<int>(document_.frames.size())) {
+        SpriteFrame& frame = document_.frames[selectedFrame_];
+        ImGui::PushID(selectedFrame_);
+
+        constexpr const char* kFrameTypes[] = {
+            "idle", "walk", "run", "attack_1", "attack_2", "attack_3",
+            "cast", "hit_react", "guard", "interact", "conversation", "death",
+            "fall", "sleep", "jump", "land", "pickup", "use_item",
+            "hurt_loop", "stunned", "victory", "emote", "climb", "swim",
+            "dash", "block_break", "revive",
+        };
+        constexpr const char* kDirections[] = { "(any)", "E", "W", "N", "S", "NE", "NW", "SE", "SW" };
+
+        int selectedType = 0;
+        for (int i = 0; i < static_cast<int>(std::size(kFrameTypes)); ++i) {
+            if (frame.type == kFrameTypes[i]) { selectedType = i; break; }
+        }
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##FrameType", kFrameTypes[selectedType])) {
+            for (int i = 0; i < static_cast<int>(std::size(kFrameTypes)); ++i) {
+                if (ImGui::Selectable(kFrameTypes[i], selectedType == i)) {
+                    recordUndoState();
+                    frame.type = kFrameTypes[i];
+                    documentDirty_ = true;
+                }
+                if (selectedType == i) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame type / action");
+
+        int selectedDir = 0;
+        for (int i = 1; i < static_cast<int>(std::size(kDirections)); ++i) {
+            if (frame.direction == kDirections[i]) { selectedDir = i; break; }
+        }
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##FrameDir", kDirections[selectedDir])) {
+            for (int i = 0; i < static_cast<int>(std::size(kDirections)); ++i) {
+                if (ImGui::Selectable(kDirections[i], selectedDir == i)) {
+                    recordUndoState();
+                    frame.direction = (i == 0) ? "" : kDirections[i];
+                    documentDirty_ = true;
+                }
+                if (selectedDir == i) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Facing direction (empty = any direction)");
+
+        int dur = frame.durationMs;
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputInt("##FrameDur", &dur)) {
+            recordUndoState();
+            frame.durationMs = std::max(1, dur);
+            documentDirty_ = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duration (ms)");
+
+        ImGui::PopID();
+    }
+
     sectionHeader("Layers");
     drawLayers();
 
@@ -1248,7 +1310,7 @@ bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& me
     document_.frames.clear();
     document_.frames.reserve(metadata.frames.size());
     for (const game::SpriteFrameDef& frame : metadata.frames) {
-        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs, frame.type});
+        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs, frame.type, frame.direction});
     }
     document_.tags = metadata.tags;
     document_.layers.assign(1, SpriteLayer{});
@@ -1315,7 +1377,7 @@ void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
     metadata.frames.reserve(document_.frames.size());
     for (int i = 0; i < static_cast<int>(document_.frames.size()); ++i) {
         const SpriteFrame& frame = document_.frames[static_cast<std::size_t>(i)];
-        metadata.frames.push_back({i * document_.canvasSize[0], 0, document_.canvasSize[0], document_.canvasSize[1], frame.durationMs, frame.type});
+        metadata.frames.push_back({i * document_.canvasSize[0], 0, document_.canvasSize[0], document_.canvasSize[1], frame.durationMs, frame.type, frame.direction});
     }
 
     std::string ignoredError;

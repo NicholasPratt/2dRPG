@@ -334,7 +334,8 @@ Runtime behavior:
 - Direct launch with no arguments opens a project/chapter picker populated by scanning `projects/<project>/assets/game/chapters/*.adchapter` and repo-root fallback chapters.
 - Launch with a chapter path skips the picker. If the path is inside `assets/game/chapters`, the runtime derives `projectRoot` from that chapter path so maps, screen PNGs, sprites, characters, and project data load from the same project folder.
 - Loads the selected chapter, resolves `Chapter::startScreenId`, then loads the active screen's `.admap`.
-- Resolves the playable character from the active chapter/project library and loads its assigned idle frame PNG as the player texture.
+- Resolves the playable character from the active chapter/project library. Reads the character's `sprite` field (a `.sprite.json` path), loads the sprite metadata and sheet PNG as a `RuntimeSprite`, and drives player rendering from that sprite system rather than a single static texture.
+- Player animation state is `"idle"` when still and `"walk"` when moving; the timer resets on state change. `playerSpriteFrame()` selects from frames matching the current action type and 8-directional facing (`E/W/N/S/NE/NW/SE/SW`). Missing directional frames auto-mirror: W flips E, NW flips NE, SW flips SE (U-coordinate swap). Falls back to any frame of that action type when no directional match exists.
 - Uses `ChapterScreen::mapId` as the screen asset key for `.admap`, wall/floor PNGs, and `.adpath` map references.
 - Renders pre-baked screen art from `assets/game/tilesets/<mapId>_floor.png` and `<mapId>_wall.png`.
 - Falls back to debug-color rendering when screen PNGs are missing.
@@ -349,7 +350,6 @@ Runtime behavior:
 Current limitations:
 
 - Rendering uses fixed-pipeline OpenGL for speed of implementation; a shader/core-profile renderer is planned.
-- Runtime player animation is not yet advanced over time; the current player texture is the selected idle frame image.
 - Enemy defeat persistence is not implemented yet.
 - Collision is binary: nonzero mid-layer tile means solid.
 
@@ -363,6 +363,7 @@ Implemented in `src/editor/panels/sprite_editor_panel.*`.
 - Tools: pen, mirror, bucket, eraser, stroke, line, rect, circle, move, select, picker, shade.
 - Brush sizes 1×1, 2×2, 4×4.
 - Frame actions: add, copy, delete, clear.
+- **Frame metadata section** (right inspector): for the selected frame, exposes action type (combo: idle/walk/run/attack/etc.), facing direction (combo: any/E/W/N/S/NE/NW/SE/SW), and duration in ms. Changes are undo-able.
 - Transform actions: flip H/V, rotate CW — applied to selection or whole frame.
 - Clipboard: copy/paste selections.
 - OS-aware shortcuts: `Cmd+Z/C/V` (macOS), `Ctrl+Z/C/V` (other).
@@ -379,7 +380,8 @@ Sprite metadata is runtime-facing and implemented in `src/game/sprite.hpp/.cpp`:
 struct SpriteFrameDef {
     int x, y, width, height;
     int durationMs;
-    std::string type;
+    std::string type;       // animation action: "idle", "walk", "attack_1", etc.
+    std::string direction;  // facing direction: "E","W","N","S","NE","NW","SE","SW", or empty = any
 };
 
 struct SpriteMetadata {

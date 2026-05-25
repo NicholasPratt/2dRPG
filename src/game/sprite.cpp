@@ -199,6 +199,10 @@ bool readFrame(const std::string& s, std::size_t& pos, SpriteFrameDef& frame)
             if (!expect(s, pos, '"') || !readJsonString(s, pos, frame.type)) {
                 return false;
             }
+        } else if (key == "direction") {
+            if (!expect(s, pos, '"') || !readJsonString(s, pos, frame.direction)) {
+                return false;
+            }
         } else {
             skipJsonValue(s, pos);
         }
@@ -287,7 +291,11 @@ bool saveSpriteMetadata(const std::filesystem::path& path, const SpriteMetadata&
     for (std::size_t i = 0; i < metadata.frames.size(); ++i) {
         const SpriteFrameDef& frame = metadata.frames[i];
         output << "    {\"rect\": [" << frame.x << ", " << frame.y << ", " << frame.width << ", " << frame.height
-               << "], \"durationMs\": " << frame.durationMs << ", \"type\": \"" << jsonEscape(frame.type) << "\"}";
+               << "], \"durationMs\": " << frame.durationMs << ", \"type\": \"" << jsonEscape(frame.type) << "\"";
+        if (!frame.direction.empty()) {
+            output << ", \"direction\": \"" << jsonEscape(frame.direction) << "\"";
+        }
+        output << "}";
         output << (i + 1 == metadata.frames.size() ? "\n" : ",\n");
     }
     output << "  ],\n";

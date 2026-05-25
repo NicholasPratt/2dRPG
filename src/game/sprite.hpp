@@ -14,6 +14,7 @@ struct SpriteFrameDef {
     int height = 16;
     int durationMs = 100;
     std::string type = "idle";
+    std::string direction;  // empty = any direction; "E","W","N","S","NE","NW","SE","SW"
 };
 
 struct SpriteMetadata {

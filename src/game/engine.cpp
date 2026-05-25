@@ -164,7 +164,9 @@ Engine::~Engine()
 {
     destroyTexture(floorTexture_);
     destroyTexture(wallTexture_);
-    destroyTexture(playerTexture_);
+    destroyTexture(prevFloorTexture_);
+    destroyTexture(prevWallTexture_);
+    destroyTexture(playerSprite_.texture);
     for (auto& [id, sprite] : loadedSprites_) {
         destroyTexture(sprite.texture);
     }
@@ -189,7 +191,7 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
-    window_ = glfwCreateWindow(kScreenTilesW * kTileSize, kScreenTilesH * kTileSize, "Adventure Runtime", nullptr, nullptr);
+    window_ = glfwCreateWindow(kScreenTilesW * kTileSize * 2, kScreenTilesH * kTileSize * 2, "Adventure Runtime", nullptr, nullptr);
     if (window_ == nullptr) {
         setError(errorMessage, "Failed to create runtime window.");
         return false;
@@ -477,110 +479,83 @@ void Engine::loadAllSprites()
 
 void Engine::loadPlayableCharacter()
 {
-    destroyTexture(playerTexture_);
+    destroyTexture(playerSprite_.texture);
+    playerSprite_ = RuntimeSprite{};
+
     const std::filesystem::path characterDir = assetPath(projectRoot_, "assets/game/characters");
     std::error_code ec;
     if (!std::filesystem::exists(characterDir, ec)) {
         return;
     }
 
-    auto frameForCharacter = [&](const std::filesystem::path& path, bool* playableOut) -> std::filesystem::path {
-        if (playableOut != nullptr) {
-            *playableOut = false;
-        }
-        std::ifstream input(path);
-        if (!input) {
-            return {};
-        }
+    auto loadCharacterSprite = [&](const std::filesystem::path& charPath) -> bool {
+        std::ifstream input(charPath);
+        if (!input) return false;
 
         std::string key;
         input >> key;
-        if (key != "ADCHARACTER") {
-            return {};
-        }
+        if (key != "ADCHARACTER") return false;
         int version = 0;
         input >> version;
 
         bool playable = false;
-        std::filesystem::path idleFrame;
-        std::filesystem::path firstFrame;
+        std::filesystem::path spritePath;
         while (input >> key) {
             if (key == "playable") {
-                int value = 0;
-                input >> value;
-                playable = value != 0;
-                if (playableOut != nullptr) {
-                    *playableOut = playable;
-                }
-            } else if (key == "frame") {
-                int frameIndex = 0;
-                std::string state;
-                std::string image;
-                if (input >> frameIndex >> std::quoted(state) >> std::quoted(image)) {
-                    if (firstFrame.empty()) {
-                        firstFrame = image;
-                    }
-                    if (idleFrame.empty() && state == "idle") {
-                        idleFrame = image;
-                    }
-                }
+                int v = 0;
+                input >> v;
+                playable = v != 0;
+            } else if (key == "sprite") {
+                std::string p;
+                input >> std::quoted(p);
+                spritePath = p;
             } else if (key == "end") {
                 break;
-            } else if (key == "name" || key == "bio" || key == "sprite") {
+            } else if (key == "name" || key == "bio") {
                 std::string ignored;
                 input >> std::quoted(ignored);
+            } else if (key == "anim") {
+                std::string a, b;
+                input >> std::quoted(a) >> std::quoted(b);
+            } else if (key == "frame") {
+                int idx = 0;
+                std::string st, img;
+                input >> idx >> std::quoted(st) >> std::quoted(img);
             } else if (key == "animations" || key == "frames") {
                 std::size_t ignored = 0;
                 input >> ignored;
-            } else if (key == "anim") {
-                std::string ignoredA;
-                std::string ignoredB;
-                input >> std::quoted(ignoredA) >> std::quoted(ignoredB);
             }
         }
 
-        return idleFrame.empty() ? firstFrame : idleFrame;
-    };
+        if (!playable || spritePath.empty()) return false;
 
-    auto loadFrame = [&](const std::filesystem::path& frame) -> bool {
-        if (frame.empty()) {
-            return false;
+        const std::filesystem::path fullPath = spritePath.is_absolute() ? spritePath : projectRoot_ / spritePath;
+        std::string error;
+        if (!loadSpriteMetadata(fullPath, playerSprite_.metadata, &error)) return false;
+
+        std::filesystem::path sourcePath = playerSprite_.metadata.source;
+        if (sourcePath.empty()) {
+            sourcePath = std::filesystem::path("assets/raw/sprites") / (playerSprite_.metadata.id + "_sheet.png");
         }
-        const std::filesystem::path framePath = frame.is_absolute() ? frame : projectRoot_ / frame;
-        return loadTexture(framePath, playerTexture_, nullptr);
+        sourcePath = sourcePath.is_absolute() ? sourcePath : projectRoot_ / sourcePath;
+        playerSprite_.loaded = loadTexture(sourcePath, playerSprite_.texture, nullptr);
+        return playerSprite_.loaded;
     };
 
     if (!chapter_.playableCharacterId.empty()) {
-        if (loadFrame(frameForCharacter(characterDir / (chapter_.playableCharacterId + ".adcharacter"), nullptr))) {
-            return;
-        }
+        if (loadCharacterSprite(characterDir / (chapter_.playableCharacterId + ".adcharacter"))) return;
     }
 
     GameProject project;
     if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr) &&
         !project.playableCharacterId.empty()) {
-        if (loadFrame(frameForCharacter(characterDir / (project.playableCharacterId + ".adcharacter"), nullptr))) {
-            return;
-        }
+        if (loadCharacterSprite(characterDir / (project.playableCharacterId + ".adcharacter"))) return;
     }
 
-    std::filesystem::path fallbackFrame;
     for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(characterDir, ec)) {
-        if (ec || !entry.is_regular_file(ec) || entry.path().extension() != ".adcharacter") {
-            continue;
-        }
-
-        bool playable = false;
-        const std::filesystem::path selectedFrame = frameForCharacter(entry.path(), &playable);
-        if (!selectedFrame.empty() && fallbackFrame.empty()) {
-            fallbackFrame = selectedFrame;
-        }
-        if (playable && loadFrame(selectedFrame)) {
-            return;
-        }
+        if (ec || !entry.is_regular_file(ec) || entry.path().extension() != ".adcharacter") continue;
+        if (loadCharacterSprite(entry.path())) return;
     }
-
-    (void)loadFrame(fallbackFrame);
 }
 
 void Engine::update(float dt)
@@ -593,6 +568,8 @@ void Engine::update(float dt)
         transitionTime_ += dt;
         if (transitionTime_ >= transitionDuration_) {
             transitionState_ = TransitionState::None;
+            destroyTexture(prevFloorTexture_);
+            destroyTexture(prevWallTexture_);
         }
         return;
     }
@@ -625,6 +602,14 @@ void Engine::updatePlayer(float dt)
         playerFacingX_ = dx;
         playerFacingY_ = dy;
     }
+
+    const std::string newAction = (len > 0.0f) ? "walk" : "idle";
+    if (newAction != playerActionType_) {
+        playerActionType_ = newAction;
+        playerAnimSeconds_ = 0.0f;
+    }
+    playerAnimSeconds_ += dt;
+    playerIsMoving_ = (len > 0.0f);
 
     const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * dt;
     const float newY = playerY_ + dy * kPlayerSpeedPxPerSecond * dt;
@@ -931,6 +916,13 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
         return false;
     }
 
+    destroyTexture(prevFloorTexture_);
+    destroyTexture(prevWallTexture_);
+    prevFloorTexture_ = floorTexture_;
+    prevWallTexture_ = wallTexture_;
+    floorTexture_ = {};
+    wallTexture_ = {};
+
     if (!loadScreen(targetScreenId, &error)) {
         std::cerr << error << "\n";
         return false;
@@ -1073,10 +1065,27 @@ void Engine::render()
 
     float tx = 0.0f;
     float ty = 0.0f;
+    float transitionT = 0.0f;
     if (transitionState_ == TransitionState::Sliding) {
-        const float t = std::clamp(transitionTime_ / transitionDuration_, 0.0f, 1.0f);
-        tx = transitionFromX_ + (transitionToX_ - transitionFromX_) * t;
-        ty = transitionFromY_ + (transitionToY_ - transitionFromY_) * t;
+        transitionT = std::clamp(transitionTime_ / transitionDuration_, 0.0f, 1.0f);
+        tx = transitionFromX_ + (transitionToX_ - transitionFromX_) * transitionT;
+        ty = transitionFromY_ + (transitionToY_ - transitionFromY_) * transitionT;
+    }
+
+    if (transitionState_ == TransitionState::Sliding) {
+        const float prevTx = -transitionFromX_ * transitionT;
+        const float prevTy = -transitionFromY_ * transitionT;
+        glPushMatrix();
+        glTranslatef(prevTx, prevTy, 0.0f);
+        if (prevFloorTexture_.id != 0) {
+            renderTexture(prevFloorTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
+        } else {
+            renderFilledRect(0.0f, 0.0f, screenWidthPx(), screenHeightPx(), 0.12f, 0.18f, 0.20f, 1.0f);
+        }
+        if (prevWallTexture_.id != 0) {
+            renderTexture(prevWallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
+        }
+        glPopMatrix();
     }
 
     glPushMatrix();
@@ -1155,10 +1164,21 @@ void Engine::render()
 
     renderItems();
 
-    if (playerTexture_.id != 0) {
-        const float drawW = static_cast<float>(playerTexture_.width);
-        const float drawH = static_cast<float>(playerTexture_.height);
-        renderTexture(playerTexture_, playerX_ - drawW * 0.5f, playerY_ - drawH * 0.5f, drawW, drawH);
+    bool flipH = false;
+    const SpriteFrameDef* pf = playerSpriteFrame(flipH);
+    if (pf != nullptr && playerSprite_.texture.id != 0 &&
+        playerSprite_.texture.width > 0 && playerSprite_.texture.height > 0) {
+        const float tw = static_cast<float>(playerSprite_.texture.width);
+        const float th = static_cast<float>(playerSprite_.texture.height);
+        const float u0 = static_cast<float>(pf->x) / tw;
+        const float v0 = static_cast<float>(pf->y) / th;
+        const float u1 = static_cast<float>(pf->x + pf->width) / tw;
+        const float v1 = static_cast<float>(pf->y + pf->height) / th;
+        const float drawW = static_cast<float>(pf->width);
+        const float drawH = static_cast<float>(pf->height);
+        renderTextureRegion(playerSprite_.texture,
+            playerX_ - drawW * 0.5f, playerY_ - drawH * 0.5f, drawW, drawH,
+            flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
     } else {
         renderFilledRect(playerX_ - kPlayerSizePx * 0.5f, playerY_ - kPlayerSizePx * 0.5f,
             kPlayerSizePx, kPlayerSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
@@ -1204,6 +1224,67 @@ void Engine::renderTextureRegion(const Texture& texture, float x, float y, float
     glTexCoord2f(u0, v1); glVertex2f(x, y + height);
     glEnd();
     glDisable(GL_TEXTURE_2D);
+}
+
+std::string Engine::directionFromFacing(float fx, float fy)
+{
+    const float angle = std::atan2(fy, fx) * (180.0f / 3.14159265358979f);
+    if (angle > -22.5f  && angle <=  22.5f) return "E";
+    if (angle >  22.5f  && angle <=  67.5f) return "SE";
+    if (angle >  67.5f  && angle <= 112.5f) return "S";
+    if (angle > 112.5f  && angle <= 157.5f) return "SW";
+    if (angle >  157.5f || angle <= -157.5f) return "W";
+    if (angle > -157.5f && angle <= -112.5f) return "NW";
+    if (angle > -112.5f && angle <=  -67.5f) return "N";
+    return "NE";
+}
+
+const SpriteFrameDef* Engine::playerSpriteFrame(bool& flipHorizontal) const
+{
+    flipHorizontal = false;
+    if (playerSprite_.metadata.frames.empty()) return nullptr;
+
+    const std::string& action = playerActionType_;
+    const std::string dir = directionFromFacing(playerFacingX_, playerFacingY_);
+
+    // Mirror pair: flip East frames when facing these directions
+    const std::string mirrorOf = (dir == "W") ? "E" : (dir == "NW") ? "NE" : (dir == "SW") ? "SE" : "";
+
+    auto collectByDir = [&](const std::string& targetDir) -> std::vector<const SpriteFrameDef*> {
+        std::vector<const SpriteFrameDef*> out;
+        for (const SpriteFrameDef& frame : playerSprite_.metadata.frames) {
+            if (frame.type == action && (frame.direction.empty() || frame.direction == targetDir)) {
+                out.push_back(&frame);
+            }
+        }
+        return out;
+    };
+
+    std::vector<const SpriteFrameDef*> candidates = collectByDir(dir);
+
+    if (candidates.empty() && !mirrorOf.empty()) {
+        candidates = collectByDir(mirrorOf);
+        if (!candidates.empty()) flipHorizontal = true;
+    }
+
+    // Fall back to any frame of this action type
+    if (candidates.empty()) {
+        for (const SpriteFrameDef& frame : playerSprite_.metadata.frames) {
+            if (frame.type == action) candidates.push_back(&frame);
+        }
+    }
+
+    if (candidates.empty()) return &playerSprite_.metadata.frames.front();
+
+    int totalMs = 0;
+    for (const SpriteFrameDef* f : candidates) totalMs += std::max(1, f->durationMs);
+
+    int t = static_cast<int>(std::fmod(playerAnimSeconds_ * 1000.0f, static_cast<float>(totalMs)));
+    for (const SpriteFrameDef* f : candidates) {
+        t -= std::max(1, f->durationMs);
+        if (t < 0) return f;
+    }
+    return candidates.back();
 }
 
 const SpriteFrameDef* Engine::spriteFrame(const RuntimeSprite& sprite) const
