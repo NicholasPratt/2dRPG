@@ -33,7 +33,7 @@ public:
 
 private:
     enum class ActiveLayer { Floor = 0, Wall = 1 };
-    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase };
+    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select, PickColor, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase, TileRotate };
     enum class BrushShape { Square = 0, Circle, Spray, Dither };
     enum class SnapMode { None = 0, Full, Half, Quarter };
 
@@ -125,6 +125,7 @@ private:
     void floodFillTile(int x, int y, const TilePaletteEntry& tile);
     void fillTile(int x, int y, std::uint32_t color);
     void eraseTile(int x, int y);
+    void rotateTile(int x, int y, bool clockwise);
     void drawCanvas(EditorContext& context);
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawParallaxPreview();

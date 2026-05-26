@@ -40,6 +40,7 @@ constexpr const char* kToolNames[] = {
 constexpr int kMinCanvasSize = 1;
 constexpr int kMaxCanvasSize = 256;
 constexpr unsigned char kPngSignature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+constexpr int kSpriteSizePresets[] = {game::kTileSize, game::kTileSize * 2, game::kTileSize * 3, game::kTileSize * 4};
 
 void ensureDirectory(const std::filesystem::path& path)
 {
@@ -550,10 +551,10 @@ void SpriteEditorPanel::openCharacterSpriteReference(const std::filesystem::path
         });
     });
 
-    newSpriteSize_ = {game::kTileSize, game::kTileSize};
-    resizeSpriteSize_ = {game::kTileSize, game::kTileSize};
-    if (blankDocument && document_.canvasSize != std::array<int, 2>{game::kTileSize, game::kTileSize}) {
-        createBlankSprite(game::kTileSize, game::kTileSize);
+    newSpriteSize_ = {kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
+    resizeSpriteSize_ = document_.canvasSize;
+    if (blankDocument && document_.canvasSize != std::array<int, 2>{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize}) {
+        createBlankSprite(kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize);
         openSpriteReference(spriteReference);
     }
 }
@@ -607,7 +608,7 @@ void SpriteEditorPanel::resetDocumentBuffers()
     undoStack_.clear();
     selectedFrame_ = 0;
     selectedLayer_ = 0;
-    trackedCanvasSize_ = {game::kTileSize, game::kTileSize};
+    trackedCanvasSize_ = {kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
 }
 
 void SpriteEditorPanel::drawTopBar()
@@ -620,7 +621,7 @@ void SpriteEditorPanel::drawTopBar()
     ImGui::TextDisabled("[%dx%d]", document_.canvasSize[0], document_.canvasSize[1]);
     ImGui::SameLine();
     if (ImGui::Button("New Sprite", ImVec2(96.0f, 22.0f))) {
-        newSpriteSize_ = document_.canvasSize;
+        newSpriteSize_ = {kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
         openNewSpritePopup_ = true;
     }
 
@@ -639,11 +640,25 @@ void SpriteEditorPanel::drawTopBar()
     }
 
     if (ImGui::BeginPopupModal("New Sprite", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Dimensions  %dx%d", game::kTileSize, game::kTileSize);
+        int size[2]{newSpriteSize_[0], newSpriteSize_[1]};
+        if (ImGui::InputInt2("Dimensions", size)) {
+            newSpriteSize_[0] = clampDimension(size[0]);
+            newSpriteSize_[1] = clampDimension(size[1]);
+        }
+
+        for (int preset : kSpriteSizePresets) {
+            ImGui::PushID(preset);
+            if (ImGui::Button((std::to_string(preset) + "x" + std::to_string(preset)).c_str(), ImVec2(64.0f, 0.0f))) {
+                newSpriteSize_ = {preset, preset};
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        ImGui::NewLine();
 
         if (ImGui::Button("Create", ImVec2(120.0f, 0.0f))) {
             recordUndoState();
-            createBlankSprite(game::kTileSize, game::kTileSize);
+            createBlankSprite(newSpriteSize_[0], newSpriteSize_[1]);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -659,12 +674,25 @@ void SpriteEditorPanel::drawTopBar()
     }
 
     if (ImGui::BeginPopupModal("Resize Sprite", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Dimensions  %dx%d", game::kTileSize, game::kTileSize);
+        int size[2]{resizeSpriteSize_[0], resizeSpriteSize_[1]};
+        if (ImGui::InputInt2("Dimensions", size)) {
+            resizeSpriteSize_[0] = clampDimension(size[0]);
+            resizeSpriteSize_[1] = clampDimension(size[1]);
+        }
+        for (int preset : kSpriteSizePresets) {
+            ImGui::PushID(preset);
+            if (ImGui::Button((std::to_string(preset) + "x" + std::to_string(preset)).c_str(), ImVec2(64.0f, 0.0f))) {
+                resizeSpriteSize_ = {preset, preset};
+            }
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        ImGui::NewLine();
         ImGui::TextUnformatted("Resizes all frames and layers using nearest-neighbor scaling.");
 
         if (ImGui::Button("Resize", ImVec2(120.0f, 0.0f))) {
             recordUndoState();
-            resizeSprite(game::kTileSize, game::kTileSize);
+            resizeSprite(resizeSpriteSize_[0], resizeSpriteSize_[1]);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();

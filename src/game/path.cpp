@@ -51,7 +51,7 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
         return false;
     }
 
-    output << "ADPATH 3\n";
+    output << "ADPATH 4\n";
     output << "id " << enemyPath.id << "\n";
     output << "enemy " << encodedToken(enemyPath.enemyId) << "\n";
     output << "sprite " << encodedToken(enemyPath.spriteId) << "\n";
@@ -68,7 +68,10 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
     output << "respawn " << (enemyPath.respawn ? 1 : 0) << "\n";
     output << "waypoints " << enemyPath.waypoints.size() << "\n";
     for (const PathWaypoint& waypoint : enemyPath.waypoints) {
-        output << "wp " << waypoint.x << " " << waypoint.y << "\n";
+        output << "wp " << waypoint.x << " " << waypoint.y
+               << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
+               << ' ' << waypoint.facing
+               << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState) << "\n";
     }
     output << "end\n";
 
@@ -90,7 +93,7 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADPATH" || version < 1 || version > 3) {
+    if (magic != "ADPATH" || version < 1 || version > 4) {
         setError(errorMessage, "Unsupported path file type or version.");
         return false;
     }
@@ -179,6 +182,11 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
         if (!input) {
             setError(errorMessage, "Failed to read waypoint.");
             return false;
+        }
+        if (version >= 4) {
+            std::string animToken;
+            input >> waypoint.speedOverride >> waypoint.waitSeconds >> waypoint.facing >> animToken;
+            waypoint.animState = (animToken == "-") ? std::string{} : animToken;
         }
         loaded.waypoints.push_back(waypoint);
     }

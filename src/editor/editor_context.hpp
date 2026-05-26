@@ -50,12 +50,19 @@ struct EditorContext {
     std::string selectedScreenEnemiesOwnerId;
     std::vector<game::EnemyType> enemyTypes;
     std::vector<game::WeaponDef> weaponDefs;
+    std::vector<game::StateVariableDef> stateVariables;
+    std::vector<game::GameEffectDef> effectDefs;
     std::string startingWeaponId;
     std::vector<game::MapItemPlacement> selectedScreenItems;
     std::string selectedScreenItemsMapId;
+    std::vector<game::NpcPlacement> selectedScreenNpcs;
+    std::string selectedScreenNpcsOwnerId;
+    std::vector<game::NpcTypeDef> npcTypes;
     std::vector<std::string> importedCharacterIds;
     std::string playableCharacterId;
     bool requestEditItems = false;
+    bool requestEditNpcs = false;
+    bool requestEditNpcTypes = false;
 
     void markDirty() { dirty = true; }
 };

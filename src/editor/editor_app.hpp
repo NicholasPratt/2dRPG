@@ -8,6 +8,7 @@
 #include "editor/panels/sprite_editor_panel.hpp"
 #include "editor/panels/tileset_editor_panel.hpp"
 #include "editor/panels/item_placement_panel.hpp"
+#include "editor/panels/npc_editor_panel.hpp"
 #include "editor/panels/wall_floor_paint_panel.hpp"
 #include "editor/panels/weapon_editor_panel.hpp"
 
@@ -30,6 +31,7 @@ private:
     enum class MainTab {
         Characters,
         Weapons,
+        QuestState,
         Layout,
         Tilesets,
         WallFloorPaint,
@@ -42,6 +44,8 @@ private:
         Enemies,
         EnemyTypes,
         Items,
+        Npcs,
+        NpcTypes,
         Sprite,
     };
 
@@ -55,6 +59,7 @@ private:
     EnemyPathEditorPanel enemyPathEditor_;
     WeaponEditorPanel weaponEditor_;
     ItemPlacementPanel itemPlacementEditor_;
+    NpcEditorPanel npcEditor_;
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;
@@ -64,6 +69,8 @@ private:
     std::vector<game::EnemyPlacement> enemyPlacementSnapshot_;
     std::vector<game::EnemyType> enemyTypeSnapshot_;
     std::vector<game::MapItemPlacement> itemPlacementSnapshot_;
+    std::vector<game::NpcPlacement> npcPlacementSnapshot_;
+    std::vector<game::NpcTypeDef> npcTypeSnapshot_;
     bool startupChapterChosen_ = false;
     bool pendingExit_ = false;
     bool exitAccepted_ = false;
@@ -83,6 +90,8 @@ private:
     void refreshProjectList();
     void refreshChapterList();
     void selectProject(const std::string& projectId);
+    void loadProjectMetadata();
+    void saveProjectMetadata();
     void chooseChapter(const std::string& chapterId);
     void createChapter();
     void createProjectAndChapter();
@@ -95,6 +104,7 @@ private:
     void launchGame();
     void enterScreenMode(ScreenEditMode mode);
     void drawScreensTab();
+    void drawProjectStateTab();
     void drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving);
     void exitScreenModeSaving();
     void exitScreenModeDiscarding();

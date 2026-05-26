@@ -393,12 +393,35 @@ void EnemyPathEditorPanel::drawWaypointList(EditorContext& context)
     for (int i = 0; i < static_cast<int>(waypoints_.size()); ++i) {
         ImGui::PushID(i);
         const bool sel = (i == selectedWaypoint_);
-        char label[48];
-        std::snprintf(label, sizeof(label), "[%d]  %.0f, %.0f", i, waypoints_[i].x, waypoints_[i].y);
+        char label[64];
+        const Waypoint& wp = waypoints_[static_cast<std::size_t>(i)];
+        std::snprintf(label, sizeof(label), "[%d]  %.0f, %.0f%s", i, wp.x, wp.y, wp.waitSeconds > 0.0f ? " [W]" : "");
         if (ImGui::Selectable(label, sel)) {
             selectedWaypoint_ = i;
         }
         ImGui::PopID();
+    }
+    if (selectedWaypoint_ >= 0 && selectedWaypoint_ < static_cast<int>(waypoints_.size())) {
+        ImGui::Separator();
+        Waypoint& wp = waypoints_[static_cast<std::size_t>(selectedWaypoint_)];
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("Seg Speed", &wp.speedOverride, 1.0f, 10.0f, "%.0f")) { writeCurrentPlacement(context); }
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("Wait (s)", &wp.waitSeconds, 0.1f, 0.5f, "%.1f")) { writeCurrentPlacement(context); }
+        const char* facingNames[] = {"Unchanged", "South", "North", "East", "West"};
+        int facingIdx = wp.facing + 1;
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("Facing##wp", &facingIdx, facingNames, 5)) {
+            wp.facing = facingIdx - 1;
+            writeCurrentPlacement(context);
+        }
+        char animBuf[64]{};
+        std::memcpy(animBuf, wp.animState.data(), std::min(wp.animState.size(), sizeof(animBuf) - 1));
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("Anim##wp", animBuf, sizeof(animBuf))) {
+            wp.animState = animBuf;
+            writeCurrentPlacement(context);
+        }
     }
 }
 
@@ -774,7 +797,14 @@ void EnemyPathEditorPanel::selectPlacement(EditorContext& context, int index)
     respawn_ = placement.respawn;
     waypoints_.clear();
     for (const game::PathWaypoint& waypoint : placement.waypoints) {
-        waypoints_.push_back({waypoint.x, waypoint.y});
+        Waypoint wp;
+        wp.x = waypoint.x;
+        wp.y = waypoint.y;
+        wp.speedOverride = waypoint.speedOverride;
+        wp.waitSeconds = waypoint.waitSeconds;
+        wp.facing = waypoint.facing;
+        wp.animState = waypoint.animState;
+        waypoints_.push_back(std::move(wp));
     }
     selectedWaypoint_ = -1;
 }
@@ -795,7 +825,14 @@ void EnemyPathEditorPanel::writeCurrentPlacement(EditorContext& context)
     placement.waypoints.clear();
     placement.waypoints.reserve(waypoints_.size());
     for (const Waypoint& waypoint : waypoints_) {
-        placement.waypoints.push_back({waypoint.x, waypoint.y});
+        game::PathWaypoint pw;
+        pw.x = waypoint.x;
+        pw.y = waypoint.y;
+        pw.speedOverride = waypoint.speedOverride;
+        pw.waitSeconds = waypoint.waitSeconds;
+        pw.facing = waypoint.facing;
+        pw.animState = waypoint.animState;
+        placement.waypoints.push_back(std::move(pw));
     }
     context.markDirty();
 }

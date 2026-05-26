@@ -30,6 +30,7 @@ private:
     int spawnY_ = 1;
     int activeLayer_ = 1; // 0=floor, 1=mid, 2=ceiling
     bool testMode_ = false;
+    bool playerPlacementMode_ = false;
     float playerX_ = static_cast<float>(game::kTileSize);
     float playerY_ = static_cast<float>(game::kTileSize);
     uint16_t selectedTileId_ = 1;

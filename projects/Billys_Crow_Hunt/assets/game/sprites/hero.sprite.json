@@ -1,6 +1,6 @@
 {
-  "id": "new_sprite",
-  "source": "assets/raw/sprites/new_sprite_sheet.png",
+  "id": "hero",
+  "source": "assets/raw/sprites/hero_sheet.png",
   "canvasSize": [32, 32],
   "gridSize": [32, 32],
   "pivot": [16, 16],

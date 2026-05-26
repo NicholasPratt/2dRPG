@@ -155,7 +155,15 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
     }
 
     ui::checkbox("Obstacle edit", "##MapObstacleEdit", &obstacleMode_, 104.0f);
-    if (!obstacleMode_) {
+    ImGui::SameLine();
+    if (ui::checkbox("Player place", "##MapPlayerPlace", &playerPlacementMode_, 104.0f) && playerPlacementMode_) {
+        obstacleMode_ = false;
+        editMode_ = EditMode::Paint;
+    }
+    if (obstacleMode_) {
+        playerPlacementMode_ = false;
+    }
+    if (!obstacleMode_ && !playerPlacementMode_) {
         ImGui::SameLine();
         ImGui::TextUnformatted("Layer:");
         for (int l = 0; l < 3; ++l) {
@@ -201,6 +209,16 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
             ImGui::SetNextItemWidth(90.0f);
             ImGui::InputFloat("Phase s", &obstaclePhaseSeconds_, 0.1f, 0.5f, "%.2f");
             obstaclePhaseSeconds_ = std::clamp(obstaclePhaseSeconds_, 0.0f, 60.0f);
+        }
+    }
+
+    if (playerPlacementMode_) {
+        int spawn[2]{spawnX_, spawnY_};
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::InputInt2("Player tile", spawn)) {
+            spawnX_ = std::clamp(spawn[0], 0, width_ - 1);
+            spawnY_ = std::clamp(spawn[1], 0, height_ - 1);
+            context.markDirty();
         }
     }
 
@@ -285,9 +303,10 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
     }
 
     ImGui::Text("Spawn: %d,%d   Active tile ID: %d   Editing: %s",
-        spawnX_, spawnY_, static_cast<int>(selectedTileId_), obstacleMode_ ? "obstacles" : kLayerNames[activeLayer_]);
+        spawnX_, spawnY_, static_cast<int>(selectedTileId_),
+        playerPlacementMode_ ? "player placement" : (obstacleMode_ ? "obstacles" : kLayerNames[activeLayer_]));
     ImGui::Text("Map files: %s", context.assets.gameMapPath().string().c_str());
-    ImGui::TextDisabled("Tiles: left paint, right erase, S+hover spawn. Obstacles: left place, right erase. Ctrl+Z undo.");
+    ImGui::TextDisabled("Tiles: left paint, right erase. Player place: left set spawn. Obstacles: left place, right erase. Ctrl+Z undo.");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
@@ -408,11 +427,17 @@ void MapEditorPanel::drawGrid(EditorContext& context)
         }
     }
 
-    // Spawn indicator
+    // Player spawn indicator
     const ImVec2 spawnCenter{
         origin.x + static_cast<float>(spawnX_ * tileSize_) + static_cast<float>(tileSize_) * 0.5f,
         origin.y + static_cast<float>(spawnY_ * tileSize_) + static_cast<float>(tileSize_) * 0.5f,
     };
+    const float playerScale = static_cast<float>(tileSize_) / static_cast<float>(kWorldTileSize);
+    const float playerDraw = kPlayerSize * playerScale;
+    const ImVec2 playerMin{spawnCenter.x - playerDraw * 0.5f, spawnCenter.y - playerDraw * 0.5f};
+    const ImVec2 playerMax{playerMin.x + playerDraw, playerMin.y + playerDraw};
+    drawList->AddRectFilled(playerMin, playerMax, IM_COL32(80, 180, 255, playerPlacementMode_ ? 92 : 48), 3.0f);
+    drawList->AddRect(playerMin, playerMax, IM_COL32(5, 25, 45, 220), 3.0f, 0, playerPlacementMode_ ? 2.0f : 1.0f);
     drawList->AddCircleFilled(spawnCenter, std::max(4.0f, static_cast<float>(tileSize_) * 0.25f),
         IM_COL32(80, 180, 255, 255));
     drawList->AddCircle(spawnCenter, std::max(5.0f, static_cast<float>(tileSize_) * 0.32f),
@@ -479,6 +504,25 @@ void MapEditorPanel::drawGrid(EditorContext& context)
             recordUndo();
             eraseObstacleAt(x, y);
             context.markDirty();
+        }
+        return;
+    }
+
+    if (playerPlacementMode_) {
+        const ImVec2 playerGhostCenter{
+            origin.x + static_cast<float>(x * tileSize_) + static_cast<float>(tileSize_) * 0.5f,
+            origin.y + static_cast<float>(y * tileSize_) + static_cast<float>(tileSize_) * 0.5f,
+        };
+        const ImVec2 ghostMin{playerGhostCenter.x - playerDraw * 0.5f, playerGhostCenter.y - playerDraw * 0.5f};
+        const ImVec2 ghostMax{ghostMin.x + playerDraw, ghostMin.y + playerDraw};
+        drawList->AddRectFilled(ghostMin, ghostMax, IM_COL32(80, 180, 255, 70), 3.0f);
+        drawList->AddRect(ghostMin, ghostMax, IM_COL32(255, 255, 255, 230), 3.0f, 0, 2.0f);
+        ImGui::SetTooltip("Set player spawn [%d,%d]", x, y);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            spawnX_ = x;
+            spawnY_ = y;
+            context.markDirty();
+            status_ = "Player spawn set to [" + std::to_string(x) + "," + std::to_string(y) + "].";
         }
         return;
     }

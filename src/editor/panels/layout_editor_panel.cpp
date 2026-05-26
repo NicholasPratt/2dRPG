@@ -125,7 +125,6 @@ void LayoutEditorPanel::drawToolbar(EditorContext& context)
         context.markDirty();
     }
 
-    ImGui::SameLine();
     if (ImGui::Button("New screen")) {
         addScreen();
         syncContextScreens(context);
@@ -152,7 +151,7 @@ void LayoutEditorPanel::drawToolbar(EditorContext& context)
         context.requestChapterSwitch = true;
     }
 
-    ImGui::Text("Chapter files: %s", context.assets.gameChapterPath().string().c_str());
+    ImGui::TextWrapped("Chapter files: %s", context.assets.gameChapterPath().string().c_str());
     ImGui::TextDisabled("A chapter is a macro layout of linked screens. Each screen points at one .admap.");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
@@ -182,11 +181,13 @@ void LayoutEditorPanel::drawScreenList(EditorContext& context)
 void LayoutEditorPanel::drawMacroView(EditorContext& context)
 {
     ImGui::TextUnformatted("Screen Layout");
-    ImGui::SameLine();
+    ImGui::Separator();
+
     ui::sliderInt("Tile px", "##LayoutTilePx", &layoutTileSize_, 4, 18, 96.0f, 78.0f);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(92.0f);
     ImGui::InputScalar("Paint tile", ImGuiDataType_U16, &layoutSelectedTileId_);
+
     ImGui::TextUnformatted("Layer:");
     ImGui::SameLine();
     ImGui::RadioButton("Floor", &layoutActiveLayer_, 0);
@@ -194,7 +195,7 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
     ImGui::RadioButton("Walls", &layoutActiveLayer_, 1);
     ImGui::SameLine();
     ImGui::RadioButton("Ceiling", &layoutActiveLayer_, 2);
-    ImGui::SameLine();
+
     if (ImGui::Button("Wall Brush")) {
         layoutActiveLayer_ = 1;
         layoutSelectedTileId_ = 1;
@@ -206,7 +207,6 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
     ImGui::SameLine();
     ui::checkbox("Graphics preview", "##LayoutGraphicsPreview", &showGraphicsPreview_, 128.0f);
     if (showGraphicsPreview_) {
-        ImGui::SameLine(300.0f);
         ui::sliderFloat("Preview alpha", "##LayoutPreviewAlpha", &graphicsPreviewOpacity_, 0.15f, 1.0f, "%.2f", 96.0f, 110.0f);
     }
     ImGui::Separator();
@@ -249,6 +249,11 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         const ImVec2 max{min.x + screenSize.x, min.y + screenSize.y};
         const bool selected = selectedScreen_ == i;
         const bool start = screen.id == chapter_.startScreenId;
+        const bool visible = max.x >= origin.x && max.y >= origin.y &&
+            min.x <= origin.x + canvasSize.x && min.y <= origin.y + canvasSize.y;
+        if (!visible) {
+            continue;
+        }
 
         drawScreenTileLayout(context, drawList, screen, min, tileSize, selected);
         drawList->AddRect(min, max, selected ? IM_COL32(255, 231, 94, 255) : IM_COL32(92, 101, 112, 210), 0.0f, 0, selected ? 4.0f : 1.0f);
@@ -305,9 +310,34 @@ void LayoutEditorPanel::drawGraphicsPreview(EditorContext& context, ImDrawList* 
 
     GraphicsPreview& preview = graphicsPreviews_[map.id];
     const std::filesystem::path path = previewPathForMap(context, map.id);
+    const double now = ImGui::GetTime();
+    const bool shouldCheckDisk = preview.lastCheckedSeconds <= 0.0 ||
+        now - preview.lastCheckedSeconds > 1.0 ||
+        preview.path != path ||
+        preview.mapWidth != map.width ||
+        preview.mapHeight != map.height;
+
+    if (!shouldCheckDisk) {
+        if (!preview.loaded || preview.tileColors.size() != static_cast<std::size_t>(map.width * map.height)) {
+            return;
+        }
+        for (int y = 0; y < map.height; ++y) {
+            for (int x = 0; x < map.width; ++x) {
+                const std::uint32_t color = preview.tileColors[static_cast<std::size_t>(y * map.width + x)];
+                if (((color >> 24u) & 0xffu) == 0u) {
+                    continue;
+                }
+                const ImVec2 tileMin{min.x + static_cast<float>(x) * tileSize, min.y + static_cast<float>(y) * tileSize};
+                drawList->AddRectFilled(tileMin, {tileMin.x + tileSize, tileMin.y + tileSize}, packedColor(color, graphicsPreviewOpacity_));
+            }
+        }
+        return;
+    }
+
     std::error_code error;
     const bool exists = std::filesystem::exists(path, error);
     const std::filesystem::file_time_type lastWrite = exists ? std::filesystem::last_write_time(path, error) : std::filesystem::file_time_type{};
+    preview.lastCheckedSeconds = now;
 
     if (preview.path != path || preview.lastWrite != lastWrite ||
         preview.mapWidth != map.width || preview.mapHeight != map.height) {
@@ -316,6 +346,7 @@ void LayoutEditorPanel::drawGraphicsPreview(EditorContext& context, ImDrawList* 
         preview.lastWrite = lastWrite;
         preview.mapWidth = map.width;
         preview.mapHeight = map.height;
+        preview.lastCheckedSeconds = now;
 
         if (exists && !error) {
             int imageW = 0;
@@ -552,6 +583,18 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         context.requestEditItems = true;
     }
 
+    if (ImGui::Button("Edit NPCs", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditNpcs = true;
+    }
+
+    if (ImGui::Button("Edit NPC Types", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditNpcTypes = true;
+    }
+
     if (ImGui::Button("Edit Screen Graphics", ImVec2(-1.0f, 34.0f))) {
         // EditorApp consumes this request and opens the map/pixel editor on this screen's map.
         // The wall/mid layer remains outlined there for spatial context.
@@ -762,17 +805,22 @@ bool LayoutEditorPanel::saveCurrentChapter(EditorContext& context)
 
 void LayoutEditorPanel::applyContextSelectedScreenData(EditorContext& context)
 {
-    const std::string ownerId = context.selectedScreenEnemiesOwnerId.empty()
+    const std::string enemyOwnerId = context.selectedScreenEnemiesOwnerId.empty()
         ? context.selectedScreenId
         : context.selectedScreenEnemiesOwnerId;
-    if (ownerId.empty()) {
-        return;
+    if (!enemyOwnerId.empty()) {
+        if (game::ChapterScreen* screen = screenById(enemyOwnerId)) {
+            screen->enemies = context.selectedScreenEnemies;
+        }
     }
-    game::ChapterScreen* screen = screenById(ownerId);
-    if (screen == nullptr) {
-        return;
+    const std::string npcOwnerId = context.selectedScreenNpcsOwnerId.empty()
+        ? context.selectedScreenId
+        : context.selectedScreenNpcsOwnerId;
+    if (!npcOwnerId.empty()) {
+        if (game::ChapterScreen* screen = screenById(npcOwnerId)) {
+            screen->npcs = context.selectedScreenNpcs;
+        }
     }
-    screen->enemies = context.selectedScreenEnemies;
 }
 
 bool LayoutEditorPanel::selectScreenById(EditorContext& context, const std::string& screenId)
@@ -810,6 +858,8 @@ bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::strin
         context.selectedScreenMapId = chapter_.screens.front().mapId;
         context.selectedScreenEnemies = chapter_.screens.front().enemies;
         context.selectedScreenEnemiesOwnerId = chapter_.screens.front().id;
+        context.selectedScreenNpcs = chapter_.screens.front().npcs;
+        context.selectedScreenNpcsOwnerId = chapter_.screens.front().id;
     }
     syncContextScreens(context);
     context.dirty = false;
@@ -835,6 +885,8 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
     context.selectedScreenMapId = chapter_.screens.front().mapId;
     context.selectedScreenEnemies = chapter_.screens.front().enemies;
     context.selectedScreenEnemiesOwnerId = chapter_.screens.front().id;
+    context.selectedScreenNpcs = chapter_.screens.front().npcs;
+    context.selectedScreenNpcsOwnerId = chapter_.screens.front().id;
     syncContextScreens(context);
     context.markDirty();
     status_ = "Created new chapter: " + chapter_.id;
@@ -864,6 +916,8 @@ void LayoutEditorPanel::syncSelectedScreenToContext(EditorContext& context) cons
     context.selectedScreenMapId = screen.mapId;
     context.selectedScreenEnemies = screen.enemies;
     context.selectedScreenEnemiesOwnerId = screen.id;
+    context.selectedScreenNpcs = screen.npcs;
+    context.selectedScreenNpcsOwnerId = screen.id;
 }
 
 void LayoutEditorPanel::syncChapterIdBuffer()

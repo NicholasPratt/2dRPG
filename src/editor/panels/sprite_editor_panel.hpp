@@ -13,11 +13,13 @@
 
 namespace adventure::editor {
 
+constexpr int kDefaultSpriteCanvasSize = game::kTileSize * 2;
+
 struct SpriteFrame {
     int x = 0;
     int y = 0;
-    int width = game::kTileSize;
-    int height = game::kTileSize;
+    int width = kDefaultSpriteCanvasSize;
+    int height = kDefaultSpriteCanvasSize;
     int durationMs = 100;
     std::string type = "idle";
     std::string direction;  // empty = any; "E","W","N","S","NE","NW","SE","SW"
@@ -42,9 +44,9 @@ struct SpriteClipboard {
 struct SpriteDocument {
     std::string id = "new_sprite";
     std::filesystem::path sourcePng;
-    std::array<int, 2> canvasSize{game::kTileSize, game::kTileSize};
-    std::array<int, 2> gridSize{game::kTileSize, game::kTileSize};
-    std::array<int, 2> pivot{game::kTileSize / 2, game::kTileSize / 2};
+    std::array<int, 2> canvasSize{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
+    std::array<int, 2> gridSize{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
+    std::array<int, 2> pivot{kDefaultSpriteCanvasSize / 2, kDefaultSpriteCanvasSize / 2};
     std::vector<SpriteFrame> frames{{}};
     std::vector<SpriteLayer> layers{{}};
     std::vector<std::string> tags{"idle"};
@@ -54,7 +56,7 @@ struct SpriteDocument {
 
 struct SpriteUndoState {
     SpriteDocument document;
-    std::array<int, 2> trackedCanvasSize{game::kTileSize, game::kTileSize};
+    std::array<int, 2> trackedCanvasSize{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
     std::array<int, 4> selectionBounds{0, 0, 0, 0};
     int selectedFrame = 0;
     int selectedLayer = 0;
@@ -96,9 +98,9 @@ private:
     int playbackFps_ = 12;
     bool runAnimationPreview_ = false;
     float previewTimeSeconds_ = 0.0f;
-    std::array<int, 2> trackedCanvasSize_{game::kTileSize, game::kTileSize};
-    std::array<int, 2> newSpriteSize_{game::kTileSize, game::kTileSize};
-    std::array<int, 2> resizeSpriteSize_{game::kTileSize, game::kTileSize};
+    std::array<int, 2> trackedCanvasSize_{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
+    std::array<int, 2> newSpriteSize_{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
+    std::array<int, 2> resizeSpriteSize_{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
     std::array<int, 2> resizeSelectionSize_{1, 1};
     std::array<int, 2> dragStartPixel_{0, 0};
     std::array<int, 2> lastPaintPixel_{-1, -1};

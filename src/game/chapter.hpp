@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/project.hpp"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -9,6 +11,10 @@ namespace adventure::game {
 struct PathWaypoint {
     float x = 0.0f;
     float y = 0.0f;
+    float speedOverride = 0.0f;
+    float waitSeconds = 0.0f;
+    int facing = -1;
+    std::string animState;
 };
 
 enum class PathBehavior {
@@ -33,6 +39,22 @@ struct EnemyPlacement {
     std::vector<PathWaypoint> waypoints;
 };
 
+struct NpcPlacement {
+    std::string id = "npc_1";
+    std::string typeId = "npc_1";
+    float x = 0.0f;
+    float y = 0.0f;
+    int facing = 0; // 0=S, 1=N, 2=E, 3=W
+    float awarenessRadius = 64.0f;
+    float interactionRadius = 24.0f;
+    NpcMovementMode movementOverride = NpcMovementMode::Stationary;
+    std::vector<PathWaypoint> waypoints;
+    bool loop = true;
+    float speedOverride = 0.0f;
+    std::string graphOverride;
+    std::vector<DialogueLine> dialogueOverride;
+};
+
 struct ScreenLink {
     std::string north;
     std::string south;
@@ -48,6 +70,7 @@ struct ChapterScreen {
     ScreenLink links;
     bool respawnEnemies = false;
     std::vector<EnemyPlacement> enemies;
+    std::vector<NpcPlacement> npcs;
 };
 
 struct Chapter {

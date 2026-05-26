@@ -126,6 +126,47 @@ std::string sanitizedId(const char* value, const char* fallback)
     return id;
 }
 
+const char* stateVariableTypeName(game::StateVariableType type)
+{
+    switch (type) {
+        case game::StateVariableType::Integer:
+            return "Integer";
+        case game::StateVariableType::Boolean:
+            return "Boolean";
+        case game::StateVariableType::Item:
+            return "Item";
+    }
+    return "Integer";
+}
+
+const char* gameEffectTypeName(game::GameEffectType type)
+{
+    switch (type) {
+        case game::GameEffectType::SetInt:
+            return "Set Integer";
+        case game::GameEffectType::AddInt:
+            return "Add Integer";
+        case game::GameEffectType::SetBool:
+            return "Set Boolean";
+        case game::GameEffectType::GiveItem:
+            return "Give Item";
+        case game::GameEffectType::TakeItem:
+            return "Take Item";
+    }
+    return "Add Integer";
+}
+
+bool editString(const char* label, std::string& value)
+{
+    char buffer[128]{};
+    std::memcpy(buffer, value.data(), std::min(value.size(), sizeof(buffer) - 1));
+    if (ImGui::InputText(label, buffer, sizeof(buffer))) {
+        value = buffer;
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 EditorApp::EditorApp()
@@ -209,6 +250,23 @@ void EditorApp::draw()
         hasRequestedTab_ = true;
     }
 
+    if (context_.requestEditNpcs) {
+        context_.requestEditNpcs = false;
+        if (!context_.selectedScreenId.empty()) {
+            layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+        }
+        enterScreenMode(ScreenEditMode::Npcs);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
+    if (context_.requestEditNpcTypes) {
+        context_.requestEditNpcTypes = false;
+        enterScreenMode(ScreenEditMode::NpcTypes);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
     if (context_.requestEditSprite) {
         context_.requestEditSprite = false;
         if (!context_.requestedSpriteReference.empty()) {
@@ -246,6 +304,15 @@ void EditorApp::draw()
                     hasRequestedTab_ = false;
                 }
                 weaponEditor_.draw(context_);
+                ImGui::EndTabItem();
+            }
+
+            ImGuiTabItemFlags questStateTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::QuestState ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Quest State", nullptr, questStateTabFlags)) {
+                if (questStateTabFlags != 0) {
+                    hasRequestedTab_ = false;
+                }
+                drawProjectStateTab();
                 ImGui::EndTabItem();
             }
         }
@@ -302,6 +369,11 @@ void EditorApp::enterScreenMode(ScreenEditMode mode)
         enemyPlacementSnapshot_ = context_.selectedScreenEnemies;
     } else if (mode == ScreenEditMode::EnemyTypes) {
         enemyTypeSnapshot_ = context_.enemyTypes;
+    } else if (mode == ScreenEditMode::Npcs && !context_.selectedScreenId.empty()) {
+        layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+        npcPlacementSnapshot_ = context_.selectedScreenNpcs;
+    } else if (mode == ScreenEditMode::NpcTypes) {
+        npcTypeSnapshot_ = context_.npcTypes;
     } else if (mode == ScreenEditMode::Items && !context_.selectedScreenMapId.empty()) {
         // Load items from the current screen's map
         game::TileMap map;
@@ -355,11 +427,133 @@ void EditorApp::drawScreensTab()
             ImGui::Separator();
             itemPlacementEditor_.draw(context_);
             break;
+        case ScreenEditMode::Npcs:
+            drawScopedEditHeader("Editing Screen NPCs", true, true);
+            ImGui::Separator();
+            npcEditor_.draw(context_);
+            break;
+        case ScreenEditMode::NpcTypes:
+            drawScopedEditHeader("Editing NPC Types", true, true);
+            ImGui::Separator();
+            npcEditor_.drawTypes(context_);
+            break;
         case ScreenEditMode::Sprite:
             drawScopedEditHeader("Editing Sprite", true, true);
             ImGui::Separator();
             spriteEditor_.draw(context_);
             break;
+    }
+}
+
+void EditorApp::drawProjectStateTab()
+{
+    ImGui::TextUnformatted("State Variables");
+    ImGui::SameLine();
+    if (ImGui::Button("Add Variable")) {
+        game::StateVariableDef variable;
+        variable.id = "Variable_" + std::to_string(context_.stateVariables.size() + 1);
+        context_.stateVariables.push_back(std::move(variable));
+        context_.markDirty();
+    }
+
+    if (context_.stateVariables.empty()) {
+        ImGui::TextDisabled("No variables defined.");
+    }
+    for (int i = 0; i < static_cast<int>(context_.stateVariables.size()); ++i) {
+        game::StateVariableDef& variable = context_.stateVariables[static_cast<std::size_t>(i)];
+        ImGui::PushID(i);
+        ImGui::Separator();
+        if (editString("ID", variable.id)) {
+            context_.markDirty();
+        }
+        int type = static_cast<int>(variable.type);
+        if (ImGui::BeginCombo("Type", stateVariableTypeName(variable.type))) {
+            for (int t = 0; t < 3; ++t) {
+                const auto candidate = static_cast<game::StateVariableType>(t);
+                if (ImGui::Selectable(stateVariableTypeName(candidate), type == t)) {
+                    variable.type = candidate;
+                    context_.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (variable.type == game::StateVariableType::Integer) {
+            if (ImGui::DragInt("Default", &variable.defaultInt, 0.2f)) {
+                context_.markDirty();
+            }
+        } else if (variable.type == game::StateVariableType::Boolean) {
+            if (ImGui::Checkbox("Default", &variable.defaultBool)) {
+                context_.markDirty();
+            }
+        }
+        if (ImGui::Button("Delete Variable")) {
+            context_.stateVariables.erase(context_.stateVariables.begin() + i);
+            context_.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Reusable Effects");
+    ImGui::SameLine();
+    if (ImGui::Button("Add Effect")) {
+        game::GameEffectDef effect;
+        effect.id = "effect_" + std::to_string(context_.effectDefs.size() + 1);
+        if (!context_.stateVariables.empty()) {
+            effect.targetId = context_.stateVariables.front().id;
+        }
+        context_.effectDefs.push_back(std::move(effect));
+        context_.markDirty();
+    }
+
+    if (context_.effectDefs.empty()) {
+        ImGui::TextDisabled("No effects defined.");
+    }
+    for (int i = 0; i < static_cast<int>(context_.effectDefs.size()); ++i) {
+        game::GameEffectDef& effect = context_.effectDefs[static_cast<std::size_t>(i)];
+        ImGui::PushID(1000 + i);
+        ImGui::Separator();
+        if (editString("ID", effect.id)) {
+            context_.markDirty();
+        }
+        int type = static_cast<int>(effect.type);
+        if (ImGui::BeginCombo("Effect", gameEffectTypeName(effect.type))) {
+            for (int t = 0; t < 5; ++t) {
+                const auto candidate = static_cast<game::GameEffectType>(t);
+                if (ImGui::Selectable(gameEffectTypeName(candidate), type == t)) {
+                    effect.type = candidate;
+                    context_.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (editString("Target ID", effect.targetId)) {
+            context_.markDirty();
+        }
+        if (effect.type == game::GameEffectType::SetInt || effect.type == game::GameEffectType::AddInt) {
+            if (ImGui::DragInt("Value", &effect.intValue, 0.2f)) {
+                context_.markDirty();
+            }
+        } else if (effect.type == game::GameEffectType::SetBool) {
+            if (ImGui::Checkbox("Value", &effect.boolValue)) {
+                context_.markDirty();
+            }
+        }
+        if (ImGui::Button("Delete Effect")) {
+            context_.effectDefs.erase(context_.effectDefs.begin() + i);
+            context_.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Save Definitions", ImVec2(180.0f, 32.0f))) {
+        saveProjectMetadata();
     }
 }
 
@@ -405,6 +599,13 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::EnemyTypes:
             enemyPathEditor_.saveProjectEnemyTypes(context_);
             break;
+        case ScreenEditMode::Npcs:
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            (void)layoutEditor_.saveCurrentChapter(context_);
+            break;
+        case ScreenEditMode::NpcTypes:
+            npcEditor_.saveProjectNpcTypes(context_);
+            break;
         case ScreenEditMode::Items:
             itemPlacementEditor_.saveForScreen(context_);
             break;
@@ -437,6 +638,13 @@ void EditorApp::exitScreenModeDiscarding()
             break;
         case ScreenEditMode::EnemyTypes:
             context_.enemyTypes = enemyTypeSnapshot_;
+            break;
+        case ScreenEditMode::Npcs:
+            context_.selectedScreenNpcs = npcPlacementSnapshot_;
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            break;
+        case ScreenEditMode::NpcTypes:
+            context_.npcTypes = npcTypeSnapshot_;
             break;
         case ScreenEditMode::Items:
             context_.selectedScreenItems = itemPlacementSnapshot_;
@@ -530,8 +738,39 @@ void EditorApp::selectProject(const std::string& projectId)
     currentProjectId_ = projectId;
     context_.assets.projectRoot = projectsRoot() / currentProjectId_;
     ensureProjectDirectories();
+    loadProjectMetadata();
     chapterIds_.clear();
     refreshChapterList();
+}
+
+void EditorApp::loadProjectMetadata()
+{
+    game::GameProject project;
+    if (game::loadGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr)) {
+        context_.stateVariables = project.stateVariables;
+        context_.effectDefs = project.effectDefs;
+        context_.npcTypes = project.npcTypes;
+    } else {
+        context_.stateVariables.clear();
+        context_.effectDefs.clear();
+        context_.npcTypes.clear();
+    }
+}
+
+void EditorApp::saveProjectMetadata()
+{
+    if (currentProjectId_.empty()) {
+        return;
+    }
+
+    game::GameProject project;
+    if (!game::loadGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr)) {
+        project.id = "game";
+    }
+    project.stateVariables = context_.stateVariables;
+    project.effectDefs = context_.effectDefs;
+    project.npcTypes = context_.npcTypes;
+    (void)game::saveGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
 }
 
 void EditorApp::drawChapterMenu()
@@ -779,6 +1018,7 @@ void EditorApp::saveCurrentChapterAndExports()
         saveEditorState(statePath, editorState);
     }
 
+    saveProjectMetadata();
     refreshChapterList();
 }
 
@@ -797,6 +1037,12 @@ void EditorApp::saveActiveEditingScope()
             break;
         case ScreenEditMode::EnemyTypes:
             enemyPathEditor_.saveProjectEnemyTypes(context_);
+            break;
+        case ScreenEditMode::Npcs:
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            break;
+        case ScreenEditMode::NpcTypes:
+            npcEditor_.saveProjectNpcTypes(context_);
             break;
         case ScreenEditMode::Items:
             itemPlacementEditor_.saveForScreen(context_);

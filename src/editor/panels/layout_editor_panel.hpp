@@ -44,6 +44,7 @@ private:
         std::filesystem::file_time_type lastWrite{};
         int mapWidth = 0;
         int mapHeight = 0;
+        double lastCheckedSeconds = 0.0;
         bool loaded = false;
         std::vector<std::uint32_t> tileColors;
     };

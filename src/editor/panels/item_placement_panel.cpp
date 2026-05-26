@@ -112,20 +112,22 @@ void ItemPlacementPanel::draw(EditorContext& context)
     drawToolbar(context);
     ImGui::Separator();
 
-    const float listW = 200.0f;
-    const float inspH = 180.0f;
+    const float leftW = 240.0f;
+    const float inspH = 220.0f;
+    const float availableH = ImGui::GetContentRegionAvail().y;
 
-    ImGui::BeginChild("ItemListRegion", ImVec2(listW, -inspH - 8.0f), true);
+    ImGui::BeginChild("ItemLeftColumn", ImVec2(leftW, availableH), false);
+    ImGui::BeginChild("ItemListRegion", ImVec2(0.0f, std::max(120.0f, availableH - inspH - 8.0f)), true);
     drawItemList(context);
     ImGui::EndChild();
 
-    ImGui::BeginChild("ItemInspector", ImVec2(listW, inspH), true);
+    ImGui::BeginChild("ItemInspector", ImVec2(0.0f, inspH), true);
     drawInspector(context);
+    ImGui::EndChild();
     ImGui::EndChild();
 
     ImGui::SameLine();
-
-    ImGui::BeginChild("ItemCanvas", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_NoScrollbar);
+    ImGui::BeginChild("ItemCanvas", ImVec2(0.0f, availableH), false, ImGuiWindowFlags_HorizontalScrollbar);
     drawCanvas(context);
     ImGui::EndChild();
 }

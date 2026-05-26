@@ -101,43 +101,6 @@ std::filesystem::path resolveProjectPath(const EditorContext& context, const std
     return path.is_absolute() ? path : context.assets.projectRoot / path;
 }
 
-void drawFrameThumbnail(const EditorContext& context, const std::filesystem::path& imagePath)
-{
-    const std::filesystem::path resolved = resolveProjectPath(context, imagePath);
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    unsigned char* data = stbi_load(resolved.string().c_str(), &width, &height, &channels, 4);
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    constexpr float scale = 3.0f;
-    const ImVec2 size{48.0f, 48.0f};
-    ImGui::InvisibleButton("frame_thumb", size);
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(34, 38, 42, 255));
-    if (data != nullptr && width > 0 && height > 0) {
-        const float pixel = std::max(1.0f, std::min(size.x / static_cast<float>(width), size.y / static_cast<float>(height)));
-        const ImVec2 spriteOrigin{
-            origin.x + (size.x - static_cast<float>(width) * pixel) * 0.5f,
-            origin.y + (size.y - static_cast<float>(height) * pixel) * 0.5f,
-        };
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                const int i = (y * width + x) * 4;
-                const unsigned char a = data[i + 3];
-                if (a == 0) {
-                    continue;
-                }
-                const ImU32 color = IM_COL32(data[i + 0], data[i + 1], data[i + 2], a);
-                const ImVec2 min{spriteOrigin.x + static_cast<float>(x) * pixel, spriteOrigin.y + static_cast<float>(y) * pixel};
-                drawList->AddRectFilled(min, {min.x + pixel, min.y + pixel}, color);
-            }
-        }
-    }
-    drawList->AddRect(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(120, 128, 136, 220));
-    stbi_image_free(data);
-    (void)scale;
-}
-
 } // namespace
 
 CharacterEditorPanel::CharacterEditorPanel()
@@ -164,7 +127,7 @@ std::optional<std::filesystem::path> CharacterEditorPanel::draw(EditorContext& c
     const float listWidth = std::min(260.0f, std::max(180.0f, available.x * 0.28f));
 
     ImGui::BeginChild("CharacterList", ImVec2(listWidth, 0.0f), true);
-    drawCharacterList();
+    drawCharacterList(context);
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -185,6 +148,9 @@ void CharacterEditorPanel::setSelectedSpriteReference(EditorContext& context, co
     const std::string reference = spriteReference.generic_string();
     copyText(characters_[selectedCharacter_].spriteReference.data(), characters_[selectedCharacter_].spriteReference.size(), reference.c_str());
     syncFrameAssignmentsFromSprite(context, characters_[selectedCharacter_]);
+    syncedFrameCharacter_ = selectedCharacter_;
+    syncedFrameSpriteReference_ = textOf(characters_[selectedCharacter_].spriteReference.data());
+    frameThumbnails_.clear();
     context.markDirty();
     spriteEditAnimation_ = -1;
 }
@@ -192,6 +158,8 @@ void CharacterEditorPanel::setSelectedSpriteReference(EditorContext& context, co
 bool CharacterEditorPanel::saveForChapter(EditorContext& context)
 {
     bool allOk = true;
+    purgeDeletedCharacters(context);
+
     game::GameProject project;
     (void)game::loadGameProject(context.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
     project.id = "game";
@@ -209,6 +177,8 @@ bool CharacterEditorPanel::saveForChapter(EditorContext& context)
     project.characterIds.clear();
 
     for (const CharacterSheet& character : characters_) {
+        CharacterSheet writableCharacter = character;
+        allOk = ensureUniqueSprite(context, writableCharacter) && allOk;
         const std::string id = characterId(character);
         project.characterIds.push_back(id);
         context.importedCharacterIds.push_back(id);
@@ -216,7 +186,7 @@ bool CharacterEditorPanel::saveForChapter(EditorContext& context)
             project.playableCharacterId = id;
             context.playableCharacterId = id;
         }
-        allOk = saveCharacter(context, character) && allOk;
+        allOk = saveCharacter(context, writableCharacter) && allOk;
     }
     if (project.playableCharacterId.empty() && !project.characterIds.empty()) {
         project.playableCharacterId = project.characterIds.front();
@@ -239,6 +209,51 @@ void CharacterEditorPanel::addCharacter()
     }
     characters_.push_back(character);
     selectedCharacter_ = static_cast<int>(characters_.size()) - 1;
+    syncedFrameCharacter_ = -1;
+}
+
+void CharacterEditorPanel::deleteSelectedCharacter(EditorContext& context)
+{
+    if (characters_.size() <= 1 || selectedCharacter_ < 0 || selectedCharacter_ >= static_cast<int>(characters_.size())) {
+        return;
+    }
+
+    const int deletedIndex = selectedCharacter_;
+    const bool deletedPlayable = characters_[static_cast<std::size_t>(deletedIndex)].playable;
+    const std::string deletedId = characterId(characters_[static_cast<std::size_t>(deletedIndex)]);
+    if (!deletedId.empty()) {
+        deletedCharacterIds_.push_back(deletedId);
+    }
+
+    characters_.erase(characters_.begin() + deletedIndex);
+    selectedCharacter_ = std::clamp(deletedIndex, 0, static_cast<int>(characters_.size()) - 1);
+    spriteEditAnimation_ = -1;
+    syncedFrameCharacter_ = -1;
+    syncedFrameSpriteReference_.clear();
+    frameThumbnails_.clear();
+
+    if (deletedPlayable && !characters_.empty()) {
+        for (CharacterSheet& character : characters_) {
+            character.playable = false;
+        }
+        characters_[static_cast<std::size_t>(selectedCharacter_)].playable = true;
+    }
+
+    context.markDirty();
+}
+
+void CharacterEditorPanel::purgeDeletedCharacters(const EditorContext& context)
+{
+    if (deletedCharacterIds_.empty()) {
+        return;
+    }
+
+    std::error_code error;
+    for (const std::string& id : deletedCharacterIds_) {
+        std::filesystem::remove(context.assets.gameCharacterPath() / (id + ".adcharacter"), error);
+        error.clear();
+    }
+    deletedCharacterIds_.clear();
 }
 
 void CharacterEditorPanel::addDefaultAnimationSlots(CharacterSheet& character)
@@ -295,6 +310,93 @@ void CharacterEditorPanel::syncFrameAssignmentsFromSprite(EditorContext& context
     std::sort(character.frameAssignments.begin(), character.frameAssignments.end(), [](const CharacterFrameAssignment& a, const CharacterFrameAssignment& b) {
         return a.frameIndex < b.frameIndex;
     });
+}
+
+bool CharacterEditorPanel::ensureUniqueSprite(EditorContext& context, CharacterSheet& character)
+{
+    const std::string id = characterId(character);
+    const std::string targetReference = (std::filesystem::path("assets/game/sprites") / (id + ".sprite.json")).generic_string();
+    const std::string currentReference = textOf(character.spriteReference.data());
+    if (currentReference == targetReference) {
+        return true;
+    }
+
+    game::SpriteMetadata metadata;
+    std::string error;
+    const std::filesystem::path currentPath = currentReference.empty()
+        ? std::filesystem::path{}
+        : resolveProjectPath(context, currentReference);
+    if (currentPath.empty() || !game::loadSpriteMetadata(currentPath, metadata, &error)) {
+        metadata = game::SpriteMetadata{};
+        constexpr int defaultSpriteSize = game::kTileSize * 2;
+        metadata.canvasSize = {defaultSpriteSize, defaultSpriteSize};
+        metadata.gridSize = metadata.canvasSize;
+        metadata.pivot = {defaultSpriteSize / 2, defaultSpriteSize / 2};
+        metadata.frames = {{0, 0, defaultSpriteSize, defaultSpriteSize, 100, "idle", ""}};
+        metadata.tags = {"idle"};
+    }
+
+    const std::string oldSpriteId = metadata.id;
+    metadata.id = id;
+    const std::filesystem::path targetSourceRelative = std::filesystem::path("assets/raw/sprites") / (id + "_sheet.png");
+    const std::filesystem::path targetSource = context.assets.projectRoot / targetSourceRelative;
+    const std::filesystem::path sourcePath = metadata.source.empty()
+        ? std::filesystem::path{}
+        : resolveProjectPath(context, metadata.source);
+    std::error_code copyError;
+    std::filesystem::create_directories(context.assets.rawSprites, copyError);
+    if (!sourcePath.empty() && std::filesystem::exists(sourcePath, copyError) && sourcePath != targetSource) {
+        std::filesystem::copy_file(sourcePath, targetSource, std::filesystem::copy_options::overwrite_existing, copyError);
+    }
+    metadata.source = targetSourceRelative;
+
+    for (int i = 0; i < static_cast<int>(metadata.frames.size()); ++i) {
+        const std::filesystem::path oldFrame = context.assets.rawSprites / (oldSpriteId + "_frame_" + std::to_string(i + 1) + ".png");
+        const std::filesystem::path newFrame = context.assets.rawSprites / (id + "_frame_" + std::to_string(i + 1) + ".png");
+        copyError.clear();
+        if (!oldSpriteId.empty() && oldFrame != newFrame && std::filesystem::exists(oldFrame, copyError)) {
+            std::filesystem::copy_file(oldFrame, newFrame, std::filesystem::copy_options::overwrite_existing, copyError);
+        }
+    }
+
+    std::filesystem::create_directories(context.assets.gameSpritePath(), copyError);
+    if (!game::saveSpriteMetadata(context.assets.gameSpritePath() / (id + ".sprite.json"), metadata, &error)) {
+        return false;
+    }
+
+    copyText(character.spriteReference.data(), character.spriteReference.size(), targetReference.c_str());
+    for (CharacterAnimationSlot& slot : character.animations) {
+        if (textOf(slot.spriteReference.data()).empty() || textOf(slot.spriteReference.data()) == currentReference) {
+            copyText(slot.spriteReference.data(), slot.spriteReference.size(), targetReference.c_str());
+        }
+    }
+    for (CharacterFrameAssignment& assignment : character.frameAssignments) {
+        const std::filesystem::path imagePath = assignment.frameImage.data();
+        if (imagePath.filename().string().find(oldSpriteId + "_frame_") == 0) {
+            const std::filesystem::path newFrame = std::filesystem::path("assets/raw/sprites") /
+                (id + "_frame_" + std::to_string(assignment.frameIndex + 1) + ".png");
+            copyText(assignment.frameImage.data(), assignment.frameImage.size(), newFrame.generic_string().c_str());
+        }
+    }
+    syncFrameAssignmentsFromSprite(context, character);
+    syncedFrameCharacter_ = selectedCharacter_;
+    syncedFrameSpriteReference_ = textOf(character.spriteReference.data());
+    frameThumbnails_.clear();
+    context.markDirty();
+    return true;
+}
+
+void CharacterEditorPanel::syncSelectedFrameAssignments(EditorContext& context, CharacterSheet& character)
+{
+    const std::string spriteReference = textOf(character.spriteReference.data());
+    if (syncedFrameCharacter_ == selectedCharacter_ && syncedFrameSpriteReference_ == spriteReference) {
+        return;
+    }
+
+    syncFrameAssignmentsFromSprite(context, character);
+    syncedFrameCharacter_ = selectedCharacter_;
+    syncedFrameSpriteReference_ = spriteReference;
+    frameThumbnails_.clear();
 }
 
 void CharacterEditorPanel::loadCharacters(const EditorContext& context)
@@ -419,9 +521,79 @@ bool CharacterEditorPanel::saveCharacter(const EditorContext& context, const Cha
     return static_cast<bool>(output);
 }
 
-void CharacterEditorPanel::drawCharacterList()
+void CharacterEditorPanel::drawFrameThumbnail(const EditorContext& context, const std::filesystem::path& imagePath)
+{
+    const std::filesystem::path resolved = resolveProjectPath(context, imagePath);
+    const std::string cacheKey = resolved.generic_string();
+    FrameThumbnail& thumbnail = frameThumbnails_[cacheKey];
+    if (!thumbnail.loaded) {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        unsigned char* data = stbi_load(resolved.string().c_str(), &width, &height, &channels, 4);
+        if (data != nullptr && width > 0 && height > 0) {
+            thumbnail.width = width;
+            thumbnail.height = height;
+            thumbnail.pixels.resize(static_cast<std::size_t>(width * height));
+            for (int i = 0; i < width * height; ++i) {
+                const int j = i * 4;
+                thumbnail.pixels[static_cast<std::size_t>(i)] =
+                    (static_cast<std::uint32_t>(data[j + 3]) << 24u) |
+                    (static_cast<std::uint32_t>(data[j + 2]) << 16u) |
+                    (static_cast<std::uint32_t>(data[j + 1]) << 8u) |
+                     static_cast<std::uint32_t>(data[j + 0]);
+            }
+        }
+        stbi_image_free(data);
+        thumbnail.loaded = true;
+    }
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 size{48.0f, 48.0f};
+    ImGui::InvisibleButton("frame_thumb", size);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(34, 38, 42, 255));
+    if (thumbnail.width > 0 && thumbnail.height > 0 && !thumbnail.pixels.empty()) {
+        const float pixel = std::max(1.0f, std::min(size.x / static_cast<float>(thumbnail.width), size.y / static_cast<float>(thumbnail.height)));
+        const ImVec2 spriteOrigin{
+            origin.x + (size.x - static_cast<float>(thumbnail.width) * pixel) * 0.5f,
+            origin.y + (size.y - static_cast<float>(thumbnail.height) * pixel) * 0.5f,
+        };
+        for (int y = 0; y < thumbnail.height; ++y) {
+            for (int x = 0; x < thumbnail.width; ++x) {
+                const std::uint32_t rgba = thumbnail.pixels[static_cast<std::size_t>(y * thumbnail.width + x)];
+                const auto a = static_cast<unsigned char>((rgba >> 24u) & 0xffu);
+                if (a == 0) {
+                    continue;
+                }
+                const ImU32 color = IM_COL32((rgba >> 0u) & 0xffu, (rgba >> 8u) & 0xffu, (rgba >> 16u) & 0xffu, a);
+                const ImVec2 min{spriteOrigin.x + static_cast<float>(x) * pixel, spriteOrigin.y + static_cast<float>(y) * pixel};
+                drawList->AddRectFilled(min, {min.x + pixel, min.y + pixel}, color);
+            }
+        }
+    }
+    drawList->AddRect(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(120, 128, 136, 220));
+}
+
+void CharacterEditorPanel::drawCharacterList(EditorContext& context)
 {
     ImGui::TextUnformatted("Characters");
+    if (ImGui::Button("Add Character", ImVec2(-1.0f, 34.0f))) {
+        addCharacter();
+        spriteEditAnimation_ = -1;
+        context.markDirty();
+    }
+
+    const bool canDelete = characters_.size() > 1 && selectedCharacter_ >= 0 && selectedCharacter_ < static_cast<int>(characters_.size());
+    if (!canDelete) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Delete Character", ImVec2(-1.0f, 34.0f))) {
+        deleteSelectedCharacter(context);
+    }
+    if (!canDelete) {
+        ImGui::EndDisabled();
+    }
     ImGui::Separator();
 
     for (int i = 0; i < static_cast<int>(characters_.size()); ++i) {
@@ -433,19 +605,34 @@ void CharacterEditorPanel::drawCharacterList()
         ImGui::PopID();
     }
 
-    ImGui::Spacing();
-    if (ImGui::Button("+ Add character", ImVec2(-1.0f, 34.0f))) {
-        addCharacter();
-        spriteEditAnimation_ = -1;
-    }
 }
 
 std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(EditorContext& context)
 {
     selectedCharacter_ = std::clamp(selectedCharacter_, 0, static_cast<int>(characters_.size()) - 1);
     CharacterSheet& character = characters_[selectedCharacter_];
+    syncSelectedFrameAssignments(context, character);
 
     ImGui::TextUnformatted("Character Sheet");
+    ImGui::SameLine();
+    if (ImGui::Button("Add Character", ImVec2(130.0f, 30.0f))) {
+        addCharacter();
+        spriteEditAnimation_ = -1;
+        context.markDirty();
+        return std::nullopt;
+    }
+    ImGui::SameLine();
+    const bool canDelete = characters_.size() > 1;
+    if (!canDelete) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Delete Character", ImVec2(150.0f, 30.0f))) {
+        deleteSelectedCharacter(context);
+        return std::nullopt;
+    }
+    if (!canDelete) {
+        ImGui::EndDisabled();
+    }
     ImGui::Separator();
 
     ImGui::SetNextItemWidth(std::min(420.0f, ImGui::GetContentRegionAvail().x));
@@ -491,12 +678,14 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
         ImGui::SetTooltip("Open this sprite in the sprite editor");
     }
 
-    if (openSprite && character.spriteReference.data()[0] != '\0') {
+    if (openSprite) {
+        ensureUniqueSprite(context, character);
         spriteEditAnimation_ = -1;
         return resolveProjectPath(context, character.spriteReference.data());
     }
 
-    if (ImGui::Button("Edit Sprite", ImVec2(140.0f, 32.0f)) && character.spriteReference.data()[0] != '\0') {
+    if (ImGui::Button("Edit Sprite", ImVec2(140.0f, 32.0f))) {
+        ensureUniqueSprite(context, character);
         spriteEditAnimation_ = -1;
         return resolveProjectPath(context, character.spriteReference.data());
     }
@@ -504,6 +693,9 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
     ImGui::SameLine();
     if (ImGui::Button("Refresh Frames", ImVec2(140.0f, 32.0f))) {
         syncFrameAssignmentsFromSprite(context, character);
+        syncedFrameCharacter_ = selectedCharacter_;
+        syncedFrameSpriteReference_ = textOf(character.spriteReference.data());
+        frameThumbnails_.clear();
         context.markDirty();
     }
 
@@ -516,7 +708,6 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
 
 void CharacterEditorPanel::drawFrameAssignments(EditorContext& context, CharacterSheet& character)
 {
-    syncFrameAssignmentsFromSprite(context, character);
     ImGui::TextUnformatted("Sprite Frames");
     ImGui::TextDisabled("Assign each frame to an animation state. Multiple frames can share the same state.");
 

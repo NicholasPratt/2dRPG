@@ -4,7 +4,7 @@ This project is a C++ 2D RPG engine and integrated editor scaffold targeting a S
 
 The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
-The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters and enemy types live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
+The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters, enemy types, weapon definitions, and project state/effect definitions live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
 
 ## Current Layout
 
@@ -20,7 +20,7 @@ The current asset architecture separates reusable game-library assets from chapt
       tilesets/                     # raw map tileset images
     game/
       project.json                  # legacy/simple asset root manifest
-      project.adgame                # game-library manifest: character ids + default playable character
+      project.adgame                # game-library manifest: characters, enemies, weapons, quest state/effects
       chapters/                     # .adchapter chapter files
       maps/                         # .admap tile maps
       sprites/                      # .sprite.json metadata
@@ -39,6 +39,7 @@ The current asset architecture separates reusable game-library assets from chapt
           maps/                     # project .admap files
           sprites/                  # project .sprite.json files
           characters/               # project .adcharacter files
+          paths/                    # project .adpath enemy waypoint paths
           tilesets/                 # project screen graphics and tileset definitions
   external/
     imgui/                          # Dear ImGui source and backends
@@ -70,8 +71,9 @@ The current asset architecture separates reusable game-library assets from chapt
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
       map.hpp/.cpp                  # TileMap type and .admap load/save (v5 adds item placements)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save
-      project.hpp/.cpp              # GameProject type and .adgame load/save (v3 adds weapon defs)
+      project.hpp/.cpp              # GameProject type and .adgame load/save (v4 adds state/effect defs)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
+      state.hpp/.cpp                # GameState runtime store and .adstate save/load
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
       weapon.hpp                    # WeaponDef struct (header-only; stored in project.adgame)
 ```
@@ -80,10 +82,10 @@ The current asset architecture separates reusable game-library assets from chapt
 
 ```text
 imgui                    Static Dear ImGui library.
-adventure_game           Runtime-facing game/data code (chapter, project, map, path, sprite metadata, tileset).
+adventure_game           Runtime-facing game/data code (chapter, project, map, path, sprite metadata, state, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads .admap, .adchapter, .sprite.json, and round-trips .adpath through runtime code.
+adventure_game_smoke     Loads .admap, .adchapter, .sprite.json, and round-trips .adpath, .adstate, and project state/effect definitions through runtime code.
 adventure_game_window    GLFW/OpenGL runtime game window (built when OpenGL + GLFW found).
 adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
@@ -125,15 +127,14 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 
 | Tab | Panel | Purpose |
 |-----|-------|---------|
-| Characters | `CharacterEditorPanel` | Character sheets with sprite references |
+| Characters | `CharacterEditorPanel` | Character sheets with sprite references, Add Character/Delete Character, playable selection |
 | Weapons | `WeaponEditorPanel` | Create/edit project-level WeaponDefs (melee + ranged) and set starting weapon |
-| Sprites | `SpriteEditorPanel` | Full pixel-art sprite / animation editor with `.sprite.json` round-trip |
+| Quest State | inline `EditorApp` project-state view | Create/edit designer-defined state variables and reusable effects |
 | Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
-| Enemies | `EnemyPathEditorPanel` | Enemy instance editor with sprite ID, animation-state guidance, and linear/spline patrol paths |
 | Assets | *(inline)* | Asset directory listing |
 
-`WallFloorPaintPanel` is not a standalone top-level tab anymore. It is opened contextually from the Screens tab via `Edit Screen Graphics` and includes a Back to Screens button.
+`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, and `ItemPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, and `Edit Items` open scoped screen editors.
 
 ---
 
@@ -144,19 +145,40 @@ Implemented in `src/game/project.hpp/.cpp`.
 `assets/game/project.adgame` is the project-level game-library manifest. It currently stores:
 
 ```cpp
+enum class StateVariableType { Integer, Boolean, Item };
+struct StateVariableDef {
+    std::string id;
+    StateVariableType type;
+    int defaultInt;
+    bool defaultBool;
+};
+
+enum class GameEffectType { SetInt, AddInt, SetBool, GiveItem, TakeItem };
+struct GameEffectDef {
+    std::string id;
+    GameEffectType type;
+    std::string targetId;
+    int intValue;
+    bool boolValue;
+};
+
 struct GameProject {
     std::string id;
     std::string playableCharacterId;
+    std::string startingWeaponId;
     std::vector<std::string> characterIds;
     std::vector<std::string> chapterIds;
     std::vector<EnemyType> enemyTypes;
+    std::vector<WeaponDef> weaponDefs;
+    std::vector<StateVariableDef> stateVariables;
+    std::vector<GameEffectDef> effectDefs;
 };
 ```
 
 Format:
 
 ```text
-ADGAME 2
+ADGAME 4
 id game
 playable hero
 characters 2
@@ -166,6 +188,13 @@ chapters 1
 chapter chapter_1
 enemy_types 1
 enemy_type slime slime 3 1 12.0 12.0 1.0 64.0
+weapon_defs 1
+weapon_def slingshot 1 1 96.0 0.35 240.0 ammo_stone ammo_stone 1
+starting_weapon slingshot
+state_defs 1
+state_def Example_Count 0 0 0
+effect_defs 1
+effect_def increment_example 1 Example_Count 1 1
 end
 ```
 
@@ -173,6 +202,8 @@ Editor behavior:
 
 - `CharacterEditorPanel::saveForChapter` saves reusable character documents and writes `project.adgame`.
 - `EnemyPathEditorPanel::saveProjectEnemyTypes` saves reusable enemy type definitions into `project.adgame`.
+- `WeaponEditorPanel` saves weapon definitions and the project starting weapon into `project.adgame`.
+- The Quest State tab in `EditorApp` saves state variable definitions and reusable effect definitions into `project.adgame`.
 - Character documents remain reusable library assets under `assets/game/characters/`.
 - Chapters import character ids from the current character library and store the chapter playable character id.
 
@@ -181,6 +212,7 @@ Runtime behavior:
 - `Engine::loadPlayableCharacter` first resolves `Chapter::playableCharacterId`.
 - If the chapter has no playable id, it falls back to `project.adgame`.
 - A legacy scan of `.adcharacter` files remains as a fallback.
+- Weapon pickups call into `GameState::giveItem`, so item ownership and quest state use the same runtime registry.
 
 ## Chapter System
 
@@ -239,6 +271,8 @@ v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files 
 - Save/load from `assets/game/chapters/<id>.adchapter`. Chapter save also saves dirty `.admap` files edited in the Screens tab.
 - `Edit Screen Graphics` opens the context-aware `WallFloorPaintPanel` subview for the selected screen's map id.
 - Screen layout can show scaled graphics previews from `<mapId>_preview.png` behind the structural tile overlay.
+- Screen layout UI rows avoid fixed-position label overlap; long chapter paths wrap instead of drawing across controls.
+- Graphics preview file checks are throttled and off-canvas screens are skipped to keep the main Screens page responsive on larger chapter layouts.
 
 ---
 
@@ -257,13 +291,14 @@ struct TileMap {
     // Layer 0: floor   Layer 1: mid (player-level, collision)   Layer 2: ceiling
     std::array<std::vector<uint16_t>, 3> layers;
     std::vector<MapObstacle> obstacles;
+    std::vector<MapItemPlacement> items;
 };
 ```
 
-### `.admap` format (v4)
+### `.admap` format (v5)
 
 ```text
-ADMAP 4
+ADMAP 5
 id new_map
 tileset overworld
 size 48 32
@@ -279,11 +314,14 @@ layer 2
 obstacles 2
 obstacle 0 spikes 5 5 2 1 1.0 0.0 0.0
 obstacle 2 timed_spikes 8 5 2 1 1.0 1.0 0.5
+items 1
+item item_1 1 ammo_stone 5 384.0 256.0 0 ammo_pickup
 end
 ```
 
 Obstacle fields: `type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`.
-Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) both load into `layers[1]` (mid layer); floor/ceiling default to zero. v3 files load with no obstacles.
+Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`.
+Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) both load into `layers[1]` (mid layer); floor/ceiling default to zero. v3 files load with no obstacles. v4 files load with no items.
 
 ### Map Editor
 
@@ -295,6 +333,17 @@ Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) bo
 - Test-game mode: arrow-key player movement with tile-based collision on the mid layer.
 - Obstacle edit mode: place/remove spike, pit, and timed-spike rectangles, assign a sprite ID, and jump directly to the sprite editor for that hazard sprite.
 - Save/load: `assets/game/maps/<id>.admap`.
+
+### Item Placement Editor
+
+Implemented in `src/editor/panels/item_placement_panel.*`.
+
+- Opened from the selected screen inspector via `Edit Items`.
+- Places weapon, ammo, and health pickups into the selected screen's `.admap` items section.
+- Left column contains the item list and selected-item properties; the placement canvas is top-aligned to the right.
+- Canvas shows the selected screen's floor/wall graphics, wall guide, tile grid, and diamond item markers.
+- Left-click selects or places an item; drag moves the selected item; right-click deletes the nearest item.
+- Inspector fields edit ID, pickup type, target weapon/ammo ID, quantity/HP restore, respawn flag, and optional sprite ID.
 
 ---
 
@@ -346,6 +395,9 @@ Runtime behavior:
 - Runs a sliding screen transition after validating the linked screen exists and the destination entry point is not blocked.
 - Loads `.adpath` files matching the active screen's `mapId`, advances runtime path entities along linear or spline waypoints, and renders their referenced sprite sheet when available.
 - Evaluates `.admap` obstacles; active spikes, pits, and timed spikes respawn the player at the map spawn with a short cooldown.
+- Supports melee and ranged attack actions. Z triggers melee and X triggers ranged projectiles, both using `WeaponDef` cooldown/range/damage data.
+- Collects `.admap` item pickups. Weapon pickups equip slots and register item ownership in `GameState`; ammo and health pickups update runtime inventory/health.
+- Maintains a generic `GameState` registry for named ints, bools, and owned item IDs.
 
 Current limitations:
 
@@ -404,6 +456,56 @@ Export/import paths:
 | Export all frame PNGs | `assets/raw/sprites/<id>_frame_<n>.png` |
 | Export sprite sheet | `assets/raw/sprites/<id>_sheet.png` |
 | Import PNG | per Source PNG field |
+
+---
+
+## Character Editor
+
+Implemented in `src/editor/panels/character_editor_panel.*`.
+
+- Saves reusable character sheets to `assets/game/characters/<id>.adcharacter`.
+- Character sheets store name, bio, sprite metadata reference, playable flag, animation slots, and per-frame assignments.
+- Add Character and Delete Character controls are visible in the main character workflow.
+- Delete Character removes the entry from the active editor list immediately and deletes the `.adcharacter` file on the next save. The panel prevents deleting the last remaining character.
+- Only one character can be marked playable at a time.
+- Sprite editing launched from a character ensures that character gets its own sprite metadata/sheet files before editing, preventing one character's sprite edits from overwriting another character's sprite sheet.
+- Frame assignments are synced from sprite metadata only when the selected sprite changes or Refresh Frames is pressed.
+- Frame thumbnail PNGs are decoded once and cached for the editing session, avoiding per-frame disk I/O during normal draw calls.
+
+---
+
+## Game State Registry
+
+Implemented in `src/game/state.hpp/.cpp`.
+
+```cpp
+class GameState {
+public:
+    int getInt(const std::string& id, int fallback = 0) const;
+    void setInt(const std::string& id, int value);
+    int addInt(const std::string& id, int delta);
+    bool getBool(const std::string& id, bool fallback = false) const;
+    void setBool(const std::string& id, bool value);
+    bool hasItem(const std::string& id) const;
+    void giveItem(const std::string& id);
+    void takeItem(const std::string& id);
+};
+```
+
+`.adstate` stores runtime values:
+
+```text
+ADSTATE 1
+ints 1
+int Example_Count 12
+bools 1
+bool Example_Complete 1
+items 1
+item example_reward
+end
+```
+
+Variable names are designer-authored. Example quest names such as `Crows_Killed` are content examples, not hard-coded engine behavior.
 
 ---
 
@@ -576,22 +678,23 @@ Runtime:
 | §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data; runtime currently moves non-idle paths |
 | §4.4 Enemy sprite references and animation-state authoring | ✅ Enemy paths reference sprite IDs; sprite frame types author states |
 | §4.4 Enemy combat data | ✅ Health, contact damage, hitbox, contact cooldown |
+| §4.5 Game state registry | ✅ Generic `GameState`, `.adstate`, `.adgame` v4 state/effect definitions, Quest State editor tab |
 | §5 Save/load (JSON, text formats) | ✅ |
 | §6 Runtime game engine (rendering, screen-flip) | ✅ Basic GLFW/OpenGL runtime shell |
 | §6 Runtime collision | ✅ Tile collision against `.admap` mid layer |
 
 ## Near-Term Priorities
 
-1. Add player attack actions, enemy defeat flow, drops, and per-screen defeated enemy persistence.
-2. Add item game-library documents plus chapter import and placement UI.
-3. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
-4. Persist defeated-enemy state per chapter/screen according to the respawn flags.
+1. Add enemy defeat flow, drops, and per-screen defeated enemy persistence.
+2. Add NPC definitions, NPC placements, interaction runtime, and flow graph execution on top of the generic state/effect system.
+3. Add item game-library documents plus chapter import UX beyond the current screen placement editor.
+4. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
 5. Extend collision beyond nonzero-mid-layer solid tiles only when design needs require transparent/interaction flags.
 
 ## Engineering Notes
 
 - Keep editor UI state out of `src/game`.
-- File format parsing belongs in runtime-facing modules when the game needs to load that format. Current shared parsers: chapter, map, path, sprite metadata, tileset.
+- File format parsing belongs in runtime-facing modules when the game needs to load that format. Current shared parsers: chapter, map, path, project, sprite metadata, state, tileset.
 - Prefer readable text formats while the project is small.
 - Collision is currently tile-based on the mid layer only. Pixel-perfect collision and transparent-object flags are future concerns.
 - The sprite editor undo stack snapshots whole state. Command-based undo should replace it once documents become large.

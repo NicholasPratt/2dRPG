@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <system_error>
 
@@ -11,7 +12,9 @@ namespace {
 
 constexpr int kMaxScreens = 1024;
 constexpr int kMaxScreenEnemies = 2048;
+constexpr int kMaxScreenNpcs = 1024;
 constexpr int kMaxEnemyWaypoints = 4096;
+constexpr int kMaxNpcWaypoints = 4096;
 constexpr int kMinGridCoord = -512;
 constexpr int kMaxGridCoord = 512;
 
@@ -66,6 +69,15 @@ bool validChapterShape(const Chapter& chapter)
                 return false;
             }
         }
+        if (screen.npcs.size() > kMaxScreenNpcs) {
+            return false;
+        }
+        for (const NpcPlacement& npc : screen.npcs) {
+            if (!validToken(npc.id) || !validToken(npc.typeId) ||
+                npc.speedOverride < 0.0f || npc.waypoints.size() > kMaxNpcWaypoints) {
+                return false;
+            }
+        }
     }
 
     return findScreen(chapter, chapter.startScreenId) != nullptr;
@@ -99,7 +111,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 4\n";
+    output << "ADCHAPTER 7\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -123,7 +135,29 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                    << enemy.speedOverride << ' ' << (enemy.loop ? 1 : 0) << ' ' << (enemy.respawn ? 1 : 0) << ' '
                    << enemy.waypoints.size() << "\n";
             for (const PathWaypoint& waypoint : enemy.waypoints) {
-                output << "wp " << waypoint.x << ' ' << waypoint.y << "\n";
+                output << "wp " << waypoint.x << ' ' << waypoint.y
+                       << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
+                       << ' ' << waypoint.facing
+                       << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState) << "\n";
+            }
+        }
+        output << "npcs " << screen.npcs.size() << "\n";
+        for (const NpcPlacement& npc : screen.npcs) {
+            output << "npc " << npc.id << ' ' << npc.typeId << ' '
+                   << npc.x << ' ' << npc.y << ' ' << npc.facing << ' '
+                   << npc.awarenessRadius << ' ' << npc.interactionRadius << ' '
+                   << static_cast<int>(npc.movementOverride) << ' '
+                   << (npc.loop ? 1 : 0) << ' ' << npc.speedOverride << ' '
+                   << (npc.graphOverride.empty() ? "-" : npc.graphOverride) << ' '
+                   << npc.waypoints.size() << ' ' << npc.dialogueOverride.size() << "\n";
+            for (const PathWaypoint& waypoint : npc.waypoints) {
+                output << "wp " << waypoint.x << ' ' << waypoint.y
+                       << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
+                       << ' ' << waypoint.facing
+                       << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState) << "\n";
+            }
+            for (const DialogueLine& dl : npc.dialogueOverride) {
+                output << "dl " << std::quoted(dl.speaker) << ' ' << std::quoted(dl.text) << "\n";
             }
         }
     }
@@ -148,7 +182,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 4) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 7) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -284,9 +318,74 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                         setError(errorMessage, "Expected enemy waypoint.");
                         return false;
                     }
+                    if (version >= 7) {
+                        std::string animToken;
+                        input >> waypoint.speedOverride >> waypoint.waitSeconds >> waypoint.facing >> animToken;
+                        waypoint.animState = (animToken == "-") ? std::string{} : animToken;
+                    }
                     enemy.waypoints.push_back(waypoint);
                 }
                 screen.enemies.push_back(std::move(enemy));
+            }
+        }
+
+        if (version >= 5) {
+            int npcCount = 0;
+            input >> key >> npcCount;
+            if (key != "npcs" || !input || npcCount < 0 || npcCount > kMaxScreenNpcs) {
+                setError(errorMessage, "Expected valid NPC count.");
+                return false;
+            }
+            screen.npcs.reserve(static_cast<std::size_t>(npcCount));
+            for (int npcIndex = 0; npcIndex < npcCount; ++npcIndex) {
+                NpcPlacement npc;
+                int movement = 0;
+                int loopVal = 1;
+                int waypointCount = 0;
+                std::string graphOverride;
+                input >> key;
+                if (key != "npc") {
+                    setError(errorMessage, "Expected npc entry.");
+                    return false;
+                }
+                int dialogueCount = 0;
+                input >> npc.id >> npc.typeId >> npc.x >> npc.y >> npc.facing
+                      >> npc.awarenessRadius >> npc.interactionRadius
+                      >> movement >> loopVal >> npc.speedOverride >> graphOverride >> waypointCount;
+                if (version >= 6) {
+                    input >> dialogueCount;
+                }
+                if (!input || waypointCount < 0 || waypointCount > kMaxNpcWaypoints || dialogueCount < 0) {
+                    setError(errorMessage, "Invalid NPC entry.");
+                    return false;
+                }
+                npc.movementOverride = static_cast<NpcMovementMode>(std::clamp(movement, 0, 2));
+                npc.loop = loopVal != 0;
+                npc.graphOverride = (graphOverride == "-") ? std::string{} : graphOverride;
+                npc.waypoints.reserve(static_cast<std::size_t>(waypointCount));
+                for (int waypointIndex = 0; waypointIndex < waypointCount; ++waypointIndex) {
+                    PathWaypoint waypoint;
+                    input >> key >> waypoint.x >> waypoint.y;
+                    if (key != "wp" || !input) {
+                        setError(errorMessage, "Expected NPC waypoint.");
+                        return false;
+                    }
+                    if (version >= 7) {
+                        std::string animToken;
+                        input >> waypoint.speedOverride >> waypoint.waitSeconds >> waypoint.facing >> animToken;
+                        waypoint.animState = (animToken == "-") ? std::string{} : animToken;
+                    }
+                    npc.waypoints.push_back(waypoint);
+                }
+                for (int di = 0; di < dialogueCount && input; ++di) {
+                    std::string dlKey;
+                    DialogueLine dl;
+                    input >> dlKey >> std::quoted(dl.speaker) >> std::quoted(dl.text);
+                    if (dlKey == "dl") {
+                        npc.dialogueOverride.push_back(std::move(dl));
+                    }
+                }
+                screen.npcs.push_back(std::move(npc));
             }
         }
 

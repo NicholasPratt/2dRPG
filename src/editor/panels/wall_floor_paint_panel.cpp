@@ -576,6 +576,8 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
     drawToolButton("Rect", PaintTool::Rect);
     ImGui::SameLine();
     drawToolButton("Select", PaintTool::Select);
+    ImGui::SameLine();
+    drawToolButton("Pick", PaintTool::PickColor);
     if (tool_ == PaintTool::Select) {
         if (selectionActive_) {
             if (ImGui::Button("Copy", ImVec2(132.0f, 0.0f))) {
@@ -624,6 +626,7 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
     drawToolButton("Tile Fill", PaintTool::TileFill);
     ImGui::SameLine();
     drawToolButton("Tile Erase", PaintTool::TileErase);
+    drawToolButton("Tile Rotate", PaintTool::TileRotate);
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Brush shape");
@@ -683,6 +686,12 @@ void WallFloorPaintPanel::drawPalette()
         static_cast<float>((activeColor_ >> 24) & 0xffu) / 255.0f,
     };
     if (ImGui::ColorEdit4("Active", color, ImGuiColorEditFlags_NoInputs)) {
+        activeColor_ = (static_cast<std::uint32_t>(std::round(color[3] * 255.0f)) << 24u) |
+            (static_cast<std::uint32_t>(std::round(color[2] * 255.0f)) << 16u) |
+            (static_cast<std::uint32_t>(std::round(color[1] * 255.0f)) << 8u) |
+            static_cast<std::uint32_t>(std::round(color[0] * 255.0f));
+    }
+    if (ImGui::ColorPicker4("Picker", color, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf)) {
         activeColor_ = (static_cast<std::uint32_t>(std::round(color[3] * 255.0f)) << 24u) |
             (static_cast<std::uint32_t>(std::round(color[2] * 255.0f)) << 16u) |
             (static_cast<std::uint32_t>(std::round(color[1] * 255.0f)) << 8u) |
@@ -982,6 +991,35 @@ void WallFloorPaintPanel::eraseTile(int x, int y)
     documentDirty_ = true;
 }
 
+void WallFloorPaintPanel::rotateTile(int x, int y, bool clockwise)
+{
+    const int ts = game::kTileSize;
+    const int tx = (x / ts) * ts;
+    const int ty = (y / ts) * ts;
+    PaintLayer& layer = activeLayer();
+    std::array<std::uint32_t, game::kTileSize * game::kTileSize> source{};
+    for (int py = 0; py < ts; ++py) {
+        for (int px = 0; px < ts; ++px) {
+            const int sx = tx + px;
+            const int sy = ty + py;
+            const std::size_t dst = static_cast<std::size_t>(py * ts + px);
+            if (sx >= 0 && sy >= 0 && sx < width_ && sy < height_) {
+                source[dst] = layer.pixels[static_cast<std::size_t>(sy * width_ + sx)];
+            }
+        }
+    }
+
+    for (int py = 0; py < ts; ++py) {
+        for (int px = 0; px < ts; ++px) {
+            const int srcX = clockwise ? py : (ts - 1 - py);
+            const int srcY = clockwise ? (ts - 1 - px) : px;
+            const std::size_t src = static_cast<std::size_t>(srcY * ts + srcX);
+            setPixel(layer, tx + px, ty + py, source[src]);
+        }
+    }
+    documentDirty_ = true;
+}
+
 void WallFloorPaintPanel::drawCanvas(EditorContext& context)
 {
     const float pixelSize = static_cast<float>(zoom_);
@@ -1006,7 +1044,8 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
         drawWallGuide(drawList, origin, pixelSize);
     }
 
-    if ((tool_ == PaintTool::TileDraw || tool_ == PaintTool::TileSelect || tool_ == PaintTool::TilePaste || tool_ == PaintTool::TileFill) && ImGui::IsItemHovered()) {
+    if ((tool_ == PaintTool::TileDraw || tool_ == PaintTool::TileSelect || tool_ == PaintTool::TilePaste ||
+            tool_ == PaintTool::TileFill || tool_ == PaintTool::TileRotate) && ImGui::IsItemHovered()) {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const int ts = game::kTileSize;
         const int mx = (static_cast<int>((mouse.x - origin.x) / pixelSize) / ts) * ts;
@@ -1016,7 +1055,8 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
             const ImVec2 tMax{tMin.x + static_cast<float>(ts) * pixelSize, tMin.y + static_cast<float>(ts) * pixelSize};
             const ImU32 col = tool_ == PaintTool::TileDraw ? IM_COL32(90, 180, 255, 180) :
                 (tool_ == PaintTool::TileFill ? IM_COL32(120, 100, 255, 190) :
-                    (tool_ == PaintTool::TilePaste ? IM_COL32(150, 220, 120, 180) : IM_COL32(255, 216, 64, 220)));
+                    (tool_ == PaintTool::TilePaste ? IM_COL32(150, 220, 120, 180) :
+                        (tool_ == PaintTool::TileRotate ? IM_COL32(255, 150, 70, 220) : IM_COL32(255, 216, 64, 220))));
             drawList->AddRectFilled(tMin, tMax, IM_COL32(255, 255, 255, 20));
             drawList->AddRect(tMin, tMax, col, 0.0f, 0, 2.0f);
         }
@@ -1324,6 +1364,20 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         y = snapCoord(y);
     }
 
+    if (tool_ == PaintTool::PickColor) {
+        ImGui::SetTooltip("Pick color [%d,%d]", x, y);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && x >= 0 && y >= 0 && x < width_ && y < height_) {
+            const std::uint32_t color = activeLayer().pixels[static_cast<std::size_t>(y * width_ + x)];
+            if (alphaOf(color) > 0u) {
+                activeColor_ = color;
+                status_ = "Picked color from " + activeLayer().name + " layer.";
+            } else {
+                status_ = "Picked transparent pixel; active color unchanged.";
+            }
+        }
+        return;
+    }
+
     // Tile draw fills exactly one tile cell on the active layer.
     if (tool_ == PaintTool::TileDraw) {
         const int ts = game::kTileSize;
@@ -1390,6 +1444,22 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             recordUndo();
             floodFillTile(tx, ty, context.tilePalette[static_cast<std::size_t>(stampTileIndex_)]);
+        }
+        return;
+    }
+
+    if (tool_ == PaintTool::TileRotate) {
+        const int ts = game::kTileSize;
+        const int tx = (x / ts) * ts;
+        const int ty = (y / ts) * ts;
+        ImGui::SetTooltip("Rotate tile [%d,%d]. Left: clockwise, right: counter-clockwise.", tx / ts, ty / ts);
+        const bool clickedLeft = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        const bool clickedRight = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        if (clickedLeft || clickedRight) {
+            recordUndo();
+            rotateTile(tx, ty, clickedLeft);
+            status_ = std::string("Rotated tile ") + (clickedLeft ? "clockwise" : "counter-clockwise") +
+                " [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
         }
         return;
     }

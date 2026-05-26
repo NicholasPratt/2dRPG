@@ -20,13 +20,18 @@ namespace {
 
 constexpr float kFixedStepSeconds = 1.0f / 60.0f;
 constexpr float kPlayerSpeedPxPerSecond = 96.0f;
-constexpr float kPlayerSizePx = 12.0f;
+constexpr float kPlayerCollisionSizePx = 14.0f;
+constexpr float kPlayerFallbackDrawSizePx = 32.0f;
 constexpr float kScreenTransitionExitRatio = 0.30f;
 constexpr float kHazardRespawnCooldownSeconds = 0.75f;
 constexpr float kPlayerDamageInvulnerableSeconds = 0.65f;
 constexpr float kMeleeActiveSeconds = 0.15f;
+constexpr float kMeleeAttackSeconds = 0.28f;
+constexpr float kRangedAttackSeconds = 0.22f;
+constexpr float kAttackMoveSpeedScale = 0.55f;
 constexpr float kItemPickupRadius = 12.0f;
 constexpr float kProjectileHalfSize = 4.0f;
+constexpr float kEnemyDeathVisualSeconds = 0.35f;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -276,8 +281,12 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     }
 
     loadPathEntities();
+    loadNpcEntities();
     loadItemEntities();
     projectiles_.clear();
+    interactionState_ = InteractionState::None;
+    interactingNpcIndex_ = -1;
+    dialogueLineIndex_ = 0;
     loadAllSprites();
     std::cout << "Loaded screen " << screen->id << " map " << activeMap_.id << "\n";
     return true;
@@ -338,10 +347,12 @@ void Engine::loadWeapons()
         if (w.id == project.startingWeaponId) {
             if (w.type == WeaponType::Melee) {
                 meleeWeapon_ = w;
+                loadSpriteById(w.spriteId);
             } else {
                 rangedWeapon_ = w;
                 const std::string ammoKey = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
                 ammo_[ammoKey] = 0;
+                loadSpriteById(w.spriteId);
             }
             break;
         }
@@ -405,6 +416,10 @@ void Engine::loadPathEntities()
             entity.y = entity.path.waypoints.front().y;
             entity.health = std::max(1, entity.path.combat.maxHealth);
             entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+            if (activeScreen_ != nullptr &&
+                defeatedEnemies_.count(activeScreen_->id + "/" + entity.path.id) > 0) {
+                continue;
+            }
             pathEntities_.push_back(std::move(entity));
         }
     }
@@ -433,6 +448,10 @@ void Engine::loadPathEntities()
         entity.y = entity.path.waypoints.front().y;
         entity.health = std::max(1, entity.path.combat.maxHealth);
         entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+        if (activeScreen_ != nullptr &&
+            defeatedEnemies_.count(activeScreen_->id + "/" + entity.path.id) > 0) {
+            continue;
+        }
         pathEntities_.push_back(std::move(entity));
     }
 }
@@ -472,8 +491,17 @@ void Engine::loadAllSprites()
     for (const RuntimePathEntity& entity : pathEntities_) {
         loadSpriteById(entity.path.spriteId);
     }
+    for (const RuntimeNpcEntity& npc : npcEntities_) {
+        loadSpriteById(npc.spriteId);
+    }
     for (const RuntimeItemEntity& item : itemEntities_) {
         loadSpriteById(item.placement.spriteId);
+    }
+    if (meleeWeapon_.has_value()) {
+        loadSpriteById(meleeWeapon_->spriteId);
+    }
+    if (rangedWeapon_.has_value()) {
+        loadSpriteById(rangedWeapon_->spriteId);
     }
 }
 
@@ -579,12 +607,24 @@ void Engine::update(float dt)
     updateProjectiles(dt);
     updateHazards(dt);
     updateEnemyCombat(dt);
+    updateEnemyDeaths(dt);
     updatePaths(dt);
+    updateNpcs(dt);
+    updateInteraction();
     updateItemPickups();
 }
 
 void Engine::updatePlayer(float dt)
 {
+    if (interactionState_ == InteractionState::InDialogue) {
+        if (playerActionType_ != "idle") {
+            playerActionType_ = "idle";
+            playerAnimSeconds_ = 0.0f;
+        }
+        playerIsMoving_ = false;
+        return;
+    }
+
     float dx = 0.0f;
     float dy = 0.0f;
     if (glfwGetKey(window_, GLFW_KEY_LEFT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS) { dx -= 1.0f; }
@@ -603,16 +643,21 @@ void Engine::updatePlayer(float dt)
         playerFacingY_ = dy;
     }
 
-    const std::string newAction = (len > 0.0f) ? "walk" : "idle";
+    if (!playerActionLocksBaseMotion()) {
+        setPlayerActionState(len > 0.0f ? PlayerActionState::Walk : PlayerActionState::Idle);
+    }
+    const std::string newAction = playerActionName();
     if (newAction != playerActionType_) {
         playerActionType_ = newAction;
         playerAnimSeconds_ = 0.0f;
     }
+
     playerAnimSeconds_ += dt;
     playerIsMoving_ = (len > 0.0f);
 
-    const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * dt;
-    const float newY = playerY_ + dy * kPlayerSpeedPxPerSecond * dt;
+    const float speedScale = playerActionLocksBaseMotion() ? kAttackMoveSpeedScale : 1.0f;
+    const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * speedScale * dt;
+    const float newY = playerY_ + dy * kPlayerSpeedPxPerSecond * speedScale * dt;
     if (playerCanOccupy(newX, playerY_)) {
         playerX_ = newX;
     }
@@ -626,8 +671,8 @@ void Engine::updatePlayer(float dt)
         return;
     }
 
-    const float half = kPlayerSizePx * 0.5f;
-    const float exitDistance = kPlayerSizePx * kScreenTransitionExitRatio;
+    const float half = kPlayerCollisionSizePx * 0.5f;
+    const float exitDistance = kPlayerCollisionSizePx * kScreenTransitionExitRatio;
     const bool crossedWest = playerX_ - half <= -exitDistance;
     const bool crossedEast = playerX_ + half >= width + exitDistance;
     const bool crossedNorth = playerY_ - half <= -exitDistance;
@@ -668,26 +713,53 @@ void Engine::updatePlayer(float dt)
 
 void Engine::updateAttack(float dt)
 {
+    if (interactionState_ == InteractionState::InDialogue) {
+        return;
+    }
     meleeCooldownSeconds_ = std::max(0.0f, meleeCooldownSeconds_ - dt);
     rangedCooldownSeconds_ = std::max(0.0f, rangedCooldownSeconds_ - dt);
     meleeActiveSeconds_ = std::max(0.0f, meleeActiveSeconds_ - dt);
 
-    if (meleeWeapon_.has_value() && glfwGetKey(window_, GLFW_KEY_Z) == GLFW_PRESS &&
-        meleeCooldownSeconds_ <= 0.0f) {
-        meleeCooldownSeconds_ = meleeWeapon_->attackCooldown;
-        meleeActiveSeconds_ = kMeleeActiveSeconds;
-        checkMeleeHits();
+    if (playerActionSeconds_ > 0.0f) {
+        playerActionSeconds_ = std::max(0.0f, playerActionSeconds_ - dt);
+        if (playerActionSeconds_ <= 0.0f &&
+            (playerActionState_ == PlayerActionState::MeleeAttack ||
+                playerActionState_ == PlayerActionState::RangedAttack ||
+                playerActionState_ == PlayerActionState::Hurt)) {
+            setPlayerActionState(playerIsMoving_ ? PlayerActionState::Walk : PlayerActionState::Idle);
+        }
     }
 
-    if (rangedWeapon_.has_value() && glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS &&
-        rangedCooldownSeconds_ <= 0.0f) {
+    const bool meleeInputDown = glfwGetKey(window_, GLFW_KEY_Z) == GLFW_PRESS;
+    const bool rangedInputDown = glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS;
+    const bool meleePressed = meleeInputDown && !meleeInputWasDown_;
+    const bool rangedPressed = rangedInputDown && !rangedInputWasDown_;
+    meleeInputWasDown_ = meleeInputDown;
+    rangedInputWasDown_ = rangedInputDown;
+
+    if (meleeWeapon_.has_value() && meleePressed && meleeCooldownSeconds_ <= 0.0f &&
+        !playerActionLocksBaseMotion()) {
+        setPlayerActionState(PlayerActionState::MeleeAttack, kMeleeAttackSeconds);
+        meleeCooldownSeconds_ = meleeWeapon_->attackCooldown;
+        meleeActiveSeconds_ = kMeleeActiveSeconds;
+        meleeHitApplied_ = false;
+    }
+
+    if (playerActionState_ == PlayerActionState::MeleeAttack && !meleeHitApplied_) {
+        checkMeleeHits();
+        meleeHitApplied_ = true;
+    }
+
+    if (rangedWeapon_.has_value() && rangedPressed && rangedCooldownSeconds_ <= 0.0f &&
+        !playerActionLocksBaseMotion()) {
         const std::string ammoKey = rangedWeapon_->ammoTypeId.empty() ? rangedWeapon_->id : rangedWeapon_->ammoTypeId;
         const int available = ammo_.count(ammoKey) ? ammo_.at(ammoKey) : 0;
         if (available >= rangedWeapon_->ammoPerShot) {
+            setPlayerActionState(PlayerActionState::RangedAttack, kRangedAttackSeconds);
             ammo_[ammoKey] -= rangedWeapon_->ammoPerShot;
             rangedCooldownSeconds_ = rangedWeapon_->attackCooldown;
             RuntimeProjectile proj;
-            const float offset = kPlayerSizePx * 0.5f + 2.0f;
+            const float offset = kPlayerCollisionSizePx * 0.5f + 2.0f;
             proj.x = playerX_ + playerFacingX_ * offset;
             proj.y = playerY_ + playerFacingY_ * offset;
             proj.vx = playerFacingX_ * rangedWeapon_->projectileSpeed;
@@ -697,6 +769,48 @@ void Engine::updateAttack(float dt)
             proj.spriteId = rangedWeapon_->spriteId;
             projectiles_.push_back(proj);
         }
+    }
+}
+
+void Engine::setPlayerActionState(PlayerActionState state, float durationSeconds)
+{
+    if (playerActionState_ == state && playerActionSeconds_ == durationSeconds) {
+        return;
+    }
+    playerActionState_ = state;
+    playerActionSeconds_ = std::max(0.0f, durationSeconds);
+
+    const std::string actionName = playerActionName();
+    if (playerActionType_ != actionName) {
+        playerActionType_ = actionName;
+        playerAnimSeconds_ = 0.0f;
+    }
+}
+
+bool Engine::playerActionLocksBaseMotion() const
+{
+    return playerActionState_ == PlayerActionState::MeleeAttack ||
+        playerActionState_ == PlayerActionState::RangedAttack ||
+        playerActionState_ == PlayerActionState::Hurt ||
+        playerActionState_ == PlayerActionState::Dead;
+}
+
+std::string Engine::playerActionName() const
+{
+    switch (playerActionState_) {
+        case PlayerActionState::Walk:
+            return "walk";
+        case PlayerActionState::MeleeAttack:
+            return "attack_1";
+        case PlayerActionState::RangedAttack:
+            return "cast";
+        case PlayerActionState::Hurt:
+            return "hit_react";
+        case PlayerActionState::Dead:
+            return "death";
+        case PlayerActionState::Idle:
+        default:
+            return "idle";
     }
 }
 
@@ -721,6 +835,9 @@ void Engine::checkMeleeHits()
             continue;
         }
         entity.health = std::max(0, entity.health - meleeWeapon_->damage);
+        if (entity.health <= 0 && entity.deathSeconds < 0.0f) {
+            entity.deathSeconds = 0.0f;
+        }
     }
 }
 
@@ -756,6 +873,9 @@ void Engine::updateProjectiles(float dt)
                 proj.y + kProjectileHalfSize > entity.y - halfH &&
                 proj.y - kProjectileHalfSize < entity.y + halfH) {
                 entity.health = std::max(0, entity.health - proj.damage);
+                if (entity.health <= 0 && entity.deathSeconds < 0.0f) {
+                    entity.deathSeconds = 0.0f;
+                }
                 proj.dead = true;
                 break;
             }
@@ -804,6 +924,8 @@ void Engine::collectItem(RuntimeItemEntity& item)
                                 ammo_[key] = 0;
                             }
                         }
+                        gameState_.giveItem(w.id);
+                        loadSpriteById(w.spriteId);
                         break;
                     }
                 }
@@ -823,12 +945,280 @@ void Engine::collectItem(RuntimeItemEntity& item)
     }
 }
 
+void Engine::loadNpcEntities()
+{
+    npcEntities_.clear();
+    if (activeScreen_ == nullptr) {
+        return;
+    }
+
+    GameProject project;
+    (void)loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr);
+
+    auto typeForId = [&project](const std::string& id) -> const NpcTypeDef* {
+        for (const NpcTypeDef& npc : project.npcTypes) {
+            if (npc.id == id) {
+                return &npc;
+            }
+        }
+        return nullptr;
+    };
+
+    for (const NpcPlacement& placement : activeScreen_->npcs) {
+        RuntimeNpcEntity entity;
+        entity.placement = placement;
+        entity.x = placement.x;
+        entity.y = placement.y;
+        if (const NpcTypeDef* type = typeForId(placement.typeId)) {
+            entity.spriteId = type->spriteId;
+            if (placement.speedOverride <= 0.0f) {
+                entity.placement.speedOverride = type->defaultSpeed;
+            }
+            if (placement.movementOverride == NpcMovementMode::Stationary &&
+                type->defaultMovement != NpcMovementMode::Stationary) {
+                entity.placement.movementOverride = type->defaultMovement;
+            }
+            if (placement.dialogueOverride.empty()) {
+                entity.dialogue = type->defaultDialogue;
+            } else {
+                entity.dialogue = placement.dialogueOverride;
+            }
+        } else if (!placement.dialogueOverride.empty()) {
+            entity.dialogue = placement.dialogueOverride;
+        }
+        if (!placement.waypoints.empty()) {
+            entity.x = placement.waypoints.front().x;
+            entity.y = placement.waypoints.front().y;
+            entity.waypointIndex = placement.waypoints.size() > 1 ? 1u : 0u;
+        }
+        npcEntities_.push_back(std::move(entity));
+    }
+}
+
+void Engine::updateNpcs(float dt)
+{
+    updateNpcAwareness();
+    for (RuntimeNpcEntity& npc : npcEntities_) {
+        npc.animSeconds += dt;
+        if (npc.playerInAwareness) {
+            npc.actionType = "idle";
+            continue;
+        }
+        if (npc.placement.movementOverride != NpcMovementMode::Patrol || npc.placement.waypoints.size() < 2) {
+            npc.actionType = "idle";
+            continue;
+        }
+
+        if (npc.atWaypoint) {
+            if (npc.waitRemainingSeconds > 0.0f) {
+                npc.waitRemainingSeconds -= dt;
+                continue;
+            }
+            npc.atWaypoint = false;
+            if (npc.waypointIndex + 1 < npc.placement.waypoints.size()) {
+                ++npc.waypointIndex;
+            } else if (npc.placement.loop) {
+                npc.waypointIndex = 0;
+            } else {
+                npc.actionType = "idle";
+                continue;
+            }
+        }
+
+        npc.actionType = "walk";
+        const PathWaypoint& target = npc.placement.waypoints[npc.waypointIndex];
+        const float dx = target.x - npc.x;
+        const float dy = target.y - npc.y;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist <= 1.0f) {
+            npc.x = target.x;
+            npc.y = target.y;
+            npc.atWaypoint = true;
+            npc.waitRemainingSeconds = target.waitSeconds;
+            npc.actionType = target.animState.empty() ? "idle" : target.animState;
+            continue;
+        }
+        const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride
+            : (npc.placement.speedOverride > 0.0f ? npc.placement.speedOverride : 32.0f);
+        const float step = std::min(dist, segSpeed * dt);
+        npc.x += dx / dist * step;
+        npc.y += dy / dist * step;
+    }
+}
+
+void Engine::updateNpcAwareness()
+{
+    for (RuntimeNpcEntity& npc : npcEntities_) {
+        const float dx = playerX_ - npc.x;
+        const float dy = playerY_ - npc.y;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        npc.playerInAwareness = dist <= npc.placement.awarenessRadius;
+    }
+}
+
+void Engine::updateInteraction()
+{
+    const bool interactDown = glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS;
+    const bool interactPressed = interactDown && !interactInputWasDown_;
+    interactInputWasDown_ = interactDown;
+
+    switch (interactionState_) {
+        case InteractionState::None: {
+            int nearest = -1;
+            float nearestDist = 99999.0f;
+            for (int i = 0; i < static_cast<int>(npcEntities_.size()); ++i) {
+                const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(i)];
+                if (npc.dialogue.empty()) {
+                    continue;
+                }
+                const float dx = playerX_ - npc.x;
+                const float dy = playerY_ - npc.y;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist <= npc.placement.interactionRadius && dist < nearestDist) {
+                    nearest = i;
+                    nearestDist = dist;
+                }
+            }
+            if (nearest >= 0) {
+                interactionState_ = InteractionState::PromptVisible;
+                interactingNpcIndex_ = nearest;
+            }
+            break;
+        }
+        case InteractionState::PromptVisible: {
+            if (interactingNpcIndex_ < 0 ||
+                interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+                interactionState_ = InteractionState::None;
+                break;
+            }
+            const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+            const float dx = playerX_ - npc.x;
+            const float dy = playerY_ - npc.y;
+            if (std::sqrt(dx * dx + dy * dy) > npc.placement.interactionRadius) {
+                interactionState_ = InteractionState::None;
+                interactingNpcIndex_ = -1;
+                break;
+            }
+            if (interactPressed) {
+                interactionState_ = InteractionState::InDialogue;
+                dialogueLineIndex_ = 0;
+            }
+            break;
+        }
+        case InteractionState::InDialogue: {
+            if (interactingNpcIndex_ < 0 ||
+                interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+                interactionState_ = InteractionState::None;
+                break;
+            }
+            if (interactPressed) {
+                ++dialogueLineIndex_;
+                const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+                if (dialogueLineIndex_ >= static_cast<int>(npc.dialogue.size())) {
+                    interactionState_ = InteractionState::None;
+                    interactingNpcIndex_ = -1;
+                    dialogueLineIndex_ = 0;
+                }
+            }
+            break;
+        }
+    }
+}
+
+void Engine::renderNpcs() const
+{
+    for (const RuntimeNpcEntity& npc : npcEntities_) {
+        auto spriteIt = loadedSprites_.find(npc.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                const float drawW = static_cast<float>(frame->width);
+                const float drawH = static_cast<float>(frame->height);
+                renderTextureRegion(spriteIt->second.texture, npc.x - drawW * 0.5f, npc.y - drawH * 0.5f, drawW, drawH, u0, v0, u1, v1);
+                continue;
+            }
+        }
+        renderFilledRect(npc.x - 6.0f, npc.y - 6.0f, 12.0f, 12.0f, 0.10f, 0.75f, 0.72f, 0.90f);
+    }
+}
+
+void Engine::renderInteractionPrompt() const
+{
+    if (interactionState_ != InteractionState::PromptVisible || interactingNpcIndex_ < 0 ||
+        interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        return;
+    }
+    const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    const float pulse = 0.55f + 0.45f * std::sin(runtimeSeconds_ * 5.0f);
+    const float size = 6.0f;
+    renderFilledRect(npc.x - size * 0.5f, npc.y - 22.0f, size, size, 0.25f, 0.90f, 0.35f, pulse);
+}
+
+void Engine::renderDialogueBox() const
+{
+    if (interactionState_ != InteractionState::InDialogue || interactingNpcIndex_ < 0 ||
+        interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        return;
+    }
+    const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    if (dialogueLineIndex_ < 0 || dialogueLineIndex_ >= static_cast<int>(npc.dialogue.size())) {
+        return;
+    }
+
+    const float sw = screenWidthPx();
+    const float sh = screenHeightPx();
+    const float boxH = 56.0f;
+    const float margin = 10.0f;
+    const float boxY = sh - boxH - margin;
+
+    renderFilledRect(margin, boxY, sw - margin * 2.0f, boxH, 0.04f, 0.05f, 0.07f, 0.92f);
+    renderFilledRect(margin, boxY, sw - margin * 2.0f, 2.0f, 0.30f, 0.70f, 0.90f, 0.80f);
+
+    if (!npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)].speaker.empty()) {
+        renderFilledRect(margin + 6.0f, boxY + 6.0f, 48.0f, 6.0f, 0.30f, 0.70f, 0.90f, 0.85f);
+    }
+
+    const float textY = boxY + 18.0f;
+    const int textLen = static_cast<int>(npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)].text.size());
+    const float barW = std::min(static_cast<float>(textLen) * 3.0f, sw - margin * 4.0f);
+    renderFilledRect(margin + 6.0f, textY, barW, 4.0f, 0.75f, 0.78f, 0.82f, 0.65f);
+
+    const int total = static_cast<int>(npc.dialogue.size());
+    for (int i = 0; i < total; ++i) {
+        const float dotX = sw - margin - 8.0f - static_cast<float>(total - 1 - i) * 8.0f;
+        const float dotY = boxY + boxH - 12.0f;
+        const bool current = i == dialogueLineIndex_;
+        renderFilledRect(dotX, dotY, 4.0f, 4.0f,
+            current ? 0.90f : 0.40f, current ? 0.90f : 0.40f, current ? 0.90f : 0.40f,
+            current ? 0.95f : 0.50f);
+    }
+}
+
 void Engine::updatePaths(float dt)
 {
     for (RuntimePathEntity& entity : pathEntities_) {
-        if (entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
+        if (entity.deathSeconds >= 0.0f || entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
             continue;
         }
+        if (entity.atWaypoint) {
+            if (entity.waitRemainingSeconds > 0.0f) {
+                entity.waitRemainingSeconds -= dt;
+                continue;
+            }
+            entity.atWaypoint = false;
+            if (entity.waypointIndex + 1 < entity.path.waypoints.size()) {
+                ++entity.waypointIndex;
+            } else if (entity.path.loop) {
+                entity.waypointIndex = 0;
+            } else {
+                continue;
+            }
+        }
+
         if (entity.path.curveMode == PathCurveMode::Spline && entity.path.waypoints.size() >= 3) {
             const float length = approximatePathLength(entity.path);
             if (length <= 0.0f) {
@@ -845,21 +1235,21 @@ void Engine::updatePaths(float dt)
             entity.y = point.y;
             continue;
         }
-        PathWaypoint target = entity.path.waypoints[entity.waypointIndex];
+        const PathWaypoint& target = entity.path.waypoints[entity.waypointIndex];
         const float dx = target.x - entity.x;
         const float dy = target.y - entity.y;
-        const float distance = std::sqrt(dx * dx + dy * dy);
-        if (distance <= 1.0f) {
-            if (entity.waypointIndex + 1 < entity.path.waypoints.size()) {
-                ++entity.waypointIndex;
-            } else if (entity.path.loop) {
-                entity.waypointIndex = 0;
-            }
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist <= 1.0f) {
+            entity.x = target.x;
+            entity.y = target.y;
+            entity.atWaypoint = true;
+            entity.waitRemainingSeconds = target.waitSeconds;
             continue;
         }
-        const float step = std::min(distance, entity.path.speed * dt);
-        entity.x += dx / distance * step;
-        entity.y += dy / distance * step;
+        const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride : entity.path.speed;
+        const float step = std::min(dist, segSpeed * dt);
+        entity.x += dx / dist * step;
+        entity.y += dy / dist * step;
     }
 }
 
@@ -891,6 +1281,36 @@ void Engine::updateEnemyCombat(float dt)
     }
 }
 
+void Engine::updateEnemyDeaths(float dt)
+{
+    bool anyRemoved = false;
+    for (RuntimePathEntity& entity : pathEntities_) {
+        if (entity.deathSeconds < 0.0f) {
+            continue;
+        }
+        entity.deathSeconds += dt;
+        if (entity.deathSeconds >= kEnemyDeathVisualSeconds && activeScreen_ != nullptr) {
+            if (!entity.path.respawn && !activeScreen_->respawnEnemies) {
+                recordEnemyDefeated(activeScreen_->id, entity);
+            }
+            anyRemoved = true;
+        }
+    }
+    if (anyRemoved) {
+        pathEntities_.erase(
+            std::remove_if(pathEntities_.begin(), pathEntities_.end(),
+                [](const RuntimePathEntity& e) {
+                    return e.deathSeconds >= kEnemyDeathVisualSeconds;
+                }),
+            pathEntities_.end());
+    }
+}
+
+void Engine::recordEnemyDefeated(const std::string& screenId, const RuntimePathEntity& entity)
+{
+    defeatedEnemies_.insert(screenId + "/" + entity.path.id);
+}
+
 bool Engine::beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY)
 {
     const ChapterScreen* targetScreen = findScreen(chapter_, targetScreenId);
@@ -907,7 +1327,7 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
         return false;
     }
 
-    const float half = kPlayerSizePx * 0.5f;
+    const float half = kPlayerCollisionSizePx * 0.5f;
     const float targetWidth = static_cast<float>(targetMap.width * kTileSize);
     const float targetHeight = static_cast<float>(targetMap.height * kTileSize);
     spawnX = std::clamp(spawnX, half, targetWidth - half);
@@ -940,7 +1360,7 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
 
 bool Engine::playerCanOccupy(float x, float y) const
 {
-    const float half = kPlayerSizePx * 0.5f;
+    const float half = kPlayerCollisionSizePx * 0.5f;
     return !solidAtPixel(x - half, y - half) &&
         !solidAtPixel(x + half, y - half) &&
         !solidAtPixel(x - half, y + half) &&
@@ -954,7 +1374,7 @@ bool Engine::solidAtPixel(float x, float y) const
 
 bool Engine::playerCanOccupyInMap(const TileMap& map, float x, float y) const
 {
-    const float half = kPlayerSizePx * 0.5f;
+    const float half = kPlayerCollisionSizePx * 0.5f;
     return !solidAtPixelInMap(map, x - half, y - half) &&
         !solidAtPixelInMap(map, x + half, y - half) &&
         !solidAtPixelInMap(map, x - half, y + half) &&
@@ -986,7 +1406,7 @@ bool Engine::obstacleIsActive(const MapObstacle& obstacle) const
 
 bool Engine::playerOverlapsObstacle(const MapObstacle& obstacle) const
 {
-    const float half = kPlayerSizePx * 0.5f;
+    const float half = kPlayerCollisionSizePx * 0.5f;
     const float playerMinX = playerX_ - half;
     const float playerMinY = playerY_ - half;
     const float playerMaxX = playerX_ + half;
@@ -1001,7 +1421,7 @@ bool Engine::playerOverlapsObstacle(const MapObstacle& obstacle) const
 
 bool Engine::playerOverlapsEnemy(const RuntimePathEntity& entity) const
 {
-    const float half = kPlayerSizePx * 0.5f;
+    const float half = kPlayerCollisionSizePx * 0.5f;
     const float playerMinX = playerX_ - half;
     const float playerMinY = playerY_ - half;
     const float playerMaxX = playerX_ + half;
@@ -1024,8 +1444,11 @@ void Engine::damagePlayer(int amount)
     playerHealth_ = std::max(0, playerHealth_ - amount);
     playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
     if (playerHealth_ <= 0) {
+        setPlayerActionState(PlayerActionState::Dead);
         respawnPlayerAtMapSpawn();
+        return;
     }
+    setPlayerActionState(PlayerActionState::Hurt, 0.22f);
 }
 
 void Engine::respawnPlayerAtMapSpawn()
@@ -1034,6 +1457,7 @@ void Engine::respawnPlayerAtMapSpawn()
     playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
     playerHealth_ = playerMaxHealth_;
     playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
+    setPlayerActionState(PlayerActionState::Idle);
 }
 
 float Engine::screenWidthPx() const
@@ -1108,6 +1532,11 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
+        const bool dying = entity.deathSeconds >= 0.0f;
+        const float deathAlpha = dying
+            ? 1.0f - std::clamp(entity.deathSeconds / kEnemyDeathVisualSeconds, 0.0f, 1.0f)
+            : 1.0f;
+
         auto spriteIt = loadedSprites_.find(entity.path.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
             const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
@@ -1119,10 +1548,14 @@ void Engine::render()
                 const float drawW = static_cast<float>(frame->width);
                 const float drawH = static_cast<float>(frame->height);
                 renderTextureRegion(spriteIt->second.texture, entity.x - drawW * 0.5f, entity.y - drawH * 0.5f, drawW, drawH, u0, v0, u1, v1);
+                if (dying) {
+                    renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
+                        drawW, drawH, 1.0f, 1.0f, 1.0f, deathAlpha * 0.6f);
+                }
                 continue;
             }
         }
-        renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, 1.0f);
+        renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, dying ? deathAlpha : 1.0f);
     }
 
     for (const MapObstacle& obstacle : activeMap_.obstacles) {
@@ -1163,6 +1596,8 @@ void Engine::render()
     }
 
     renderItems();
+    renderNpcs();
+    renderInteractionPrompt();
 
     bool flipH = false;
     const SpriteFrameDef* pf = playerSpriteFrame(flipH);
@@ -1180,8 +1615,8 @@ void Engine::render()
             playerX_ - drawW * 0.5f, playerY_ - drawH * 0.5f, drawW, drawH,
             flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
     } else {
-        renderFilledRect(playerX_ - kPlayerSizePx * 0.5f, playerY_ - kPlayerSizePx * 0.5f,
-            kPlayerSizePx, kPlayerSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
+        renderFilledRect(playerX_ - kPlayerFallbackDrawSizePx * 0.5f, playerY_ - kPlayerFallbackDrawSizePx * 0.5f,
+            kPlayerFallbackDrawSizePx, kPlayerFallbackDrawSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
     }
 
     renderMeleeFlash();
@@ -1192,7 +1627,7 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
-        if (entity.path.combat.maxHealth <= 1) {
+        if (entity.path.combat.maxHealth <= 1 || entity.deathSeconds >= 0.0f) {
             continue;
         }
         const float barW = std::max(8.0f, entity.path.combat.hitboxWidth);
@@ -1205,6 +1640,8 @@ void Engine::render()
     renderHud();
 
     glPopMatrix();
+
+    renderDialogueBox();
 }
 
 void Engine::renderTexture(const Texture& texture, float x, float y, float width, float height) const
@@ -1250,20 +1687,20 @@ const SpriteFrameDef* Engine::playerSpriteFrame(bool& flipHorizontal) const
     // Mirror pair: flip East frames when facing these directions
     const std::string mirrorOf = (dir == "W") ? "E" : (dir == "NW") ? "NE" : (dir == "SW") ? "SE" : "";
 
-    auto collectByDir = [&](const std::string& targetDir) -> std::vector<const SpriteFrameDef*> {
+    auto collectByDir = [&](const std::string& actionName, const std::string& targetDir) -> std::vector<const SpriteFrameDef*> {
         std::vector<const SpriteFrameDef*> out;
         for (const SpriteFrameDef& frame : playerSprite_.metadata.frames) {
-            if (frame.type == action && (frame.direction.empty() || frame.direction == targetDir)) {
+            if (frame.type == actionName && (frame.direction.empty() || frame.direction == targetDir)) {
                 out.push_back(&frame);
             }
         }
         return out;
     };
 
-    std::vector<const SpriteFrameDef*> candidates = collectByDir(dir);
+    std::vector<const SpriteFrameDef*> candidates = collectByDir(action, dir);
 
     if (candidates.empty() && !mirrorOf.empty()) {
-        candidates = collectByDir(mirrorOf);
+        candidates = collectByDir(action, mirrorOf);
         if (!candidates.empty()) flipHorizontal = true;
     }
 
@@ -1271,6 +1708,19 @@ const SpriteFrameDef* Engine::playerSpriteFrame(bool& flipHorizontal) const
     if (candidates.empty()) {
         for (const SpriteFrameDef& frame : playerSprite_.metadata.frames) {
             if (frame.type == action) candidates.push_back(&frame);
+        }
+    }
+
+    if (candidates.empty() && action != "idle") {
+        candidates = collectByDir("idle", dir);
+        if (candidates.empty() && !mirrorOf.empty()) {
+            candidates = collectByDir("idle", mirrorOf);
+            if (!candidates.empty()) flipHorizontal = true;
+        }
+        if (candidates.empty()) {
+            for (const SpriteFrameDef& frame : playerSprite_.metadata.frames) {
+                if (frame.type == "idle") candidates.push_back(&frame);
+            }
         }
     }
 
@@ -1387,8 +1837,8 @@ void Engine::renderMeleeFlash() const
     }
     const float reach = meleeWeapon_->range;
     const float hw = reach * 0.5f;
-    const float cx = playerX_ + playerFacingX_ * (kPlayerSizePx * 0.5f + hw);
-    const float cy = playerY_ + playerFacingY_ * (kPlayerSizePx * 0.5f + hw);
+    const float cx = playerX_ + playerFacingX_ * (kPlayerCollisionSizePx * 0.5f + hw);
+    const float cy = playerY_ + playerFacingY_ * (kPlayerCollisionSizePx * 0.5f + hw);
     const float alpha = std::clamp(meleeActiveSeconds_ / kMeleeActiveSeconds, 0.0f, 1.0f) * 0.55f;
     renderFilledRect(cx - hw, cy - hw, reach, reach, 1.0f, 0.95f, 0.2f, alpha);
 }

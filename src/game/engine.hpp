@@ -5,12 +5,14 @@
 #include "game/path.hpp"
 #include "game/project.hpp"
 #include "game/sprite.hpp"
+#include "game/state.hpp"
 #include "game/weapon.hpp"
 
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct GLFWwindow;
@@ -39,7 +41,10 @@ private:
         float pathDistance = 0.0f;
         int health = 1;
         float contactCooldownSeconds = 0.0f;
+        float deathSeconds = -1.0f;
         std::size_t waypointIndex = 0;
+        float waitRemainingSeconds = 0.0f;
+        bool atWaypoint = false;
     };
 
     struct RuntimeSprite {
@@ -65,9 +70,39 @@ private:
         bool collected = false;
     };
 
+    struct RuntimeNpcEntity {
+        NpcPlacement placement;
+        std::string spriteId;
+        std::vector<DialogueLine> dialogue;
+        float x = 0.0f;
+        float y = 0.0f;
+        float animSeconds = 0.0f;
+        std::string actionType = "idle";
+        std::size_t waypointIndex = 0;
+        float pathDistance = 0.0f;
+        bool playerInAwareness = false;
+        float waitRemainingSeconds = 0.0f;
+        bool atWaypoint = false;
+    };
+
+    enum class InteractionState {
+        None,
+        PromptVisible,
+        InDialogue,
+    };
+
     enum class TransitionState {
         None,
         Sliding,
+    };
+
+    enum class PlayerActionState {
+        Idle,
+        Walk,
+        MeleeAttack,
+        RangedAttack,
+        Hurt,
+        Dead,
     };
 
     std::filesystem::path projectRoot_;
@@ -81,9 +116,12 @@ private:
     Texture prevWallTexture_;
     RuntimeSprite playerSprite_;
     std::vector<RuntimePathEntity> pathEntities_;
+    std::vector<RuntimeNpcEntity> npcEntities_;
     std::unordered_map<std::string, RuntimeSprite> loadedSprites_;
     std::vector<RuntimeProjectile> projectiles_;
     std::vector<RuntimeItemEntity> itemEntities_;
+    GameState gameState_;
+    std::unordered_set<std::string> defeatedEnemies_;
     std::optional<WeaponDef> meleeWeapon_;
     std::optional<WeaponDef> rangedWeapon_;
     std::unordered_map<std::string, int> ammo_;
@@ -93,12 +131,17 @@ private:
     float playerFacingY_ = 0.0f;
     float playerAnimSeconds_ = 0.0f;
     std::string playerActionType_ = "idle";
+    PlayerActionState playerActionState_ = PlayerActionState::Idle;
+    float playerActionSeconds_ = 0.0f;
     bool playerIsMoving_ = false;
     int playerMaxHealth_ = 6;
     int playerHealth_ = 6;
     float meleeCooldownSeconds_ = 0.0f;
     float rangedCooldownSeconds_ = 0.0f;
     float meleeActiveSeconds_ = 0.0f;  // brief visual flash duration
+    bool meleeHitApplied_ = false;
+    bool meleeInputWasDown_ = false;
+    bool rangedInputWasDown_ = false;
     float runtimeSeconds_ = 0.0f;
     float hazardCooldownSeconds_ = 0.0f;
     float playerInvulnerableSeconds_ = 0.0f;
@@ -109,6 +152,10 @@ private:
     float transitionToX_ = 0.0f;
     float transitionToY_ = 0.0f;
     TransitionState transitionState_ = TransitionState::None;
+    InteractionState interactionState_ = InteractionState::None;
+    int interactingNpcIndex_ = -1;
+    int dialogueLineIndex_ = 0;
+    bool interactInputWasDown_ = false;
 
     [[nodiscard]] bool loadScreen(const std::string& screenId, std::string* errorMessage);
     [[nodiscard]] bool loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage);
@@ -116,16 +163,24 @@ private:
     void loadPlayableCharacter();
     void loadWeapons();
     void loadPathEntities();
+    void loadNpcEntities();
     void loadAllSprites();
     void loadSpriteById(const std::string& spriteId);
     void loadItemEntities();
     void update(float dt);
     void updatePlayer(float dt);
     void updateAttack(float dt);
+    void setPlayerActionState(PlayerActionState state, float durationSeconds = 0.0f);
+    [[nodiscard]] bool playerActionLocksBaseMotion() const;
+    [[nodiscard]] std::string playerActionName() const;
     void updateProjectiles(float dt);
     void updateHazards(float dt);
     void updateEnemyCombat(float dt);
+    void updateEnemyDeaths(float dt);
     void updatePaths(float dt);
+    void updateNpcs(float dt);
+    void updateNpcAwareness();
+    void updateInteraction();
     void updateItemPickups();
     void checkMeleeHits();
     [[nodiscard]] bool beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY);
@@ -138,6 +193,7 @@ private:
     [[nodiscard]] bool playerOverlapsEnemy(const RuntimePathEntity& entity) const;
     [[nodiscard]] bool playerOverlapsItem(const RuntimeItemEntity& item) const;
     void collectItem(RuntimeItemEntity& item);
+    void recordEnemyDefeated(const std::string& screenId, const RuntimePathEntity& entity);
     void damagePlayer(int amount);
     void respawnPlayerAtMapSpawn();
     [[nodiscard]] float screenWidthPx() const;
@@ -149,6 +205,9 @@ private:
     [[nodiscard]] const SpriteFrameDef* playerSpriteFrame(bool& flipHorizontal) const;
     static std::string directionFromFacing(float fx, float fy);
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;
+    void renderNpcs() const;
+    void renderInteractionPrompt() const;
+    void renderDialogueBox() const;
     void renderItems() const;
     void renderProjectiles() const;
     void renderMeleeFlash() const;
