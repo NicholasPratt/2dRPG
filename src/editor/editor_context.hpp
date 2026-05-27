@@ -53,6 +53,7 @@ struct EditorContext {
     std::vector<game::StateVariableDef> stateVariables;
     std::vector<game::GameEffectDef> effectDefs;
     std::string startingWeaponId;
+    std::string fontPath;
     std::vector<game::MapItemPlacement> selectedScreenItems;
     std::string selectedScreenItemsMapId;
     std::vector<game::NpcPlacement> selectedScreenNpcs;

@@ -5,7 +5,9 @@
   "gridSize": [32, 32],
   "pivot": [16, 16],
   "frames": [
-    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle"}
+    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle", "direction": "E"},
+    {"rect": [32, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "E"},
+    {"rect": [64, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "E"}
   ],
   "tags": ["idle"]
 }

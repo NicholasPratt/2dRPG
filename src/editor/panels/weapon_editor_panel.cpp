@@ -117,6 +117,15 @@ void WeaponEditorPanel::draw(EditorContext& context)
 
         ImGui::Separator();
         if (ImGui::InputText("Sprite ID", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Edit Sprite##weapon_sprite")) {
+            writeInspectorToSelected(context);
+            const std::string spriteId(spriteId_.data());
+            if (!spriteId.empty()) {
+                context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
+                context.requestEditSprite = true;
+            }
+        }
 
         if (ImGui::Button("Apply", ImVec2(-1.0f, 30.0f))) {
             writeInspectorToSelected(context);

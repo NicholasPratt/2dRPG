@@ -81,6 +81,7 @@ struct GameProject {
     std::string id = "game";
     std::string playableCharacterId;
     std::string startingWeaponId;
+    std::string fontPath;
     std::vector<std::string> characterIds;
     std::vector<std::string> chapterIds;
     std::vector<EnemyType> enemyTypes;

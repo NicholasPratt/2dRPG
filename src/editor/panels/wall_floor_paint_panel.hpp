@@ -135,6 +135,7 @@ private:
     void drawCompositePixel(ImDrawList* drawList, ImVec2 min, ImVec2 max, std::uint32_t color, float layerOpacity) const;
     void handleCanvasInput(EditorContext& context, const ImVec2& origin, float pixelSize);
     bool canvasPixelAt(const ImVec2& origin, float pixelSize, int& x, int& y) const;
+    [[nodiscard]] bool sampleVisibleGraphicsColor(int x, int y, std::uint32_t& color, std::string& layerName) const;
     int applySnap(int coord, int gridSize) const;
     int snapCoord(int coord) const;
     PaintLayer& activeLayer();

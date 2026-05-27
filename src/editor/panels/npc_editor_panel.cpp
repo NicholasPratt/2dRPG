@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <fstream>
+#include <iomanip>
 #include <system_error>
 
 namespace adventure::editor {
@@ -80,6 +82,55 @@ bool editString(const char* label, std::string& value)
     return false;
 }
 
+std::filesystem::path characterSpriteReference(const EditorContext& context, const std::string& characterId)
+{
+    if (characterId.empty()) {
+        return {};
+    }
+
+    std::ifstream input(context.assets.gameCharacterPath() / (characterId + ".adcharacter"));
+    if (!input) {
+        return {};
+    }
+
+    std::string key;
+    input >> key;
+    if (key != "ADCHARACTER") {
+        return {};
+    }
+    int version = 0;
+    input >> version;
+
+    while (input >> key) {
+        if (key == "sprite") {
+            std::string value;
+            input >> std::quoted(value);
+            return value;
+        }
+        if (key == "end") {
+            break;
+        }
+        if (key == "name" || key == "bio") {
+            std::string ignored;
+            input >> std::quoted(ignored);
+        } else if (key == "anim") {
+            std::string ignoredA;
+            std::string ignoredB;
+            input >> std::quoted(ignoredA) >> std::quoted(ignoredB);
+        } else if (key == "frame") {
+            int ignoredIndex = 0;
+            std::string ignoredState;
+            std::string ignoredImage;
+            input >> ignoredIndex >> std::quoted(ignoredState) >> std::quoted(ignoredImage);
+        } else if (key == "playable" || key == "animations" || key == "frames") {
+            std::size_t ignored = 0;
+            input >> ignored;
+        }
+    }
+
+    return {};
+}
+
 } // namespace
 
 void NpcEditorPanel::draw(EditorContext& context)
@@ -146,6 +197,7 @@ void NpcEditorPanel::drawToolbar(EditorContext& context)
         ImGui::SameLine();
         ImGui::TextDisabled("%s", status_.c_str());
     }
+    ImGui::TextDisabled("Project NPC definitions stay in the project. This screen stores only placements and path/dialogue overrides.");
 }
 
 void NpcEditorPanel::drawPlacementList(EditorContext& context)
@@ -244,7 +296,7 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
     }
 
     ImGui::Spacing();
-    if (ImGui::Button("Delete NPC", ImVec2(-1.0f, 24.0f))) {
+    if (ImGui::Button("Remove from Screen", ImVec2(-1.0f, 24.0f))) {
         context.selectedScreenNpcs.erase(context.selectedScreenNpcs.begin() + selectedPlacement_);
         selectedPlacement_ = std::min(selectedPlacement_, static_cast<int>(context.selectedScreenNpcs.size()) - 1);
         if (selectedPlacement_ >= 0) {
@@ -475,7 +527,9 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
             selectedWaypoint_ >= 0 && selectedWaypoint_ < static_cast<int>(waypoints_.size())) {
             const float sx = snapToGrid_ ? snapValue(mx) : mx;
             const float sy = snapToGrid_ ? snapValue(my) : my;
-            waypoints_[static_cast<std::size_t>(selectedWaypoint_)] = {sx, sy};
+            Waypoint& waypoint = waypoints_[static_cast<std::size_t>(selectedWaypoint_)];
+            waypoint.x = sx;
+            waypoint.y = sy;
             writeCurrentPlacement(context);
         }
         if (dragging_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
@@ -510,11 +564,11 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
     }
     selectedType_ = std::clamp(selectedType_, 0, static_cast<int>(context.npcTypes.size()) - 1);
 
-    ImGui::TextUnformatted("NPC Type Definitions");
+    ImGui::TextUnformatted("Project NPC Definitions");
     ImGui::SameLine();
-    if (ImGui::Button("New Type")) {
+    if (ImGui::Button("New NPC")) {
         game::NpcTypeDef npc;
-        npc.id = "npc_type_" + std::to_string(context.npcTypes.size() + 1);
+        npc.id = "npc_" + std::to_string(context.npcTypes.size() + 1);
         context.npcTypes.push_back(std::move(npc));
         selectedType_ = static_cast<int>(context.npcTypes.size()) - 1;
         context.markDirty();
@@ -535,9 +589,20 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
     ImGui::Separator();
     game::NpcTypeDef& npc = context.npcTypes[static_cast<std::size_t>(selectedType_)];
 
-    if (editString("ID", npc.id)) { context.markDirty(); }
-    if (editString("Sprite ID", npc.spriteId)) { context.markDirty(); }
+    if (editString("NPC ID", npc.id)) { context.markDirty(); }
     if (editString("Character ID", npc.characterId)) { context.markDirty(); }
+    if (editString("Sprite ID Override", npc.spriteId)) { context.markDirty(); }
+    ImGui::SameLine();
+    if (ImGui::Button("Edit Sprite")) {
+        std::filesystem::path spriteReference = characterSpriteReference(context, npc.characterId);
+        if (spriteReference.empty() && !npc.spriteId.empty()) {
+            spriteReference = context.assets.gameSpritePath() / (npc.spriteId + ".sprite.json");
+        }
+        if (!spriteReference.empty()) {
+            context.requestedSpriteReference = spriteReference.generic_string();
+            context.requestEditSprite = true;
+        }
+    }
 
     int movement = static_cast<int>(npc.defaultMovement);
     if (ImGui::Combo("Default Movement", &movement, kMovementNames, 3)) {
@@ -588,7 +653,7 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
     }
 
     ImGui::Spacing();
-    if (context.npcTypes.size() > 1 && ImGui::Button("Delete Type")) {
+    if (context.npcTypes.size() > 1 && ImGui::Button("Delete Project NPC")) {
         context.npcTypes.erase(context.npcTypes.begin() + selectedType_);
         selectedType_ = std::min(selectedType_, static_cast<int>(context.npcTypes.size()) - 1);
         context.markDirty();

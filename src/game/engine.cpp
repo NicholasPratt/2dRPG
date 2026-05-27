@@ -4,10 +4,14 @@
 #include "game/project.hpp"
 
 #include "stb_image.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "imstb_truetype.h"
 
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -32,6 +36,7 @@ constexpr float kAttackMoveSpeedScale = 0.55f;
 constexpr float kItemPickupRadius = 12.0f;
 constexpr float kProjectileHalfSize = 4.0f;
 constexpr float kEnemyDeathVisualSeconds = 0.35f;
+constexpr float kSpeechTextScale = 1.5f;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -104,6 +109,148 @@ float approximatePathLength(const EnemyPath& path)
     return total;
 }
 
+std::string characterSpriteId(const std::filesystem::path& projectRoot, const std::string& characterId)
+{
+    if (characterId.empty()) {
+        return {};
+    }
+
+    std::ifstream input(projectRoot / "assets/game/characters" / (characterId + ".adcharacter"));
+    if (!input) {
+        return {};
+    }
+
+    std::string key;
+    input >> key;
+    if (key != "ADCHARACTER") {
+        return {};
+    }
+    int version = 0;
+    input >> version;
+
+    std::filesystem::path spriteReference;
+    while (input >> key) {
+        if (key == "sprite") {
+            std::string value;
+            input >> std::quoted(value);
+            spriteReference = value;
+        } else if (key == "end") {
+            break;
+        } else if (key == "name" || key == "bio") {
+            std::string ignored;
+            input >> std::quoted(ignored);
+        } else if (key == "anim") {
+            std::string ignoredA;
+            std::string ignoredB;
+            input >> std::quoted(ignoredA) >> std::quoted(ignoredB);
+        } else if (key == "frame") {
+            int ignoredIndex = 0;
+            std::string ignoredState;
+            std::string ignoredImage;
+            input >> ignoredIndex >> std::quoted(ignoredState) >> std::quoted(ignoredImage);
+        } else if (key == "playable" || key == "animations" || key == "frames") {
+            std::size_t ignored = 0;
+            input >> ignored;
+        }
+    }
+
+    if (spriteReference.empty()) {
+        return {};
+    }
+
+    SpriteMetadata metadata;
+    const std::filesystem::path metadataPath = spriteReference.is_absolute() ? spriteReference : projectRoot / spriteReference;
+    if (!loadSpriteMetadata(metadataPath, metadata, nullptr)) {
+        return {};
+    }
+    return metadata.id;
+}
+
+std::array<std::uint8_t, 7> glyphRows(char c)
+{
+    switch (static_cast<char>(std::toupper(static_cast<unsigned char>(c)))) {
+        case 'A': return {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
+        case 'B': return {0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e};
+        case 'C': return {0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e};
+        case 'D': return {0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e};
+        case 'E': return {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f};
+        case 'F': return {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10};
+        case 'G': return {0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f};
+        case 'H': return {0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
+        case 'I': return {0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e};
+        case 'J': return {0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0c};
+        case 'K': return {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
+        case 'L': return {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f};
+        case 'M': return {0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11};
+        case 'N': return {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11};
+        case 'O': return {0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
+        case 'P': return {0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10};
+        case 'Q': return {0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d};
+        case 'R': return {0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11};
+        case 'S': return {0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e};
+        case 'T': return {0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
+        case 'U': return {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
+        case 'V': return {0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04};
+        case 'W': return {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a};
+        case 'X': return {0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11};
+        case 'Y': return {0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04};
+        case 'Z': return {0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f};
+        case '0': return {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e};
+        case '1': return {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e};
+        case '2': return {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f};
+        case '3': return {0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e};
+        case '4': return {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02};
+        case '5': return {0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e};
+        case '6': return {0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e};
+        case '7': return {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08};
+        case '8': return {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e};
+        case '9': return {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e};
+        case '.': return {0, 0, 0, 0, 0, 0x0c, 0x0c};
+        case ',': return {0, 0, 0, 0, 0, 0x0c, 0x08};
+        case '!': return {0x04, 0x04, 0x04, 0x04, 0x04, 0, 0x04};
+        case '?': return {0x0e, 0x11, 0x01, 0x02, 0x04, 0, 0x04};
+        case ':': return {0, 0x0c, 0x0c, 0, 0x0c, 0x0c, 0};
+        case '-': return {0, 0, 0, 0x1f, 0, 0, 0};
+        case '\'': return {0x04, 0x04, 0x08, 0, 0, 0, 0};
+        default: return {0, 0, 0, 0, 0, 0, 0};
+    }
+}
+
+std::vector<std::string> wrapText(const std::string& text, std::size_t maxCharsPerLine, std::size_t maxLines)
+{
+    std::vector<std::string> lines;
+    std::string current;
+    std::string word;
+    const auto flushWord = [&]() {
+        if (word.empty() || lines.size() >= maxLines) {
+            word.clear();
+            return;
+        }
+        if (current.empty()) {
+            current = word.substr(0, maxCharsPerLine);
+        } else if (current.size() + 1 + word.size() <= maxCharsPerLine) {
+            current += " " + word;
+        } else {
+            lines.push_back(current);
+            current = word.substr(0, maxCharsPerLine);
+        }
+        word.clear();
+    };
+
+    for (char c : text) {
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            flushWord();
+        } else {
+            word.push_back(c);
+        }
+    }
+    flushWord();
+    if (!current.empty() && lines.size() < maxLines) {
+        lines.push_back(current);
+    }
+    return lines;
+}
+
 PathWaypoint pointAtDistance(const EnemyPath& path, float targetDistance)
 {
     if (path.waypoints.empty()) {
@@ -172,6 +319,7 @@ Engine::~Engine()
     destroyTexture(prevFloorTexture_);
     destroyTexture(prevWallTexture_);
     destroyTexture(playerSprite_.texture);
+    destroyTexture(font_.texture);
     for (auto& [id, sprite] : loadedSprites_) {
         destroyTexture(sprite.texture);
     }
@@ -216,6 +364,7 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     }
     loadPlayableCharacter();
     loadWeapons();
+    loadProjectFont();
     const float centerX = screenWidthPx() * 0.5f;
     const float centerY = screenHeightPx() * 0.5f;
     if (playerCanOccupy(centerX, centerY)) {
@@ -356,6 +505,76 @@ void Engine::loadWeapons()
             }
             break;
         }
+    }
+}
+
+void Engine::loadProjectFont()
+{
+    destroyTexture(font_.texture);
+    font_ = RuntimeFont{};
+    font_.pixelHeight = 16.0f;
+    font_.chars.resize(96);
+
+    GameProject project;
+    (void)loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr);
+    std::filesystem::path fontPath = project.fontPath;
+    if (fontPath.empty()) {
+#ifdef ADVENTURE_SOURCE_ROOT
+        fontPath = std::filesystem::path(ADVENTURE_SOURCE_ROOT) / "external/imgui/misc/fonts/Roboto-Medium.ttf";
+#else
+        fontPath = "external/imgui/misc/fonts/Roboto-Medium.ttf";
+#endif
+    } else if (!fontPath.is_absolute()) {
+        fontPath = projectRoot_ / fontPath;
+    }
+
+    std::ifstream input(fontPath, std::ios::binary);
+    if (!input) {
+        return;
+    }
+    std::vector<unsigned char> fontBytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (fontBytes.empty()) {
+        return;
+    }
+
+    constexpr int atlasW = 512;
+    constexpr int atlasH = 512;
+    std::vector<unsigned char> alpha(static_cast<std::size_t>(atlasW * atlasH), 0u);
+    std::vector<stbtt_bakedchar> baked(96);
+    const int bakeResult = stbtt_BakeFontBitmap(fontBytes.data(), 0, font_.pixelHeight,
+        alpha.data(), atlasW, atlasH, 32, 96, baked.data());
+    if (bakeResult <= 0) {
+        return;
+    }
+
+    std::vector<unsigned char> rgba(static_cast<std::size_t>(atlasW * atlasH * 4), 255u);
+    for (int i = 0; i < atlasW * atlasH; ++i) {
+        rgba[static_cast<std::size_t>(i) * 4u + 3u] = alpha[static_cast<std::size_t>(i)];
+    }
+
+    unsigned int glTexture = 0;
+    glGenTextures(1, &glTexture);
+    glBindTexture(GL_TEXTURE_2D, glTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, atlasW, atlasH, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+
+    font_.texture.id = glTexture;
+    font_.texture.width = atlasW;
+    font_.texture.height = atlasH;
+    font_.loaded = true;
+    for (int i = 0; i < 96; ++i) {
+        font_.chars[static_cast<std::size_t>(i)] = {
+            baked[static_cast<std::size_t>(i)].x0,
+            baked[static_cast<std::size_t>(i)].y0,
+            baked[static_cast<std::size_t>(i)].x1,
+            baked[static_cast<std::size_t>(i)].y1,
+            baked[static_cast<std::size_t>(i)].xoff,
+            baked[static_cast<std::size_t>(i)].yoff,
+            baked[static_cast<std::size_t>(i)].xadvance,
+        };
     }
 }
 
@@ -971,6 +1190,9 @@ void Engine::loadNpcEntities()
         entity.y = placement.y;
         if (const NpcTypeDef* type = typeForId(placement.typeId)) {
             entity.spriteId = type->spriteId;
+            if (entity.spriteId.empty()) {
+                entity.spriteId = characterSpriteId(projectRoot_, type->characterId);
+            }
             if (placement.speedOverride <= 0.0f) {
                 entity.placement.speedOverride = type->defaultSpeed;
             }
@@ -1156,6 +1378,46 @@ void Engine::renderInteractionPrompt() const
     const float pulse = 0.55f + 0.45f * std::sin(runtimeSeconds_ * 5.0f);
     const float size = 6.0f;
     renderFilledRect(npc.x - size * 0.5f, npc.y - 22.0f, size, size, 0.25f, 0.90f, 0.35f, pulse);
+}
+
+void Engine::renderSpeechBubble() const
+{
+    if ((interactionState_ != InteractionState::PromptVisible && interactionState_ != InteractionState::InDialogue) ||
+        interactingNpcIndex_ < 0 ||
+        interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        return;
+    }
+    const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    const int lineIndex = interactionState_ == InteractionState::InDialogue ? dialogueLineIndex_ : 0;
+    if (lineIndex < 0 || lineIndex >= static_cast<int>(npc.dialogue.size())) {
+        return;
+    }
+
+    std::vector<std::string> lines = wrapText(npc.dialogue[static_cast<std::size_t>(lineIndex)].text, 24, 3);
+    if (lines.empty()) {
+        return;
+    }
+
+    float maxTextW = 0.0f;
+    for (const std::string& line : lines) {
+        maxTextW = std::max(maxTextW, textWidth(line, kSpeechTextScale));
+    }
+    const float padX = 8.0f;
+    const float padY = 6.0f;
+    const float lineH = 10.0f * kSpeechTextScale;
+    const float bubbleW = std::min(screenWidthPx() - 12.0f, maxTextW + padX * 2.0f);
+    const float bubbleH = static_cast<float>(lines.size()) * lineH + padY * 2.0f;
+    const float x = std::clamp(npc.x - bubbleW * 0.5f, 6.0f, screenWidthPx() - bubbleW - 6.0f);
+    const float y = std::max(6.0f, npc.y - 48.0f - bubbleH);
+
+    renderFilledRect(x + 1.0f, y + 1.0f, bubbleW, bubbleH, 0.0f, 0.0f, 0.0f, 0.35f);
+    renderFilledRect(x, y, bubbleW, bubbleH, 0.98f, 0.98f, 0.92f, 0.95f);
+    renderFilledRect(npc.x - 4.0f, y + bubbleH - 1.0f, 8.0f, 7.0f, 0.98f, 0.98f, 0.92f, 0.95f);
+
+    for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+        renderText(lines[static_cast<std::size_t>(i)], x + padX, y + padY + static_cast<float>(i) * lineH,
+            kSpeechTextScale, 0.08f, 0.08f, 0.09f, 1.0f);
+    }
 }
 
 void Engine::renderDialogueBox() const
@@ -1598,6 +1860,7 @@ void Engine::render()
     renderItems();
     renderNpcs();
     renderInteractionPrompt();
+    renderSpeechBubble();
 
     bool flipH = false;
     const SpriteFrameDef* pf = playerSpriteFrame(flipH);
@@ -1768,6 +2031,71 @@ void Engine::renderFilledRect(float x, float y, float width, float height, float
     glVertex2f(x + width, y + height);
     glVertex2f(x, y + height);
     glEnd();
+}
+
+float Engine::textWidth(const std::string& text, float scale) const
+{
+    if (font_.loaded) {
+        float width = 0.0f;
+        for (unsigned char c : text) {
+            if (c < 32 || c > 127) {
+                width += 4.0f * scale;
+                continue;
+            }
+            width += font_.chars[static_cast<std::size_t>(c - 32)].xadvance * scale;
+        }
+        return width;
+    }
+    return static_cast<float>(text.size()) * 6.0f * scale;
+}
+
+void Engine::renderText(const std::string& text, float x, float y, float scale, float r, float g, float b, float a) const
+{
+    if (font_.loaded && font_.texture.id != 0) {
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, font_.texture.id);
+        glColor4f(r, g, b, a);
+        glBegin(GL_QUADS);
+        float penX = x;
+        for (unsigned char c : text) {
+            if (c < 32 || c > 127) {
+                penX += 4.0f * scale;
+                continue;
+            }
+            const RuntimeFont::BakedChar& ch = font_.chars[static_cast<std::size_t>(c - 32)];
+            const float x0 = penX + ch.xoff * scale;
+            const float y0 = y + ch.yoff * scale + font_.pixelHeight * scale;
+            const float x1 = x0 + static_cast<float>(ch.x1 - ch.x0) * scale;
+            const float y1 = y0 + static_cast<float>(ch.y1 - ch.y0) * scale;
+            const float u0 = static_cast<float>(ch.x0) / static_cast<float>(font_.texture.width);
+            const float v0 = static_cast<float>(ch.y0) / static_cast<float>(font_.texture.height);
+            const float u1 = static_cast<float>(ch.x1) / static_cast<float>(font_.texture.width);
+            const float v1 = static_cast<float>(ch.y1) / static_cast<float>(font_.texture.height);
+            glTexCoord2f(u0, v0); glVertex2f(x0, y0);
+            glTexCoord2f(u1, v0); glVertex2f(x1, y0);
+            glTexCoord2f(u1, v1); glVertex2f(x1, y1);
+            glTexCoord2f(u0, v1); glVertex2f(x0, y1);
+            penX += ch.xadvance * scale;
+        }
+        glEnd();
+        glDisable(GL_TEXTURE_2D);
+        return;
+    }
+
+    float penX = x;
+    for (char c : text) {
+        const std::array<std::uint8_t, 7> rows = glyphRows(c);
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                if ((rows[static_cast<std::size_t>(row)] & (1u << (4 - col))) != 0u) {
+                    renderFilledRect(penX + static_cast<float>(col) * scale,
+                        y + static_cast<float>(row) * scale,
+                        scale, scale, r, g, b, a);
+                }
+            }
+        }
+        penX += 6.0f * scale;
+    }
 }
 
 void Engine::renderItems() const

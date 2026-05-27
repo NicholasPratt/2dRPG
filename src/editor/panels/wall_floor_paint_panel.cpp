@@ -1359,23 +1359,24 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         return;
     }
 
-    if (snapMode_ != SnapMode::None) {
-        x = snapCoord(x);
-        y = snapCoord(y);
-    }
-
     if (tool_ == PaintTool::PickColor) {
         ImGui::SetTooltip("Pick color [%d,%d]", x, y);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && x >= 0 && y >= 0 && x < width_ && y < height_) {
-            const std::uint32_t color = activeLayer().pixels[static_cast<std::size_t>(y * width_ + x)];
-            if (alphaOf(color) > 0u) {
+            std::uint32_t color = 0u;
+            std::string layerName;
+            if (sampleVisibleGraphicsColor(x, y, color, layerName)) {
                 activeColor_ = color;
-                status_ = "Picked color from " + activeLayer().name + " layer.";
+                status_ = "Picked color from existing " + layerName + " graphics.";
             } else {
-                status_ = "Picked transparent pixel; active color unchanged.";
+                status_ = "No visible graphics color at that pixel; active color unchanged.";
             }
         }
         return;
+    }
+
+    if (snapMode_ != SnapMode::None) {
+        x = snapCoord(x);
+        y = snapCoord(y);
     }
 
     // Tile draw fills exactly one tile cell on the active layer.
@@ -1586,6 +1587,25 @@ bool WallFloorPaintPanel::canvasPixelAt(const ImVec2& origin, float pixelSize, i
     x = static_cast<int>((mouse.x - origin.x) / pixelSize);
     y = static_cast<int>((mouse.y - origin.y) / pixelSize);
     return x >= 0 && y >= 0 && x < width_ && y < height_;
+}
+
+bool WallFloorPaintPanel::sampleVisibleGraphicsColor(int x, int y, std::uint32_t& color, std::string& layerName) const
+{
+    if (x < 0 || y < 0 || x >= width_ || y >= height_) {
+        return false;
+    }
+    const std::size_t index = static_cast<std::size_t>(y * width_ + x);
+    if (wall_.visible && index < wall_.pixels.size() && alphaOf(wall_.pixels[index]) > 0u) {
+        color = wall_.pixels[index];
+        layerName = wall_.name;
+        return true;
+    }
+    if (floor_.visible && index < floor_.pixels.size() && alphaOf(floor_.pixels[index]) > 0u) {
+        color = floor_.pixels[index];
+        layerName = floor_.name;
+        return true;
+    }
+    return false;
 }
 
 int WallFloorPaintPanel::applySnap(int coord, int gridSize) const

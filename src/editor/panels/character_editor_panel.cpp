@@ -176,6 +176,20 @@ bool CharacterEditorPanel::saveForChapter(EditorContext& context)
     context.playableCharacterId.clear();
     project.characterIds.clear();
 
+    int playableIndex = -1;
+    for (int i = 0; i < static_cast<int>(characters_.size()); ++i) {
+        if (characters_[static_cast<std::size_t>(i)].playable) {
+            playableIndex = i;
+            break;
+        }
+    }
+    if (playableIndex < 0 && !characters_.empty()) {
+        playableIndex = 0;
+    }
+    for (int i = 0; i < static_cast<int>(characters_.size()); ++i) {
+        characters_[static_cast<std::size_t>(i)].playable = i == playableIndex;
+    }
+
     for (const CharacterSheet& character : characters_) {
         CharacterSheet writableCharacter = character;
         allOk = ensureUniqueSprite(context, writableCharacter) && allOk;

@@ -136,8 +136,10 @@ private:
     void drawLayers();
     void drawPalette(EditorContext& context);
     void drawExport(EditorContext& context);
+    void drawAssetBrowser(EditorContext& context);
     bool loadDocumentFromMetadata(const std::filesystem::path& metadataPath);
     bool importSheetPixels(const std::filesystem::path& inputPath);
+    bool importFramesFromSpriteMetadata(const EditorContext& context, const std::filesystem::path& metadataPath);
     void saveSpriteMetadata(const EditorContext& context) const;
     void exportSingleFramePng(const EditorContext& context);
     void exportFramePngs(const EditorContext& context);

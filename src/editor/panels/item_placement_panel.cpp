@@ -210,6 +210,15 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
 
     if (ImGui::Checkbox("Respawn##iresp", &respawn_)) { context.markDirty(); }
     if (ImGui::InputText("Sprite ID##isprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+    ImGui::SameLine();
+    if (ImGui::Button("Edit Sprite##item_sprite")) {
+        writeInspectorToSelected(context);
+        const std::string spriteId(spriteId_.data());
+        if (!spriteId.empty()) {
+            context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
+            context.requestEditSprite = true;
+        }
+    }
 
     if (ImGui::Button("Apply##iapply", ImVec2(-1.0f, 0.0f))) {
         writeInspectorToSelected(context);

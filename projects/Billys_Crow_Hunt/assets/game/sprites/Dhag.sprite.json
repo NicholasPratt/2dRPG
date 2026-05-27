@@ -1,6 +1,6 @@
 {
-  "id": "grandma_spelling",
-  "source": "assets/raw/sprites/grandma_spelling_sheet.png",
+  "id": "Dhag",
+  "source": "assets/raw/sprites/Dhag_sheet.png",
   "canvasSize": [32, 32],
   "gridSize": [32, 32],
   "pivot": [16, 16],

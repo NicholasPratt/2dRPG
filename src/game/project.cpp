@@ -56,7 +56,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 6\n";
+    output << "ADGAME 7\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -87,6 +87,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << w.ammoPerShot << "\n";
     }
     output << "starting_weapon " << (project.startingWeaponId.empty() ? "-" : project.startingWeaponId) << "\n";
+    output << "font " << std::quoted(project.fontPath.empty() ? std::string{"-"} : project.fontPath) << "\n";
     output << "state_defs " << project.stateVariables.size() << "\n";
     for (const StateVariableDef& variable : project.stateVariables) {
         output << "state_def " << variable.id
@@ -131,7 +132,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 6) {
+    if (magic != "ADGAME" || version < 1 || version > 7) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -201,6 +202,11 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             input >> loaded.startingWeaponId;
             if (loaded.startingWeaponId == "-") {
                 loaded.startingWeaponId.clear();
+            }
+        } else if (version >= 7 && key == "font") {
+            input >> std::quoted(loaded.fontPath);
+            if (loaded.fontPath == "-") {
+                loaded.fontPath.clear();
             }
         } else if (version >= 4 && key == "state_defs") {
             std::size_t count = 0;

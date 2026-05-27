@@ -53,6 +53,22 @@ private:
         bool loaded = false;
     };
 
+    struct RuntimeFont {
+        Texture texture;
+        bool loaded = false;
+        float pixelHeight = 16.0f;
+        struct BakedChar {
+            unsigned short x0 = 0;
+            unsigned short y0 = 0;
+            unsigned short x1 = 0;
+            unsigned short y1 = 0;
+            float xoff = 0.0f;
+            float yoff = 0.0f;
+            float xadvance = 0.0f;
+        };
+        std::vector<BakedChar> chars;
+    };
+
     struct RuntimeProjectile {
         float x = 0.0f;
         float y = 0.0f;
@@ -115,6 +131,7 @@ private:
     Texture prevFloorTexture_;
     Texture prevWallTexture_;
     RuntimeSprite playerSprite_;
+    RuntimeFont font_;
     std::vector<RuntimePathEntity> pathEntities_;
     std::vector<RuntimeNpcEntity> npcEntities_;
     std::unordered_map<std::string, RuntimeSprite> loadedSprites_;
@@ -161,6 +178,7 @@ private:
     [[nodiscard]] bool loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage);
     void destroyTexture(Texture& texture);
     void loadPlayableCharacter();
+    void loadProjectFont();
     void loadWeapons();
     void loadPathEntities();
     void loadNpcEntities();
@@ -207,11 +225,14 @@ private:
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;
     void renderNpcs() const;
     void renderInteractionPrompt() const;
+    void renderSpeechBubble() const;
     void renderDialogueBox() const;
     void renderItems() const;
     void renderProjectiles() const;
     void renderMeleeFlash() const;
     void renderHud() const;
+    void renderText(const std::string& text, float x, float y, float scale, float r, float g, float b, float a) const;
+    [[nodiscard]] float textWidth(const std::string& text, float scale) const;
 };
 
 } // namespace adventure::game

@@ -555,6 +555,14 @@ void EditorApp::drawProjectStateTab()
     if (ImGui::Button("Save Definitions", ImVec2(180.0f, 32.0f))) {
         saveProjectMetadata();
     }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Project Font");
+    if (editString("TTF path", context_.fontPath)) {
+        context_.markDirty();
+    }
+    ImGui::Text("Font folder: %s", context_.assets.gameFontPath().string().c_str());
 }
 
 void EditorApp::drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving)
@@ -731,6 +739,7 @@ void EditorApp::ensureProjectDirectories() const
     std::filesystem::create_directories(context_.assets.gameAnimationPath(), error);
     std::filesystem::create_directories(context_.assets.gamePalettePath(), error);
     std::filesystem::create_directories(context_.assets.gamePathPath(), error);
+    std::filesystem::create_directories(context_.assets.gameFontPath(), error);
 }
 
 void EditorApp::selectProject(const std::string& projectId)
@@ -750,10 +759,12 @@ void EditorApp::loadProjectMetadata()
         context_.stateVariables = project.stateVariables;
         context_.effectDefs = project.effectDefs;
         context_.npcTypes = project.npcTypes;
+        context_.fontPath = project.fontPath;
     } else {
         context_.stateVariables.clear();
         context_.effectDefs.clear();
         context_.npcTypes.clear();
+        context_.fontPath.clear();
     }
 }
 
@@ -770,6 +781,7 @@ void EditorApp::saveProjectMetadata()
     project.stateVariables = context_.stateVariables;
     project.effectDefs = context_.effectDefs;
     project.npcTypes = context_.npcTypes;
+    project.fontPath = context_.fontPath;
     (void)game::saveGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
 }
 

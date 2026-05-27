@@ -62,4 +62,9 @@ std::filesystem::path AssetDirectories::gamePathPath() const
     return projectRoot / gamePaths;
 }
 
+std::filesystem::path AssetDirectories::gameFontPath() const
+{
+    return projectRoot / gameFonts;
+}
+
 } // namespace adventure::editor

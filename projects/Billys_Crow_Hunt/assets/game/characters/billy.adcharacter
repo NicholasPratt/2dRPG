@@ -31,6 +31,8 @@ anim "swim" "assets/game/sprites/billy.sprite.json"
 anim "dash" "assets/game/sprites/billy.sprite.json"
 anim "block_break" "assets/game/sprites/billy.sprite.json"
 anim "revive" "assets/game/sprites/billy.sprite.json"
-frames 1
+frames 3
 frame 0 "walk" "assets/raw/sprites/billy_frame_1.png"
+frame 1 "walk" "assets/raw/sprites/billy_frame_2.png"
+frame 2 "walk" "assets/raw/sprites/billy_frame_3.png"
 end

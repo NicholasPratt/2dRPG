@@ -1084,6 +1084,9 @@ void SpriteEditorPanel::drawRightInspector(EditorContext& context)
     sectionHeader("Palette");
     drawPalette(context);
 
+    sectionHeader("Sprite Assets");
+    drawAssetBrowser(context);
+
     sectionHeader("Export");
     drawExport(context);
 }
@@ -1319,6 +1322,47 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
     }
 }
 
+void SpriteEditorPanel::drawAssetBrowser(EditorContext& context)
+{
+    ImGui::Text("Project sprites: %s", context.assets.gameSpritePath().string().c_str());
+    std::error_code error;
+    if (!std::filesystem::exists(context.assets.gameSpritePath(), error)) {
+        ImGui::TextDisabled("No sprite folder.");
+        return;
+    }
+
+    int shown = 0;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(context.assets.gameSpritePath(), error)) {
+        if (error) {
+            break;
+        }
+        if (!entry.is_regular_file(error) || entry.path().extension() != ".json") {
+            continue;
+        }
+        const std::string filename = entry.path().filename().string();
+        if (filename.find(".sprite.json") == std::string::npos) {
+            continue;
+        }
+
+        ImGui::PushID(filename.c_str());
+        ImGui::TextUnformatted(entry.path().stem().stem().string().c_str());
+        ImGui::SameLine();
+        if (ImGui::Button("Open")) {
+            openSpriteReference(entry.path());
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Import Frames")) {
+            importFramesFromSpriteMetadata(context, entry.path());
+        }
+        ImGui::PopID();
+        ++shown;
+    }
+
+    if (shown == 0) {
+        ImGui::TextDisabled("No .sprite.json assets found.");
+    }
+}
+
 bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& metadataPath)
 {
     const std::filesystem::path projectRoot = projectRootFromSpriteMetadataPath(metadataPath);
@@ -1389,6 +1433,85 @@ bool SpriteEditorPanel::importSheetPixels(const std::filesystem::path& inputPath
             }
         }
     }
+    return true;
+}
+
+bool SpriteEditorPanel::importFramesFromSpriteMetadata(const EditorContext& context, const std::filesystem::path& metadataPath)
+{
+    game::SpriteMetadata metadata;
+    std::string error;
+    if (!game::loadSpriteMetadata(metadataPath, metadata, &error)) {
+        ioStatus_ = "Failed to load sprite asset: " + error;
+        return false;
+    }
+    if (metadata.canvasSize != document_.canvasSize) {
+        ioStatus_ = "Import failed: sprite frame size must match current sprite.";
+        return false;
+    }
+    const std::filesystem::path sourcePath = metadata.source.is_absolute()
+        ? metadata.source
+        : context.assets.projectRoot / metadata.source;
+
+    int sheetWidth = 0;
+    int sheetHeight = 0;
+    std::vector<unsigned char> rgba;
+    if (!readEditorPngRgba(sourcePath, sheetWidth, sheetHeight, rgba)) {
+        ioStatus_ = "Import failed: source PNG could not be read.";
+        return false;
+    }
+
+    const int frameWidth = document_.canvasSize[0];
+    const int frameHeight = document_.canvasSize[1];
+    if (frameWidth <= 0 || frameHeight <= 0 || sheetHeight < frameHeight || sheetWidth < frameWidth) {
+        ioStatus_ = "Import failed: source sheet is smaller than one frame.";
+        return false;
+    }
+
+    recordUndoState();
+    int imported = 0;
+    for (const game::SpriteFrameDef& sourceFrame : metadata.frames) {
+        if (sourceFrame.x < 0 || sourceFrame.y < 0 ||
+            sourceFrame.x + frameWidth > sheetWidth || sourceFrame.y + frameHeight > sheetHeight) {
+            continue;
+        }
+
+        SpriteFrame frame;
+        frame.width = frameWidth;
+        frame.height = frameHeight;
+        frame.durationMs = sourceFrame.durationMs;
+        frame.type = sourceFrame.type.empty() ? "idle" : sourceFrame.type;
+        frame.direction = sourceFrame.direction;
+        document_.frames.push_back(std::move(frame));
+
+        std::vector<SpriteCel> frameCels(document_.layers.size());
+        for (SpriteCel& cel : frameCels) {
+            cel.pixels.assign(static_cast<std::size_t>(frameWidth * frameHeight), 0u);
+        }
+        SpriteCel& cel = frameCels.front();
+        for (int y = 0; y < frameHeight; ++y) {
+            for (int x = 0; x < frameWidth; ++x) {
+                const std::size_t srcIndex = (static_cast<std::size_t>(sourceFrame.y + y) * sheetWidth +
+                    static_cast<std::size_t>(sourceFrame.x + x)) * 4u;
+                cel.pixels[static_cast<std::size_t>(y) * frameWidth + x] =
+                    (static_cast<unsigned int>(rgba[srcIndex + 3]) << 24) |
+                    (static_cast<unsigned int>(rgba[srcIndex + 2]) << 16) |
+                    (static_cast<unsigned int>(rgba[srcIndex + 1]) << 8) |
+                    static_cast<unsigned int>(rgba[srcIndex + 0]);
+            }
+        }
+        document_.cels.push_back(std::move(frameCels));
+        ++imported;
+    }
+
+    if (imported == 0) {
+        ioStatus_ = "No frames imported from " + metadata.id + ".";
+        return false;
+    }
+
+    selectedFrame_ = static_cast<int>(document_.frames.size()) - imported;
+    selectedLayer_ = 0;
+    documentDirty_ = true;
+    ioStatus_ = "Imported " + std::to_string(imported) + " frame(s) from " + metadata.id + ".";
     return true;
 }
 

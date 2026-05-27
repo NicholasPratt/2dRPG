@@ -248,9 +248,9 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
 
     drawAnimationStateHelper(context);
 
-    ImGui::Text("Placements save inside the selected screen in chapter %s.", context.currentChapterId.c_str());
+    ImGui::Text("Project enemy definitions stay in the project. This screen stores only placements and path overrides.");
     if (canvasMode_ == CanvasMode::AddEnemies) {
-        ImGui::TextDisabled("Add enemies: click empty area to place, click a marker to select, right-click marker to delete.");
+        ImGui::TextDisabled("Add enemies: click empty area to place, click a marker to select, right-click marker to remove from this screen.");
     } else {
         ImGui::TextDisabled("Edit splines: click empty area to add waypoint, click waypoint to select, drag selected to move, right-click to delete.");
     }
@@ -262,7 +262,7 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
 void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
 {
     selectedType_ = std::clamp(selectedType_, 0, static_cast<int>(context.enemyTypes.size()) - 1);
-    ImGui::TextUnformatted("Enemy Types");
+    ImGui::TextUnformatted("Project Enemy Definitions");
     ImGui::SameLine();
     if (ImGui::Button("New type")) {
         game::EnemyType type;
@@ -353,7 +353,7 @@ void EnemyPathEditorPanel::drawPlacementList(EditorContext& context)
         ImGui::PopID();
     }
     if (selectedPlacement_ >= 0 && selectedPlacement_ < static_cast<int>(context.selectedScreenEnemies.size())) {
-        if (ImGui::Button("Delete placement")) {
+        if (ImGui::Button("Remove from Screen")) {
             context.selectedScreenEnemies.erase(context.selectedScreenEnemies.begin() + selectedPlacement_);
             selectedPlacement_ = std::clamp(selectedPlacement_, -1, static_cast<int>(context.selectedScreenEnemies.size()) - 1);
             if (selectedPlacement_ >= 0) {
