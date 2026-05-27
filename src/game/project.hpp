@@ -37,6 +37,22 @@ struct GameEffectDef {
     bool boolValue = true;
 };
 
+enum class EnemyAttackType {
+    Contact = 0,  // damage when player overlaps enemy (legacy behaviour)
+    Melee   = 1,  // swing attack when player is within range
+    Ranged  = 2,  // fire a projectile toward player
+};
+
+struct EnemyAttackDef {
+    EnemyAttackType type            = EnemyAttackType::Contact;
+    int             damage          = 1;
+    float           range           = 32.0f;      // px: melee reach or ranged trigger distance
+    float           cooldown        = 1.0f;       // seconds between activations
+    float           projectileSpeed = 120.0f;     // ranged only
+    std::string     ammoSpriteId;                 // ranged only: projectile sprite id
+    std::string     animState;                    // anim state name to play, e.g. "attack_1"
+};
+
 struct EnemyType {
     std::string id = "enemy_1";
     std::string spriteId = "enemy_1";
@@ -46,6 +62,7 @@ struct EnemyType {
     float hitboxHeight = 12.0f;
     float attackCooldownSeconds = 1.0f;
     float speed = 64.0f;
+    std::vector<EnemyAttackDef> attacks;
 };
 
 enum class NpcMovementMode {

@@ -83,6 +83,23 @@ private:
 
     std::string status_;
 
+    // Sprite preview for the enemy types page
+    struct SpritePreviewData {
+        std::string loadedId;          // sprite ID currently loaded
+        std::string loadedProjectRoot; // project root when loaded (detect project switch)
+        int frameX = 0, frameY = 0;   // first frame rect in sheet
+        int frameW = 16, frameH = 16;
+        std::vector<std::uint32_t> sheetPixels;
+        int sheetW = 0, sheetH = 0;
+        bool loaded = false;
+    };
+    SpritePreviewData spritePreview_;
+    bool showHitboxOverlay_ = true;
+    std::string lastLoadedProjectRoot_; // tracks project root for enemy-type reload
+
+    // Attack editor state (mirrors the selected enemy type's attacks)
+    int selectedAttack_ = -1;
+
     void drawToolbar(EditorContext& context);
     void drawEnemyTypePage(EditorContext& context);
     void drawPlacementList(EditorContext& context);
@@ -97,6 +114,9 @@ private:
     void selectPlacement(EditorContext& context, int index);
     void writeCurrentPlacement(EditorContext& context);
     void drawPixelLayer(ImDrawList* dl, ImVec2 origin, const PixelLayer& layer, float targetW, float targetH, float opacity) const;
+    void loadSpritePreview(const EditorContext& context, const std::string& spriteId);
+    void drawSpritePreviewPanel(ImDrawList* dl, ImVec2 topLeft, float panelW, float panelH, const game::EnemyType& type) const;
+    void drawAttackEditor(EditorContext& context, game::EnemyType& type);
     [[nodiscard]] float snapValue(float v) const;
     [[nodiscard]] ImVec2 waypointToCanvas(ImVec2 origin, const Waypoint& waypoint) const;
     [[nodiscard]] Waypoint placementAnchor(const game::EnemyPlacement& placement) const;

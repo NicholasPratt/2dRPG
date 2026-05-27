@@ -5,6 +5,7 @@
 #include "game/map.hpp"
 #include "game/path.hpp"
 #include "game/project.hpp"
+#include "game/sprite.hpp"
 #include "imgui.h"
 #include "stb_image.h"
 
@@ -26,6 +27,10 @@ constexpr float kHitRadius = 12.0f; // canvas pixels for waypoint hit detection
 
 const char* kBehaviorNames[] = {"Idle", "Patrol", "Aggro"};
 const char* kCurveModeNames[] = {"Linear", "Spline"};
+
+constexpr float kPreviewPanelW = 128.0f;
+constexpr float kPreviewPanelH = 128.0f;
+const char* kAttackTypeNames[] = {"Contact", "Melee", "Ranged"};
 
 // Deterministic color for a tile id (matches the map editor)
 ImU32 bgColorForTileId(uint16_t id)
@@ -75,9 +80,12 @@ ImU32 packedColor(std::uint32_t color, float opacity)
 
 void EnemyPathEditorPanel::draw(EditorContext& context)
 {
-    if (!projectLoaded_) {
+    const std::string currentRoot = context.assets.projectRoot.string();
+    if (!projectLoaded_ || lastLoadedProjectRoot_ != currentRoot) {
         loadProjectEnemyTypes(context);
         projectLoaded_ = true;
+        lastLoadedProjectRoot_ = currentRoot;
+        spritePreview_ = {};
     }
     if (context.enemyTypes.empty()) {
         context.enemyTypes.push_back({});
@@ -115,9 +123,12 @@ void EnemyPathEditorPanel::draw(EditorContext& context)
 
 void EnemyPathEditorPanel::drawTypes(EditorContext& context)
 {
-    if (!projectLoaded_) {
+    const std::string currentRoot = context.assets.projectRoot.string();
+    if (!projectLoaded_ || lastLoadedProjectRoot_ != currentRoot) {
         loadProjectEnemyTypes(context);
         projectLoaded_ = true;
+        lastLoadedProjectRoot_ = currentRoot;
+        spritePreview_ = {};
     }
     if (context.enemyTypes.empty()) {
         context.enemyTypes.push_back({});
@@ -259,9 +270,213 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     }
 }
 
+void EnemyPathEditorPanel::loadSpritePreview(const EditorContext& context, const std::string& spriteId)
+{
+    spritePreview_ = {};
+    spritePreview_.loadedId = spriteId;
+    spritePreview_.loadedProjectRoot = context.assets.projectRoot.string();
+    if (spriteId.empty()) return;
+
+    // Load sprite metadata
+    const std::filesystem::path metaPath = context.assets.gameSpritePath() / (spriteId + ".sprite.json");
+    game::SpriteMetadata meta;
+    if (!game::loadSpriteMetadata(metaPath, meta, nullptr)) return;
+
+    // Find first usable frame (prefer "idle", else first frame)
+    const game::SpriteFrameDef* firstFrame = nullptr;
+    for (const game::SpriteFrameDef& f : meta.frames) {
+        if (firstFrame == nullptr) firstFrame = &f;
+        if (f.type == "idle") { firstFrame = &f; break; }
+    }
+    if (firstFrame == nullptr) return;
+
+    spritePreview_.frameX = firstFrame->x;
+    spritePreview_.frameY = firstFrame->y;
+    spritePreview_.frameW = firstFrame->width;
+    spritePreview_.frameH = firstFrame->height;
+
+    // Load PNG sheet
+    std::filesystem::path sheetPath = meta.source;
+    if (sheetPath.empty()) {
+        sheetPath = context.assets.rawSpritePath() / (spriteId + "_sheet.png");
+    }
+    if (!sheetPath.is_absolute()) {
+        sheetPath = context.assets.projectRoot / sheetPath;
+    }
+
+    int w = 0, h = 0, ch = 0;
+    unsigned char* data = stbi_load(sheetPath.string().c_str(), &w, &h, &ch, 4);
+    if (!data || w <= 0 || h <= 0) { if (data) stbi_image_free(data); return; }
+
+    spritePreview_.sheetW = w;
+    spritePreview_.sheetH = h;
+    spritePreview_.sheetPixels = rgbaToPixels(data, w, h);
+    stbi_image_free(data);
+    spritePreview_.loaded = true;
+}
+
+void EnemyPathEditorPanel::drawSpritePreviewPanel(ImDrawList* dl, ImVec2 topLeft, float panelW, float panelH, const game::EnemyType& type) const
+{
+    // Dark background
+    dl->AddRectFilled(topLeft, {topLeft.x + panelW, topLeft.y + panelH}, IM_COL32(30, 32, 40, 255));
+    dl->AddRect(topLeft, {topLeft.x + panelW, topLeft.y + panelH}, IM_COL32(70, 80, 100, 200));
+
+    if (!spritePreview_.loaded || spritePreview_.frameW <= 0 || spritePreview_.frameH <= 0) {
+        // "No sprite" placeholder text
+        dl->AddText({topLeft.x + 8.0f, topLeft.y + panelH * 0.5f - 6.0f}, IM_COL32(120, 130, 150, 200), "No sprite");
+        return;
+    }
+
+    // Scale frame to fit panel while preserving aspect ratio
+    const float scale = std::min(panelW / static_cast<float>(spritePreview_.frameW),
+                                 panelH / static_cast<float>(spritePreview_.frameH));
+    const float drawW = static_cast<float>(spritePreview_.frameW) * scale;
+    const float drawH = static_cast<float>(spritePreview_.frameH) * scale;
+    const float offX = topLeft.x + (panelW - drawW) * 0.5f;
+    const float offY = topLeft.y + (panelH - drawH) * 0.5f;
+
+    const float pixW = scale;
+    const float pixH = scale;
+
+    // Draw pixels from the frame region
+    for (int py = 0; py < spritePreview_.frameH; ++py) {
+        const int sheetY = spritePreview_.frameY + py;
+        if (sheetY < 0 || sheetY >= spritePreview_.sheetH) continue;
+        int runStart = -1;
+        std::uint32_t runColor = 0u;
+        for (int px = 0; px <= spritePreview_.frameW; ++px) {
+            const int sheetX = spritePreview_.frameX + px;
+            const bool inBounds = (px < spritePreview_.frameW && sheetX >= 0 && sheetX < spritePreview_.sheetW);
+            const std::uint32_t color = inBounds ? spritePreview_.sheetPixels[static_cast<std::size_t>(sheetY * spritePreview_.sheetW + sheetX)] : 0u;
+            const bool visible = inBounds && alphaOf(color) > 0u;
+            if (!visible) {
+                if (runStart >= 0) {
+                    dl->AddRectFilled(
+                        {offX + static_cast<float>(runStart) * pixW, offY + static_cast<float>(py) * pixH},
+                        {offX + static_cast<float>(px) * pixW, offY + static_cast<float>(py + 1) * pixH},
+                        packedColor(runColor, 1.0f));
+                    runStart = -1;
+                }
+                continue;
+            }
+            if (runStart < 0) { runStart = px; runColor = color; }
+            else if (color != runColor) {
+                dl->AddRectFilled(
+                    {offX + static_cast<float>(runStart) * pixW, offY + static_cast<float>(py) * pixH},
+                    {offX + static_cast<float>(px) * pixW, offY + static_cast<float>(py + 1) * pixH},
+                    packedColor(runColor, 1.0f));
+                runStart = px; runColor = color;
+            }
+        }
+    }
+
+    // Hitbox overlay
+    if (showHitboxOverlay_ && (type.hitboxWidth > 0.0f || type.hitboxHeight > 0.0f)) {
+        const float hbW = type.hitboxWidth  * scale;
+        const float hbH = type.hitboxHeight * scale;
+        const float hbX = offX + (drawW - hbW) * 0.5f;
+        const float hbY = offY + (drawH - hbH) * 0.5f;
+        dl->AddRectFilled({hbX, hbY}, {hbX + hbW, hbY + hbH}, IM_COL32(255, 60, 60, 45));
+        dl->AddRect({hbX, hbY}, {hbX + hbW, hbY + hbH}, IM_COL32(255, 80, 80, 200), 0.0f, 0, 1.5f);
+    }
+}
+
+void EnemyPathEditorPanel::drawAttackEditor(EditorContext& context, game::EnemyType& type)
+{
+    ImGui::Separator();
+    ImGui::TextUnformatted("Active Attacks");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(up to 2; each fires independently of contact damage)");
+
+    if (type.attacks.size() < 2 && ImGui::Button("+ Add Attack")) {
+        game::EnemyAttackDef atk;
+        atk.type = type.attacks.empty() ? game::EnemyAttackType::Melee : game::EnemyAttackType::Ranged;
+        atk.animState = type.attacks.empty() ? "attack_1" : "attack_2";
+        type.attacks.push_back(atk);
+        selectedAttack_ = static_cast<int>(type.attacks.size()) - 1;
+        context.markDirty();
+    }
+
+    for (int ai = 0; ai < static_cast<int>(type.attacks.size()); ++ai) {
+        ImGui::PushID(ai);
+        game::EnemyAttackDef& atk = type.attacks[static_cast<std::size_t>(ai)];
+
+        const bool open = ImGui::CollapsingHeader(
+            (std::string("Attack ") + std::to_string(ai + 1) + "  [" + kAttackTypeNames[static_cast<int>(atk.type)] + "]").c_str(),
+            ImGuiTreeNodeFlags_DefaultOpen);
+
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem("Remove")) {
+                type.attacks.erase(type.attacks.begin() + ai);
+                context.markDirty();
+                ImGui::EndPopup();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::EndPopup();
+        }
+
+        if (open) {
+            int typeInt = static_cast<int>(atk.type);
+            if (ImGui::Combo("Type##atktype", &typeInt, kAttackTypeNames, 3)) {
+                atk.type = static_cast<game::EnemyAttackType>(typeInt);
+                context.markDirty();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80.0f);
+            if (ImGui::InputInt("Damage##atkdmg", &atk.damage)) {
+                atk.damage = std::clamp(atk.damage, 0, 999);
+                context.markDirty();
+            }
+
+            ImGui::SetNextItemWidth(100.0f);
+            if (ImGui::InputFloat("Range (px)##atkrange", &atk.range, 1.0f, 10.0f, "%.0f")) {
+                atk.range = std::clamp(atk.range, 1.0f, 2000.0f);
+                context.markDirty();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100.0f);
+            if (ImGui::InputFloat("Cooldown (s)##atkcd", &atk.cooldown, 0.1f, 0.5f, "%.2f")) {
+                atk.cooldown = std::clamp(atk.cooldown, 0.05f, 60.0f);
+                context.markDirty();
+            }
+
+            // Anim state
+            char animBuf[64]{};
+            std::memcpy(animBuf, atk.animState.data(), std::min(atk.animState.size(), sizeof(animBuf) - 1));
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::InputText("Anim state##atkanim", animBuf, sizeof(animBuf))) {
+                atk.animState = animBuf;
+                context.markDirty();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animation state name to play when this attack fires, e.g. attack_1");
+
+            if (atk.type == game::EnemyAttackType::Ranged) {
+                ImGui::SetNextItemWidth(100.0f);
+                if (ImGui::InputFloat("Proj speed##atkps", &atk.projectileSpeed, 10.0f, 50.0f, "%.0f")) {
+                    atk.projectileSpeed = std::clamp(atk.projectileSpeed, 10.0f, 2000.0f);
+                    context.markDirty();
+                }
+                ImGui::SameLine();
+                char ammoBuf[64]{};
+                std::memcpy(ammoBuf, atk.ammoSpriteId.data(), std::min(atk.ammoSpriteId.size(), sizeof(ammoBuf) - 1));
+                ImGui::SetNextItemWidth(120.0f);
+                if (ImGui::InputText("Ammo sprite##atkammo", ammoBuf, sizeof(ammoBuf))) {
+                    atk.ammoSpriteId = ammoBuf;
+                    context.markDirty();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprite ID for the projectile (e.g. arrow_sprite)");
+            }
+        }
+        ImGui::PopID();
+    }
+}
+
 void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
 {
     selectedType_ = std::clamp(selectedType_, 0, static_cast<int>(context.enemyTypes.size()) - 1);
+
+    // ── Top bar: type selector + add ─────────────────────────────────────────
     ImGui::TextUnformatted("Project Enemy Definitions");
     ImGui::SameLine();
     if (ImGui::Button("New type")) {
@@ -270,74 +485,126 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
         type.spriteId = type.id;
         context.enemyTypes.push_back(type);
         selectedType_ = static_cast<int>(context.enemyTypes.size()) - 1;
+        spritePreview_ = {};
         context.markDirty();
     }
 
-    if (!context.enemyTypes.empty()) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::BeginCombo("Selected type", context.enemyTypes[static_cast<std::size_t>(selectedType_)].id.c_str())) {
-            for (int i = 0; i < static_cast<int>(context.enemyTypes.size()); ++i) {
-                if (ImGui::Selectable(context.enemyTypes[static_cast<std::size_t>(i)].id.c_str(), selectedType_ == i)) {
-                    selectedType_ = i;
-                    const game::EnemyType& selectedType = context.enemyTypes[static_cast<std::size_t>(selectedType_)];
-                    copyToBuffer(typeId_, selectedType.id);
-                    copyToBuffer(spriteId_, selectedType.spriteId);
-                    writeCurrentPlacement(context);
-                }
-            }
-            ImGui::EndCombo();
-        }
+    if (context.enemyTypes.empty()) return;
 
-        game::EnemyType& type = context.enemyTypes[static_cast<std::size_t>(selectedType_)];
-        char typeId[64]{};
-        char spriteId[64]{};
-        std::memcpy(typeId, type.id.data(), std::min(type.id.size(), sizeof(typeId) - 1));
-        std::memcpy(spriteId, type.spriteId.data(), std::min(type.spriteId.size(), sizeof(spriteId) - 1));
-        ImGui::SetNextItemWidth(140.0f);
-        if (ImGui::InputText("Type id", typeId, sizeof(typeId))) {
-            type.id = typeId;
-            context.markDirty();
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::BeginCombo("##TypeSel", context.enemyTypes[static_cast<std::size_t>(selectedType_)].id.c_str())) {
+        for (int i = 0; i < static_cast<int>(context.enemyTypes.size()); ++i) {
+            if (ImGui::Selectable(context.enemyTypes[static_cast<std::size_t>(i)].id.c_str(), selectedType_ == i)) {
+                selectedType_ = i;
+                spritePreview_ = {};   // force reload
+            }
         }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(140.0f);
-        if (ImGui::InputText("Sprite", spriteId, sizeof(spriteId))) {
-            type.spriteId = spriteId;
-            context.markDirty();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80.0f);
-        if (ImGui::InputInt("HP", &type.maxHealth)) {
-            type.maxHealth = std::clamp(type.maxHealth, 1, 999);
-            context.markDirty();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80.0f);
-        if (ImGui::InputInt("Damage", &type.contactDamage)) {
-            type.contactDamage = std::clamp(type.contactDamage, 0, 999);
-            context.markDirty();
-        }
-        float hitbox[2]{type.hitboxWidth, type.hitboxHeight};
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(130.0f);
-        if (ImGui::InputFloat2("Hitbox", hitbox, "%.1f")) {
-            type.hitboxWidth = std::clamp(hitbox[0], 1.0f, 256.0f);
-            type.hitboxHeight = std::clamp(hitbox[1], 1.0f, 256.0f);
-            context.markDirty();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        if (ImGui::InputFloat("Cooldown", &type.attackCooldownSeconds, 0.1f, 0.5f, "%.2f")) {
-            type.attackCooldownSeconds = std::clamp(type.attackCooldownSeconds, 0.0f, 60.0f);
-            context.markDirty();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        if (ImGui::InputFloat("Base speed", &type.speed, 1.0f, 8.0f, "%.0f")) {
-            type.speed = std::clamp(type.speed, 0.0f, 512.0f);
-            context.markDirty();
+        ImGui::EndCombo();
+    }
+
+    game::EnemyType& type = context.enemyTypes[static_cast<std::size_t>(selectedType_)];
+
+    // Reload sprite preview if the selected type changed or sprite ID changed
+    if (spritePreview_.loadedId != type.spriteId ||
+        spritePreview_.loadedProjectRoot != context.assets.projectRoot.string()) {
+        loadSpritePreview(context, type.spriteId);
+    }
+
+    ImGui::Separator();
+
+    // ── Two-column layout: left = sprite preview, right = stats ──────────────
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Left column: preview panel + hitbox toggle
+    ImGui::BeginGroup();
+    const ImVec2 previewPos = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(kPreviewPanelW, kPreviewPanelH));
+    drawSpritePreviewPanel(dl, previewPos, kPreviewPanelW, kPreviewPanelH, type);
+    ImGui::Checkbox("Show hitbox", &showHitboxOverlay_);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Red rectangle shows the collision hitbox size relative to the sprite frame");
+    ImGui::EndGroup();
+
+    ImGui::SameLine(0.0f, 12.0f);
+
+    // Right column: identity + stats
+    ImGui::BeginGroup();
+
+    // Type ID and sprite
+    char typeIdBuf[64]{};
+    std::memcpy(typeIdBuf, type.id.data(), std::min(type.id.size(), sizeof(typeIdBuf) - 1));
+    ImGui::SetNextItemWidth(130.0f);
+    if (ImGui::InputText("Type ID##tid", typeIdBuf, sizeof(typeIdBuf))) {
+        type.id = typeIdBuf;
+        context.markDirty();
+    }
+    ImGui::SameLine();
+    char spriteBuf[64]{};
+    std::memcpy(spriteBuf, type.spriteId.data(), std::min(type.spriteId.size(), sizeof(spriteBuf) - 1));
+    ImGui::SetNextItemWidth(130.0f);
+    if (ImGui::InputText("Sprite ID##sid", spriteBuf, sizeof(spriteBuf))) {
+        type.spriteId = spriteBuf;
+        context.markDirty();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Edit Sprite##etype")) {
+        if (!type.spriteId.empty()) {
+            context.requestedSpriteReference = (context.assets.gameSpritePath() / (type.spriteId + ".sprite.json")).generic_string();
+            context.requestEditSprite = true;
         }
     }
+
+    // HP and movement speed
+    ImGui::SetNextItemWidth(80.0f);
+    if (ImGui::InputInt("Max HP##mhp", &type.maxHealth)) {
+        type.maxHealth = std::clamp(type.maxHealth, 1, 9999);
+        context.markDirty();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80.0f);
+    if (ImGui::InputFloat("Speed (px/s)##spd", &type.speed, 1.0f, 8.0f, "%.0f")) {
+        type.speed = std::clamp(type.speed, 0.0f, 512.0f);
+        context.markDirty();
+    }
+
+    // Hitbox — labelled clearly
+    ImGui::SetNextItemWidth(80.0f);
+    if (ImGui::InputFloat("Hitbox W (px)##hbw", &type.hitboxWidth, 1.0f, 4.0f, "%.1f")) {
+        type.hitboxWidth = std::clamp(type.hitboxWidth, 1.0f, 256.0f);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width of the collision rectangle centred on the enemy (pixels)");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80.0f);
+    if (ImGui::InputFloat("Hitbox H (px)##hbh", &type.hitboxHeight, 1.0f, 4.0f, "%.1f")) {
+        type.hitboxHeight = std::clamp(type.hitboxHeight, 1.0f, 256.0f);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Height of the collision rectangle centred on the enemy (pixels)");
+
+    // Contact damage
+    ImGui::Separator();
+    ImGui::TextDisabled("Contact Damage  (deals damage when player overlaps the enemy)");
+    ImGui::SetNextItemWidth(80.0f);
+    if (ImGui::InputInt("Contact Dmg##cdmg", &type.contactDamage)) {
+        type.contactDamage = std::clamp(type.contactDamage, 0, 999);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP removed from player each time they overlap this enemy");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputFloat("Cooldown (s)##ccd", &type.attackCooldownSeconds, 0.1f, 0.5f, "%.2f")) {
+        type.attackCooldownSeconds = std::clamp(type.attackCooldownSeconds, 0.0f, 60.0f);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Minimum seconds between contact damage hits");
+
+    ImGui::EndGroup();
+
+    // Below both columns: attack editor
+    ImGui::Spacing();
+    drawAttackEditor(context, type);
 }
 
 void EnemyPathEditorPanel::drawPlacementList(EditorContext& context)

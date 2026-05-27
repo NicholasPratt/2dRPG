@@ -4,7 +4,7 @@ This project is a C++ 2D RPG engine and integrated editor scaffold targeting a S
 
 The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
-The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters, enemy types, weapon definitions, and project state/effect definitions live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
+The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters, enemy types, NPC types, weapon definitions, and project state/effect definitions live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
 
 ## Current Layout
 
@@ -20,7 +20,7 @@ The current asset architecture separates reusable game-library assets from chapt
       tilesets/                     # raw map tileset images
     game/
       project.json                  # legacy/simple asset root manifest
-      project.adgame                # game-library manifest: characters, enemies, weapons, quest state/effects
+      project.adgame                # game-library manifest: characters, enemies, NPCs, weapons, quest state/effects
       chapters/                     # .adchapter chapter files
       maps/                         # .admap tile maps
       sprites/                      # .sprite.json metadata
@@ -28,7 +28,7 @@ The current asset architecture separates reusable game-library assets from chapt
       characters/                   # .adcharacter reusable character sheets
       animations/                   # planned animation data
       palettes/                     # planned palette data
-      paths/                        # .adpath enemy waypoint paths
+      paths/                        # .adpath enemy waypoint paths (legacy; placements now in .adchapter)
       tilesets/                     # .tileset.json tileset definitions
   projects/
     <project>/
@@ -39,7 +39,7 @@ The current asset architecture separates reusable game-library assets from chapt
           maps/                     # project .admap files
           sprites/                  # project .sprite.json files
           characters/               # project .adcharacter files
-          paths/                    # project .adpath enemy waypoint paths
+          paths/                    # project .adpath enemy waypoint paths (legacy)
           tilesets/                 # project screen graphics and tileset definitions
   external/
     imgui/                          # Dear ImGui source and backends
@@ -58,20 +58,21 @@ The current asset architecture separates reusable game-library assets from chapt
       stb_image_impl.cpp            # stb_image implementation unit
       panels/
         character_editor_panel.hpp/.cpp
-        enemy_path_editor_panel.hpp/.cpp
-        item_placement_panel.hpp/.cpp    # place weapon/ammo/health pickups on screens (ScreenEditMode::Items)
+        enemy_path_editor_panel.hpp/.cpp  # enemy type defs + per-screen enemy placements + spline editor
+        item_placement_panel.hpp/.cpp     # place weapon/ammo/health pickups on screens (ScreenEditMode::Items)
         layout_editor_panel.hpp/.cpp
-        map_editor_panel.hpp/.cpp        # legacy/detail map panel; not a top-level tab
+        map_editor_panel.hpp/.cpp         # legacy/detail map panel; not a top-level tab
+        npc_editor_panel.hpp/.cpp         # NPC type defs + per-screen NPC placements + patrol path editor
         sprite_editor_panel.hpp/.cpp
         tileset_editor_panel.hpp/.cpp
         wall_floor_paint_panel.hpp/.cpp
-        weapon_editor_panel.hpp/.cpp     # create/edit WeaponDef game-library assets (Weapons tab)
+        weapon_editor_panel.hpp/.cpp      # create/edit WeaponDef game-library assets (Weapons tab)
     game/
-      chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink types and .adchapter load/save
+      chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
       map.hpp/.cpp                  # TileMap type and .admap load/save (v5 adds item placements)
-      path.hpp/.cpp                 # EnemyPath type and .adpath load/save
-      project.hpp/.cpp              # GameProject type and .adgame load/save (v4 adds state/effect defs)
+      path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
+      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef and .adgame load/save (v8)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       state.hpp/.cpp                # GameState runtime store and .adstate save/load
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
@@ -134,7 +135,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
 | Assets | *(inline)* | Asset directory listing |
 
-`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, and `ItemPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, and `Edit Items` open scoped screen editors.
+`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, and `ItemPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, `Edit NPCs`, `Edit NPC Types`, and `Edit Items` open scoped screen editors.
 
 ---
 
@@ -142,70 +143,114 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 
 Implemented in `src/game/project.hpp/.cpp`.
 
-`assets/game/project.adgame` is the project-level game-library manifest. It currently stores:
+`assets/game/project.adgame` (current version: **8**) is the project-level game-library manifest. It stores:
 
 ```cpp
-enum class StateVariableType { Integer, Boolean, Item };
-struct StateVariableDef {
-    std::string id;
-    StateVariableType type;
-    int defaultInt;
-    bool defaultBool;
+enum class EnemyAttackType { Contact = 0, Melee = 1, Ranged = 2 };
+
+struct EnemyAttackDef {
+    EnemyAttackType type = EnemyAttackType::Contact;
+    int damage = 1;
+    float range = 32.0f;       // px: melee reach or ranged trigger distance
+    float cooldown = 1.0f;     // seconds between activations (per-attack timer)
+    float projectileSpeed = 120.0f;  // ranged only
+    std::string ammoSpriteId;        // ranged only
+    std::string animState;           // anim state to play when this attack fires
 };
 
-enum class GameEffectType { SetInt, AddInt, SetBool, GiveItem, TakeItem };
-struct GameEffectDef {
-    std::string id;
-    GameEffectType type;
-    std::string targetId;
-    int intValue;
-    bool boolValue;
+struct EnemyType {
+    std::string id = "enemy_1";
+    std::string spriteId = "enemy_1";
+    int maxHealth = 1;
+    int contactDamage = 1;
+    float hitboxWidth = 12.0f;
+    float hitboxHeight = 12.0f;
+    float attackCooldownSeconds = 1.0f;  // legacy contact cooldown
+    float speed = 64.0f;
+    std::vector<EnemyAttackDef> attacks;
 };
+
+enum class NpcMovementMode { Stationary = 0, Patrol = 1, Wander = 2 };
+enum class NpcInteractionMode { None = 0, Talk = 1, Shop = 2, Quest = 3 };
+
+struct DialogueLine {
+    std::string speaker;
+    std::string text;
+};
+
+struct NpcTypeDef {
+    std::string id = "npc_1";
+    std::string spriteId;
+    std::string characterId;
+    NpcMovementMode defaultMovement = NpcMovementMode::Stationary;
+    NpcInteractionMode defaultInteraction = NpcInteractionMode::Talk;
+    float defaultSpeed = 32.0f;
+    std::string defaultGraphId;
+    std::vector<DialogueLine> defaultDialogue;
+};
+
+enum class StateVariableType { Integer, Boolean, Item };
+struct StateVariableDef { std::string id; StateVariableType type; int defaultInt; bool defaultBool; };
+
+enum class GameEffectType { SetInt, AddInt, SetBool, GiveItem, TakeItem };
+struct GameEffectDef { std::string id; GameEffectType type; std::string targetId; int intValue; bool boolValue; };
 
 struct GameProject {
     std::string id;
     std::string playableCharacterId;
     std::string startingWeaponId;
+    std::string fontPath;
     std::vector<std::string> characterIds;
     std::vector<std::string> chapterIds;
     std::vector<EnemyType> enemyTypes;
     std::vector<WeaponDef> weaponDefs;
     std::vector<StateVariableDef> stateVariables;
     std::vector<GameEffectDef> effectDefs;
+    std::vector<NpcTypeDef> npcTypes;
 };
 ```
 
-Format:
+Format (ADGAME 8):
 
 ```text
-ADGAME 4
+ADGAME 8
 id game
 playable hero
-characters 2
+characters 1
 character hero
-character shopkeeper
 chapters 1
 chapter chapter_1
 enemy_types 1
-enemy_type slime slime 3 1 12.0 12.0 1.0 64.0
+enemy_type crow enemy_1 3 1 12.0 12.0 1.0 64.0 1
+enemy_attack 2 1 200.0 2.0 120.0 attack_1 ammo_stone
 weapon_defs 1
 weapon_def slingshot 1 1 96.0 0.35 240.0 ammo_stone ammo_stone 1
 starting_weapon slingshot
+font "assets/raw/fonts/myfont.ttf"
 state_defs 1
 state_def Example_Count 0 0 0
 effect_defs 1
 effect_def increment_example 1 Example_Count 1 1
+npc_types 1
+npc_type shopkeeper shopkeeper_sprite - 0 1 32.0 - 2
+dialogue Hello there!
+dialogue Come back soon.
 end
 ```
+
+`enemy_type` line fields: `id spriteId maxHealth contactDamage hitboxW hitboxH contactCooldown speed attackCount`  
+`enemy_attack` fields: `type damage range cooldown projectileSpeed animState ammoSpriteId` (type: 0=Contact, 1=Melee, 2=Ranged)
+
+Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs).
 
 Editor behavior:
 
 - `CharacterEditorPanel::saveForChapter` saves reusable character documents and writes `project.adgame`.
-- `EnemyPathEditorPanel::saveProjectEnemyTypes` saves reusable enemy type definitions into `project.adgame`.
+- `EnemyPathEditorPanel::saveProjectEnemyTypes` saves reusable enemy type definitions (including attack defs) into `project.adgame`.
+- `NpcEditorPanel::saveProjectNpcTypes` saves reusable NPC type definitions into `project.adgame`.
 - `WeaponEditorPanel` saves weapon definitions and the project starting weapon into `project.adgame`.
 - The Quest State tab in `EditorApp` saves state variable definitions and reusable effect definitions into `project.adgame`.
-- Character documents remain reusable library assets under `assets/game/characters/`.
-- Chapters import character ids from the current character library and store the chapter playable character id.
+- All panels that load project data track `lastLoadedProjectRoot_` and reload when the active project folder changes, preventing stale data from a previously opened project.
 
 Runtime behavior:
 
@@ -221,14 +266,50 @@ Implemented in `src/game/chapter.hpp/.cpp` and `src/editor/panels/layout_editor_
 ### Data model
 
 ```cpp
+struct PathWaypoint {
+    float x = 0.0f, y = 0.0f;
+    float speedOverride = 0.0f;
+    float waitSeconds = 0.0f;
+    int facing = -1;
+    std::string animState;
+};
+
+struct EnemyPlacement {
+    std::string id = "enemy_1";
+    std::string typeId = "enemy_1";      // references EnemyType in project.adgame
+    PathBehavior behavior = PathBehavior::Patrol;
+    PathCurveMode curveMode = PathCurveMode::Linear;
+    float speedOverride = 0.0f;
+    bool loop = true;
+    bool respawn = false;
+    std::vector<PathWaypoint> waypoints;
+};
+
+struct NpcPlacement {
+    std::string id = "npc_1";
+    std::string typeId = "npc_1";        // references NpcTypeDef in project.adgame
+    float x = 0.0f, y = 0.0f;
+    int facing = 0;                      // 0=S, 1=N, 2=E, 3=W
+    float awarenessRadius = 64.0f;
+    float interactionRadius = 24.0f;
+    NpcMovementMode movementOverride = NpcMovementMode::Stationary;
+    std::vector<PathWaypoint> waypoints;
+    bool loop = true;
+    float speedOverride = 0.0f;
+    std::string graphOverride;
+    std::vector<DialogueLine> dialogueOverride;
+};
+
 struct ScreenLink { std::string north, south, east, west; };
 
 struct ChapterScreen {
     std::string id;
     std::string mapId;        // .admap to load for this screen
-    int gridX, gridY;         // position in macro layout
-    ScreenLink links;         // screen-flip neighbours
-    bool respawnEnemies;      // false = defeated enemies stay gone (spec default)
+    int gridX, gridY;
+    ScreenLink links;
+    bool respawnEnemies = false;
+    std::vector<EnemyPlacement> enemies;   // per-screen enemy instances
+    std::vector<NpcPlacement> npcs;        // per-screen NPC instances
 };
 
 struct Chapter {
@@ -240,7 +321,7 @@ struct Chapter {
 };
 ```
 
-### `.adchapter` format (v3)
+### `.adchapter` format (v3+)
 
 ```text
 ADCHAPTER 3
@@ -249,30 +330,32 @@ start screen_1
 playable hero
 characters 1
 character hero
-screens 2
+screens 1
 screen screen_1 new_map 0 0
-links - screen_2 - -
+links - - - -
 respawn 0
-screen screen_2 dungeon_1 0 1
-links screen_1 - - -
-respawn 1
+enemies 1
+enemy enemy_1 crow_1 1 0 0.0 1 0
+wp 100.0 80.0
+wp 200.0 80.0
+npcs 1
+npc npc_1 shopkeeper_1 120.0 200.0 2 64.0 24.0 1
+wp 120.0 200.0 0.0 2.0
+dialogue Merchant Hello there traveler!
 end
 ```
 
-v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds chapter-level character imports and playable character id.
+v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements.
 
 ### Layout Editor
 
 - Continuous canvas showing screens as edge-to-edge tile grids based on `gridX/gridY`; the selected screen is centered and highlighted.
 - Adjacent/nearby screens render their mid-layer wall layout as context.
-- The selected screen's `.admap` can be edited directly in the Screens tab. Left-click paints the active tile ID; right-click erases. Layer selector controls Floor / Walls(mid) / Ceiling.
+- The selected screen's `.admap` can be edited directly in the Screens tab.
 - Directional buttons create or select connected screens north/south/east/west and write reciprocal screen links.
 - Screen list sidebar and inspector edit id, mapId, grid position, links, respawn flag, and deletion.
-- Save/load from `assets/game/chapters/<id>.adchapter`. Chapter save also saves dirty `.admap` files edited in the Screens tab.
-- `Edit Screen Graphics` opens the context-aware `WallFloorPaintPanel` subview for the selected screen's map id.
+- `Edit Screen Graphics` opens the context-aware `WallFloorPaintPanel` subview for the selected screen.
 - Screen layout can show scaled graphics previews from `<mapId>_preview.png` behind the structural tile overlay.
-- Screen layout UI rows avoid fixed-position label overlap; long chapter paths wrap instead of drawing across controls.
-- Graphics preview file checks are throttled and off-canvas screens are skipped to keep the main Screens page responsive on larger chapter layouts.
 
 ---
 
@@ -321,18 +404,12 @@ end
 
 Obstacle fields: `type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`.
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`.
-Backward compat: v1 (char `0`/`1` rows) and v2 (space-separated integer rows) both load into `layers[1]` (mid layer); floor/ceiling default to zero. v3 files load with no obstacles. v4 files load with no items.
+Backward compat: v1–v4 files still load; missing sections default to empty.
 
 ### Map Editor
 
 - Layer selector: Floor / Mid / Ceiling radio buttons.
-- Each layer rendered with a distinct tint: floor dim, mid normal, ceiling blue.
-- Inactive layers rendered at 75% brightness.
-- **Copy/paste**: "Select region" enters rubber-band mode → "Copy" copies selected tiles from active layer → "Paste" enters ghost-preview mode; click to stamp.
-- Tileset palette for selecting tile IDs; solid indicator per tile.
-- Test-game mode: arrow-key player movement with tile-based collision on the mid layer.
-- Obstacle edit mode: place/remove spike, pit, and timed-spike rectangles, assign a sprite ID, and jump directly to the sprite editor for that hazard sprite.
-- Save/load: `assets/game/maps/<id>.admap`.
+- Copy/paste, tileset palette, obstacle edit mode, save/load.
 
 ### Item Placement Editor
 
@@ -340,10 +417,8 @@ Implemented in `src/editor/panels/item_placement_panel.*`.
 
 - Opened from the selected screen inspector via `Edit Items`.
 - Places weapon, ammo, and health pickups into the selected screen's `.admap` items section.
-- Left column contains the item list and selected-item properties; the placement canvas is top-aligned to the right.
-- Canvas shows the selected screen's floor/wall graphics, wall guide, tile grid, and diamond item markers.
-- Left-click selects or places an item; drag moves the selected item; right-click deletes the nearest item.
-- Inspector fields edit ID, pickup type, target weapon/ammo ID, quantity/HP restore, respawn flag, and optional sprite ID.
+- Left column: item list and selected-item properties. Right: top-aligned canvas.
+- Canvas shows floor/wall graphics, wall guide, tile grid, and diamond item markers.
 
 ---
 
@@ -351,58 +426,99 @@ Implemented in `src/editor/panels/item_placement_panel.*`.
 
 Implemented in `src/game/tileset.hpp/.cpp` and `src/editor/panels/tileset_editor_panel.*`.
 
-### Data model
-
 ```cpp
-struct TileDef {
-    int id;
-    std::string name;
-    bool solid;
-};
-
-struct TilesetDef {
-    std::string id;
-    std::string sourcePath;
-    int tileWidth, tileHeight;
-    std::vector<TileDef> tiles;
-};
+struct TileDef { int id; std::string name; bool solid; };
+struct TilesetDef { std::string id; std::string sourcePath; int tileWidth, tileHeight; std::vector<TileDef> tiles; };
 ```
 
-Format: `assets/game/tilesets/<id>.tileset.json`.  
-Editor generates tile definitions from a source PNG grid.
+Format: `assets/game/tilesets/<id>.tileset.json`. Editor generates tile definitions from a source PNG grid.
 
 ---
 
 ## Runtime Engine
 
-Implemented in `src/game/engine.*` and `src/app/main_game.cpp`. Built as `adventure_game_window` when OpenGL and GLFW are available.
+Implemented in `src/game/engine.*` and `src/app/main_game.cpp`. Built as `adventure_game_window`.
 
-Runtime behavior:
+### Key runtime structs
 
-- Initializes a GLFW/OpenGL window and runs a fixed 60 Hz update loop.
-- Direct launch with no arguments opens a project/chapter picker populated by scanning `projects/<project>/assets/game/chapters/*.adchapter` and repo-root fallback chapters.
-- Launch with a chapter path skips the picker. If the path is inside `assets/game/chapters`, the runtime derives `projectRoot` from that chapter path so maps, screen PNGs, sprites, characters, and project data load from the same project folder.
-- Loads the selected chapter, resolves `Chapter::startScreenId`, then loads the active screen's `.admap`.
-- Resolves the playable character from the active chapter/project library. Reads the character's `sprite` field (a `.sprite.json` path), loads the sprite metadata and sheet PNG as a `RuntimeSprite`, and drives player rendering from that sprite system rather than a single static texture.
-- Player animation state is `"idle"` when still and `"walk"` when moving; the timer resets on state change. `playerSpriteFrame()` selects from frames matching the current action type and 8-directional facing (`E/W/N/S/NE/NW/SE/SW`). Missing directional frames auto-mirror: W flips E, NW flips NE, SW flips SE (U-coordinate swap). Falls back to any frame of that action type when no directional match exists.
-- Uses `ChapterScreen::mapId` as the screen asset key for `.admap`, wall/floor PNGs, and `.adpath` map references.
-- Renders pre-baked screen art from `assets/game/tilesets/<mapId>_floor.png` and `<mapId>_wall.png`.
-- Falls back to debug-color rendering when screen PNGs are missing.
-- Moves the playable character with WASD/arrow keys.
-- Collides against nonzero cells in `.admap` layer 1.
-- Spawns the player at the center of the start screen by default, falling back to the map spawn tile if the center is blocked.
-- Detects screen-boundary crossings when 30% of the player sprite has moved past an edge and follows north/south/east/west `ScreenLink` references.
-- Runs a sliding screen transition after validating the linked screen exists and the destination entry point is not blocked.
-- Loads `.adpath` files matching the active screen's `mapId`, advances runtime path entities along linear or spline waypoints, and renders their referenced sprite sheet when available.
-- Evaluates `.admap` obstacles; active spikes, pits, and timed spikes respawn the player at the map spawn with a short cooldown.
-- Supports melee and ranged attack actions. Z triggers melee and X triggers ranged projectiles, both using `WeaponDef` cooldown/range/damage data.
-- Collects `.admap` item pickups. Weapon pickups equip slots and register item ownership in `GameState`; ammo and health pickups update runtime inventory/health.
-- Maintains a generic `GameState` registry for named ints, bools, and owned item IDs.
+```cpp
+struct RuntimePathEntity {
+    EnemyPath path;             // legacy path data (combat, waypoints, spriteId)
+    float x, y;
+    float pathDistance;
+    int health;
+    float contactCooldownSeconds;
+    float deathSeconds;         // >= 0 means dying, counts up to visual duration
+    std::size_t waypointIndex;
+    float waitRemainingSeconds;
+    bool atWaypoint;
+    float animSeconds;          // animation clock for this entity
+    std::string animState;      // current frame-filter state ("idle", "walk", "attack_1", …)
+    std::vector<float> attackCooldowns;  // per-attack cooldown timers, indexed by combat.attacks
+    float facingX = 1.0f;       // unit vector: direction entity is facing
+    float facingY = 0.0f;
+};
+
+struct RuntimeNpcEntity {
+    NpcPlacement placement;
+    std::string spriteId;
+    std::vector<DialogueLine> dialogue;
+    float x, y;
+    float animSeconds;
+    std::string actionType;     // "idle" or "walk"
+    std::size_t waypointIndex;
+    float pathDistance;
+    bool playerInAwareness;
+    float waitRemainingSeconds;
+    bool atWaypoint;
+    float facingX = 1.0f;       // unit vector: direction NPC is facing
+    float facingY = 0.0f;
+};
+```
+
+### Direction-aware sprite selection
+
+Three functions implement the same logic at different scopes:
+
+| Function | Subject | State source |
+|---|---|---|
+| `playerSpriteFrame(bool& flipH)` | Player | `playerActionType_`, `playerFacingX_/Y_`, `playerAnimSeconds_` |
+| `spriteFrameForEntity(sprite, entity, bool& flipH)` | Path entity | `entity.animState`, `entity.facingX/Y`, `entity.animSeconds` |
+| `spriteFrameForNpc(sprite, npc, bool& flipH)` | NPC | `npc.actionType`, `npc.facingX/Y`, `npc.animSeconds` |
+
+All three: look up frames by action type + facing direction, apply W↔E / NW↔NE / SW↔SE mirroring (sets `flipH = true`), fall back to any frame of that action then to `"idle"`. The render loop applies the flip by swapping `u0`/`u1` in `renderTextureRegion`.
+
+### `facingX/Y` updates
+
+- **Enemies (linear paths):** `updatePaths` writes `entity.facingX = dx/dist; entity.facingY = dy/dist` on every movement step toward the current waypoint.
+- **Enemies (spline paths):** `updatePaths` samples the Catmull-Rom tangent (two points `kTangentDelta` px apart along the curve) and normalises it into `entity.facingX/Y`.
+- **NPCs:** `updateNpcs` writes `npc.facingX = dx/dist; npc.facingY = dy/dist` when moving toward a waypoint.
+- Initial value for both is `(1.0, 0.0)` (facing East) until the entity first moves.
+
+### `updateEnemyCombat`
+
+Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `entity.attackCooldowns` (one float per `combat.attacks` entry). For each `EnemyAttackDef`:
+- **Contact:** handled by the legacy `contactDamage` path (overlap check).
+- **Melee:** fires when player is within `atk.range` and cooldown is zero; deals `atk.damage` and resets the per-attack cooldown.
+- **Ranged:** fires when player is within `atk.range`; spawns a `RuntimeProjectile` headed toward the player at `atk.projectileSpeed`.
+- If `atk.animState` is set and the attack fires, transitions `entity.animState` and resets `entity.animSeconds`.
+
+### Other runtime behavior
+
+- Initializes GLFW/OpenGL window and runs fixed 60 Hz update loop.
+- Direct launch opens project/chapter picker; explicit chapter path skips it.
+- Loads `.admap`, resolves playable character, loads per-screen enemy and NPC placements from `ChapterScreen`.
+- Collision against nonzero cells in `.admap` layer 1.
+- Screen-boundary crossings with 30% threshold trigger sliding transition to linked screen.
+- Obstacle hazards (spikes, pits, timed spikes) respawn the player at the map spawn.
+- Melee attack (Z): hitbox sweep in facing direction, brief yellow flash. Ranged (X): projectile from `WeaponDef` data.
+- Item pickups equip weapons, add ammo, or restore HP. All item ownership writes to `GameState`.
+- NPC dialogue: E key triggers interaction, subsequent E advances lines; speech bubble / dialogue box rendered above NPC.
 
 Current limitations:
 
-- Rendering uses fixed-pipeline OpenGL for speed of implementation; a shader/core-profile renderer is planned.
-- Enemy defeat persistence is not implemented yet.
+- Rendering uses fixed-pipeline OpenGL; a shader/core-profile renderer is planned.
+- Enemy defeat persistence not yet implemented.
 - Collision is binary: nonzero mid-layer tile means solid.
 
 ---
@@ -413,49 +529,31 @@ Implemented in `src/editor/panels/sprite_editor_panel.*`.
 
 - Pixel editing with frames, layers, palette, preview, and animation playback.
 - Tools: pen, mirror, bucket, eraser, stroke, line, rect, circle, move, select, picker, shade.
-- Brush sizes 1×1, 2×2, 4×4.
-- Frame actions: add, copy, delete, clear.
-- **Frame metadata section** (right inspector): for the selected frame, exposes action type (combo: idle/walk/run/attack/etc.), facing direction (combo: any/E/W/N/S/NE/NW/SE/SW), and duration in ms. Changes are undo-able.
-- Transform actions: flip H/V, rotate CW — applied to selection or whole frame.
-- Clipboard: copy/paste selections.
-- OS-aware shortcuts: `Cmd+Z/C/V` (macOS), `Ctrl+Z/C/V` (other).
-- Snapshot-based undo for drawing, transforms, paste, resize, frame/layer changes, import.
-- Opening an existing `.sprite.json` parses metadata through `src/game/sprite.*` and imports the referenced sheet pixels when available.
+- **Frame metadata section** (right inspector): action type (combo: idle/walk/run/attack/etc.), facing direction (combo: any/E/W/N/S/NE/NW/SE/SW), and duration in ms. The direction system is shared by all sprites: player, enemy, NPC alike.
+- Transform actions: flip H/V, rotate CW. Clipboard: copy/paste selections.
+- Snapshot-based undo. OS-aware shortcuts (`Cmd` on macOS, `Ctrl` elsewhere).
 
 ### Per-sprite dirty buffer system
 
-`SpriteEditorPanel` holds a `std::unordered_map<std::string, SpriteDocumentBuffer> documentBuffers_` keyed by sprite ID. When `openSpriteReference` switches to a different sprite the current `SpriteDocument` is stashed into the map with its dirty flag. Switching back restores from the map. On chapter save (`saveForChapter`) every dirty entry is flushed: each document is temporarily swapped in as the active document, written with `saveSpriteMetadata` + `exportSpriteSheetPng`, then swapped back out. `resetDocumentBuffers()` (called on chapter switch) clears all buffers so stale documents from a previous chapter never bleed through.
+`SpriteEditorPanel` holds a `std::unordered_map<std::string, SpriteDocumentBuffer> documentBuffers_` keyed by sprite ID. Switching sprites stashes/restores the document. Chapter save flushes all dirty entries. Chapter switch calls `resetDocumentBuffers()`.
 
-Sprite metadata is runtime-facing and implemented in `src/game/sprite.hpp/.cpp`:
+Sprite metadata (runtime-facing, `src/game/sprite.hpp/.cpp`):
 
 ```cpp
 struct SpriteFrameDef {
     int x, y, width, height;
     int durationMs;
     std::string type;       // animation action: "idle", "walk", "attack_1", etc.
-    std::string direction;  // facing direction: "E","W","N","S","NE","NW","SE","SW", or empty = any
+    std::string direction;  // "E","W","N","S","NE","NW","SE","SW", or empty = any direction
 };
-
 struct SpriteMetadata {
     std::string id;
     std::filesystem::path source;
-    std::array<int, 2> canvasSize;
-    std::array<int, 2> gridSize;
-    std::array<int, 2> pivot;
+    std::array<int, 2> canvasSize, gridSize, pivot;
     std::vector<SpriteFrameDef> frames;
     std::vector<std::string> tags;
 };
 ```
-
-Export/import paths:
-
-| Operation | Path |
-|-----------|------|
-| Save metadata | `assets/game/sprites/<id>.sprite.json` |
-| Export single frame | `assets/raw/sprites/<id>_frame_<n>.png` |
-| Export all frame PNGs | `assets/raw/sprites/<id>_frame_<n>.png` |
-| Export sprite sheet | `assets/raw/sprites/<id>_sheet.png` |
-| Import PNG | per Source PNG field |
 
 ---
 
@@ -465,12 +563,9 @@ Implemented in `src/editor/panels/character_editor_panel.*`.
 
 - Saves reusable character sheets to `assets/game/characters/<id>.adcharacter`.
 - Character sheets store name, bio, sprite metadata reference, playable flag, animation slots, and per-frame assignments.
-- Add Character and Delete Character controls are visible in the main character workflow.
-- Delete Character removes the entry from the active editor list immediately and deletes the `.adcharacter` file on the next save. The panel prevents deleting the last remaining character.
+- Add Character and Delete Character controls. Panel prevents deleting the last remaining character.
 - Only one character can be marked playable at a time.
-- Sprite editing launched from a character ensures that character gets its own sprite metadata/sheet files before editing, preventing one character's sprite edits from overwriting another character's sprite sheet.
-- Frame assignments are synced from sprite metadata only when the selected sprite changes or Refresh Frames is pressed.
-- Frame thumbnail PNGs are decoded once and cached for the editing session, avoiding per-frame disk I/O during normal draw calls.
+- Frame thumbnail PNGs are decoded once and cached for the editing session.
 
 ---
 
@@ -481,9 +576,9 @@ Implemented in `src/game/state.hpp/.cpp`.
 ```cpp
 class GameState {
 public:
-    int getInt(const std::string& id, int fallback = 0) const;
+    int  getInt(const std::string& id, int fallback = 0) const;
     void setInt(const std::string& id, int value);
-    int addInt(const std::string& id, int delta);
+    int  addInt(const std::string& id, int delta);
     bool getBool(const std::string& id, bool fallback = false) const;
     void setBool(const std::string& id, bool value);
     bool hasItem(const std::string& id) const;
@@ -492,20 +587,7 @@ public:
 };
 ```
 
-`.adstate` stores runtime values:
-
-```text
-ADSTATE 1
-ints 1
-int Example_Count 12
-bools 1
-bool Example_Complete 1
-items 1
-item example_reward
-end
-```
-
-Variable names are designer-authored. Example quest names such as `Crows_Killed` are content examples, not hard-coded engine behavior.
+`.adstate` stores runtime values. Variable names are designer-authored content, not hard-coded engine behavior.
 
 ---
 
@@ -513,37 +595,15 @@ Variable names are designer-authored. Example quest names such as `Crows_Killed`
 
 Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 
-- Two-layer pixel painter: Floor and Wall.
-- Canvas is fixed at `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (768 × 512 px). Resize controls have been removed — the size is locked to the screen constants.
-- The canvas fills the available screen-graphics workspace instead of being confined to a fixed half-height preview area.
-- Tools: Pencil, Eraser, Fill, Line, Rect, Select, **Tile Draw**, **Tile Select**, **Tile Paste**, **Stamp**, **Tile Fill**, **Tile Erase**.
-- Brush shapes: Square, Circle, Spray, Dither.
-- Snap modes: None, Full tile, Half tile, Quarter tile.
-- Palette, brush size, layer visibility/opacity controls.
-- Shared editor checkbox/slider helpers render labels on the left and the control on the right.
-- Left-side tool buttons are arranged in two-column rows so labels remain readable.
-- **Tile boundary grid:** a subtle overlay marks tile boundaries on the canvas.
-- Zoom range 1–16 (opens at zoom 2 when loaded from a screen).
-- When opened from `Edit Screen Graphics`, loads the selected screen's `.admap` mid layer as a toggleable yellow `Wall guide` overlay.
+- Two-layer pixel painter (Floor + Wall). Canvas locked to `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (768 × 512 px).
+- Tools: Pencil, Eraser, Fill, Line, Rect, Select, Tile Draw, Tile Select, Tile Paste, Stamp, Tile Fill, Tile Erase.
+- Brush shapes: Square, Circle, Spray, Dither. Zoom 1–16.
+- Tile palette: `Tile Select` → Add to palette → Stamp / Tile Fill across all screens.
 - Undo stack (up to 50 steps).
-
-### Tile palette system
-
-`Tile Select` selects exactly one 16×16 tile cell. The selected tile can be copied, pasted, or added to the chapter-wide tile palette (`EditorContext::tilePalette`, a `std::vector<TilePaletteEntry>`). Each entry stores the floor and wall pixel data for the selected tile cell.
-
-Tile tools:
-
-- **Tile Draw:** fills the active 16×16 tile cell with the selected color. Dragging paints like a pen and records one undo snapshot for the stroke.
-- **Tile Paste:** pastes a copied 16×16 tile cell at the hovered tile coordinate.
-- **Stamp:** stamps the selected tile-palette entry onto the canvas. Dragging stamps each new tile cell once and records one undo snapshot for the stroke.
-- **Tile Fill:** flood-fills contiguous matching tile cells using copies of the selected tile-palette entry.
-- **Tile Erase:** clears whole tile cells without affecting neighbouring pixels.
-
-Tile palette entries are static in this panel. Animated tile assets are authored in the Sprite editor.
 
 ### Per-screen dirty buffer system
 
-`WallFloorPaintPanel` holds a `std::unordered_map<std::string, ScreenGraphicsBuffer> screenBuffers_` keyed by `mapId`. When `openScreenGraphics` switches to a different screen, the current canvas is stashed into the map with a dirty flag. Switching back restores the in-memory buffer first; if the screen is new to the session it falls back to loading from the previously exported PNGs on disk (via stb_image), and if those are absent it starts a blank canvas. On chapter save (`saveForChapter`) every dirty entry is flushed by `exportScreenPngs`. `resetScreenBuffers()` (called on chapter switch) clears all buffers.
+`WallFloorPaintPanel` holds `std::unordered_map<std::string, ScreenGraphicsBuffer> screenBuffers_` keyed by `mapId`. Chapter save flushes dirty entries. Chapter switch calls `resetScreenBuffers()`.
 
 Exported paint files (one set per screen, `<id>` = `mapId`):
 
@@ -560,28 +620,50 @@ Exported paint files (one set per screen, `<id>` = `mapId`):
 
 ## Enemy Editor / Path Editor
 
-Implemented in `src/game/path.*` and `src/editor/panels/enemy_path_editor_panel.*`.
+Implemented in `src/game/path.*` (legacy `.adpath` format), `src/game/chapter.*` (current `EnemyPlacement` in screens), and `src/editor/panels/enemy_path_editor_panel.*`.
 
-Addresses spec §4.4 (enemy instance identity, sprite reference, behavior state, waypoint/spline pathing).
+Addresses spec §4.4.
 
 ### Data model
 
+Enemy type definitions live in `project.adgame` (`EnemyType` + `EnemyAttackDef`, see Game Project Library section above).
+
+Per-screen enemy instances are stored as `EnemyPlacement` in `ChapterScreen`:
+
 ```cpp
-struct Waypoint { float x, y; };  // world pixels
-enum class Behavior { Idle, Patrol, Aggro };
-enum class PathCurveMode { Linear, Spline };
-struct EnemyCombatStats {
-    int maxHealth;
-    int contactDamage;
-    float hitboxWidth, hitboxHeight;
-    float attackCooldownSeconds;
+struct EnemyPlacement {
+    std::string id;         // instance id
+    std::string typeId;     // references EnemyType.id in project.adgame
+    PathBehavior behavior;
+    PathCurveMode curveMode;
+    float speedOverride;
+    bool loop;
+    bool respawn;
+    std::vector<PathWaypoint> waypoints;
 };
-// Fields: id, enemyId, spriteId, mapId (ref), behavior, curveMode, combat, speed (px/s), loop, respawn, waypoints
 ```
 
-The editor saves and loads through `game::saveEnemyPath` / `game::loadEnemyPath`, so editor and runtime share one parser.
+Runtime: `Engine::loadPathEntities` builds `RuntimePathEntity` from placements + matching `EnemyType` from the project library. `entity.attackCooldowns` is sized to match `type.attacks.size()`.
 
-### `.adpath` format (v3)
+### Enemy Type Editor (`Edit Enemy Types` subpanel)
+
+Two-column layout using `BeginGroup`/`EndGroup`:
+
+- **Left column:** `Dummy` reserves space for the sprite preview panel (drawn via `ImDrawList`). Shows the first idle frame of the type's sprite sheet at pixel scale, backed by raw RGBA pixels loaded with `stbi_load`. Below the preview: `Checkbox("Show hitbox")` toggles a red overlay rectangle scaled to `hitboxWidth/Height` relative to the frame.
+- **Right column:** Type ID, Sprite ID (with Edit Sprite button), Max HP, Speed, Hitbox W/H, Contact Damage, Contact Cooldown.
+- **Attack editor** (below both columns): one `CollapsingHeader` per `EnemyAttackDef`, exposing type combo (Contact/Melee/Ranged), damage, range, cooldown, animation state, and ranged-only fields (projectile speed, ammo sprite ID). Add/Remove attack buttons.
+
+Sprite preview reload guard: reloads when `spritePreview_.loadedId != type.spriteId` OR `spritePreview_.loadedProjectRoot != context.assets.projectRoot.string()` — prevents stale preview after project switch.
+
+### Enemy Placement Editor (`Edit Enemies` / `Edit Splines` subpanels)
+
+- Canvas modes: **Add Enemies** (place/select/delete enemy anchors by typeId) and **Edit Splines** (add/move/delete waypoints for the selected enemy's path).
+- Canvas shows the selected screen's map, graphics, grid, enemy markers, and spline for context.
+- Behavior (Idle/Patrol/Aggro), speed override, loop, respawn controls.
+
+### `.adpath` format (v3, legacy)
+
+Still used by the smoke test and for backward compatibility. New enemy data lives in `.adchapter`.
 
 ```text
 ADPATH 3
@@ -596,47 +678,53 @@ speed 64.0
 loop 1
 respawn 0
 waypoints 4
-wp 48.0 32.0
-wp 96.0 32.0
-wp 96.0 80.0
-wp 48.0 80.0
+wp 48.0 32.0 ...
 end
 ```
 
-`behavior`: 0=Idle, 1=Patrol, 2=Aggro.  
-`curve`: 0=Linear, 1=Spline.
-`combat`: max health, contact damage, hitbox width, hitbox height, contact-hit cooldown seconds. v1/v2 files still load with default combat values.
-Files saved to `assets/game/paths/<id>.adpath`.
+---
 
-### Editor features
+## NPC Editor
 
-- Enemy identity fields: path ID, enemy ID, sprite ID.
-- `Edit Sprite` / `Open sprite states` jumps directly to the sprite editor for the enemy's sprite metadata.
-- Sprite animation states are authored in the sprite editor with frame `type` labels such as `idle`, `walk`, `attack`, `hurt`, and `dead`.
-- Canvas shows a 16px world-tile grid (zoom 0.5×–6×).
-- The canvas shows the selected screen's structural map, wall/floor graphics, grid, enemy anchors, and selected path for context.
-- Canvas mode buttons separate placement from path editing:
-  - **ADD ENEMIES:** click empty area to create an enemy placement; click a marker to select; right-click marker to delete.
-  - **EDIT SPLINES:** click empty area to add a waypoint; click near existing waypoint to select; drag selected waypoint to move it; right-click waypoint to delete.
-- Delete key: delete selected waypoint.
-- Linear mode draws straight segments; Spline mode draws a Catmull-Rom curve through the waypoint chain.
-- Loop line/curve closes from last to first waypoint when loop is enabled.
-- Behavior (Idle/Patrol/Aggro), speed slider, loop checkbox, respawn checkbox.
-- Combat controls: health, contact damage, hitbox dimensions, and hit cooldown.
+Implemented in `src/game/chapter.*` (`NpcPlacement`, `NpcTypeDef`) and `src/editor/panels/npc_editor_panel.*`.
 
-Runtime:
+Addresses spec §4.5.
 
-- `Engine::loadPathEntities` loads path-backed enemy instances for the active `mapId`.
-- `Engine::updatePaths` advances non-idle enemies. Linear mode targets each waypoint; spline mode samples the Catmull-Rom curve by approximate distance.
-- `Engine::loadObstacleSprites` also loads enemy sprites referenced by path entities.
-- Enemy sprites render via `.sprite.json` frame rectangles and the exported `<spriteId>_sheet.png` sheet; missing sprites fall back to debug red squares.
-- `Engine::updateEnemyCombat` applies contact damage when the player's box overlaps an enemy hitbox. The player has a short invulnerability window and respawns at the map spawn when health reaches zero.
+### NPC Type Editor (`Edit NPC Types` subpanel)
+
+- Lists reusable `NpcTypeDef` records from `project.adgame`.
+- Fields: id, sprite ID, character ID, default movement mode, default interaction mode, default speed, graph ID, default dialogue lines.
+- `saveProjectNpcTypes` writes updated types back to `project.adgame`.
+
+### NPC Placement Editor (`Edit NPCs` subpanel)
+
+Canvas modes: **Place NPCs** (create/select/delete NPC anchors at world positions) and **Edit Path** (add/move/delete patrol waypoints).
+
+Inspector fields:
+- Instance ID, type ID
+- Position (x, y), facing direction (N/S/E/W)
+- Awareness radius, interaction radius
+- Movement override (Stationary / Patrol / Wander), loop, speed override
+- Per-waypoint: position, speed override, wait seconds, facing direction, animation state
+- Dialogue lines (inline override, one per entry)
+
+Canvas shows selected screen's map, floor/wall graphics, tile grid, NPC markers, and patrol path.
+
+Runtime behavior:
+
+- `updateNpcs` advances NPCs along patrol waypoints; sets `npc.actionType = "walk"` while moving and `"idle"` when at waypoint or in awareness range of player.
+- `npc.facingX/Y` updates with the movement direction so `spriteFrameForNpc` can apply directional frame selection and horizontal mirroring.
+- `updateNpcAwareness` checks distance to player and sets `npc.playerInAwareness`; when true, the NPC stops patrolling.
+- `updateInteraction` (E key): `None → PromptVisible → InDialogue`. Each subsequent E press advances `dialogueLineIndex_`. Leaving interaction radius resets state.
+- `renderNpcs` calls `spriteFrameForNpc(sprite, npc, flipH)` and swaps u0/u1 when `flipH` is true.
+- `renderInteractionPrompt` shows a pulsing green square above the NPC when in prompt range.
+- `renderSpeechBubble` / `renderDialogueBox` shows wrapped dialogue text above the NPC.
 
 ---
 
 ## Asset Directories
 
-`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot`. In normal editor use `projectRoot` is `projects/<project>/`; direct repo fallback use can still point at the repository root.
+`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot`. In normal editor use `projectRoot` is `projects/<project>/`.
 
 | Field | Default |
 |-------|---------|
@@ -653,8 +741,6 @@ Runtime:
 | `gamePalettes` | `assets/game/palettes` |
 | `gamePaths` | `assets/game/paths` |
 
-`assets/game/project.json` is the legacy simple asset-root manifest. Runtime/editor gameplay asset indexing now lives in `assets/game/project.adgame`.
-
 ---
 
 ## Implemented vs. Spec
@@ -664,38 +750,52 @@ Runtime:
 | §3.1 Chapters / Screens / Screen-Flip links | ✅ Data model + editor + basic runtime transition |
 | §3.1 Parallax / pseudo-3D | ✅ Editor preview + runtime floor/wall pre-baked PNG render |
 | §3.2 Display & tile dimensions locked to constants | ✅ All editors use `kTileSize`, `kScreenTilesW/H` from `constants.hpp` |
-| §3.3 Real-time combat / timed mechanics | ✅ Basic contact damage, player health, invulnerability, respawn |
+| §3.3 Real-time combat / timed mechanics | ✅ Contact damage, per-attack Melee/Ranged, player health, invulnerability, respawn |
+| §3.3 Enemy attack types (Contact/Melee/Ranged) | ✅ `EnemyAttackDef` in project library; per-attack cooldowns in runtime |
 | §3.3 Enemy respawn flag | ✅ `respawnEnemies` on `ChapterScreen` |
 | §4.1 Layout editor (macro view, screen management) | ✅ |
+| §4.1 Project isolation / panel root tracking | ✅ `lastLoadedProjectRoot_` in all data-loading panels |
 | §4.2 3-layer tile maps (floor / mid / ceiling) | ✅ |
 | §4.2 Copy/paste tiles | ✅ |
-| §4.3 Pixel painting — per-screen isolation & dirty buffers | ✅ Each screen has its own in-memory buffer; PNGs written only on chapter save |
-| §4.3 Pixel painting — tile palette & stamp tool | ✅ Tile Select → Add Palette → Stamp / Tile Fill / Tile Erase across all screens |
-| §4.3 Sprite & animation editor — per-sprite dirty buffers | ✅ Each sprite stashed/restored independently; saved only on chapter save |
-| §4.3 Sprite metadata round-trip | ✅ Runtime-facing `.sprite.json` parser plus editor import from metadata |
-| §4.3 Sprite & animation editor — tools & transforms | ✅ |
-| §4.4 Enemy waypoint/spline paths | ✅ Shared `.adpath` v3 format + editor + runtime path followers |
-| §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data; runtime currently moves non-idle paths |
-| §4.4 Enemy sprite references and animation-state authoring | ✅ Enemy paths reference sprite IDs; sprite frame types author states |
-| §4.4 Enemy combat data | ✅ Health, contact damage, hitbox, contact cooldown |
-| §4.5 Game state registry | ✅ Generic `GameState`, `.adstate`, `.adgame` v4 state/effect definitions, Quest State editor tab |
+| §4.3 Pixel painting — per-screen isolation & dirty buffers | ✅ |
+| §4.3 Pixel painting — tile palette & stamp tool | ✅ |
+| §4.3 Sprite & animation editor — per-sprite dirty buffers | ✅ |
+| §4.3 Sprite metadata round-trip | ✅ |
+| §4.3 Sprite frame direction field | ✅ `"E"`/`"W"`/etc. per frame, empty = any direction |
+| §4.4 Enemy type definitions (project library) | ✅ `EnemyType` + `EnemyAttackDef` in `project.adgame` v8 |
+| §4.4 Enemy type editor: sprite preview + hitbox overlay | ✅ First idle frame shown at pixel scale; red hitbox overlay toggle |
+| §4.4 Enemy type editor: attack definitions | ✅ Per-attack collapsing sections with type/damage/range/cooldown/anim/sprite fields |
+| §4.4 Enemy type editor: two-column layout (no overlap) | ✅ `BeginGroup`/`EndGroup` on both columns |
+| §4.4 Enemy waypoint/spline paths | ✅ Shared `.adpath` v3 format (legacy) + `EnemyPlacement` in chapter screens |
+| §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data; runtime moves non-idle paths |
+| §4.4 Enemy sprite direction-aware rendering + flip | ✅ `spriteFrameForEntity` with `bool& flipH`; `facingX/Y` from movement direction |
+| §4.4 Enemy combat — per-attack Melee/Ranged | ✅ `updateEnemyCombat` fires attacks with per-attack timers |
+| §4.5.1 Game state registry | ✅ Generic `GameState`, `.adstate`, `.adgame` v4 state/effect defs, Quest State tab |
+| §4.5.2 NPC type definitions (project library) | ✅ `NpcTypeDef` in `project.adgame` v5+ |
+| §4.5.2 NPC placements in chapter screens | ✅ `NpcPlacement` in `ChapterScreen` |
+| §4.5.3 NPC patrol movement + wait-at-waypoint | ✅ `updateNpcs` with waypoint queue and wait timer |
+| §4.5.3 NPC direction-aware rendering + flip | ✅ `spriteFrameForNpc` with `bool& flipH`; `facingX/Y` from movement direction |
+| §4.5.3 NPC player awareness | ✅ Awareness radius check; NPC idles when player is near |
+| §4.5.4 NPC interaction + sequential dialogue | ✅ E key, prompt, speech bubble / dialogue box, multi-line advance |
+| §4.5.5 Flow graph editor | ❌ Planned |
 | §5 Save/load (JSON, text formats) | ✅ |
 | §6 Runtime game engine (rendering, screen-flip) | ✅ Basic GLFW/OpenGL runtime shell |
 | §6 Runtime collision | ✅ Tile collision against `.admap` mid layer |
 
 ## Near-Term Priorities
 
-1. Add enemy defeat flow, drops, and per-screen defeated enemy persistence.
-2. Add NPC definitions, NPC placements, interaction runtime, and flow graph execution on top of the generic state/effect system.
-3. Add item game-library documents plus chapter import UX beyond the current screen placement editor.
-4. Replace runtime fixed-pipeline OpenGL rendering with a shader/core-profile renderer.
-5. Extend collision beyond nonzero-mid-layer solid tiles only when design needs require transparent/interaction flags.
+1. Add enemy defeat persistence: registry per chapter/screen, respawn flag respected at screen load.
+2. Add branching NPC dialogue (condition/choice nodes) and flow graph executor on top of the generic state/effect system.
+3. Add player attack animations and enemy hurt/death state transitions.
+4. Replace runtime fixed-pipeline OpenGL with a shader/core-profile renderer.
+5. Extend collision beyond binary mid-layer solid tiles only when design needs require transparent/interaction flags.
 
 ## Engineering Notes
 
 - Keep editor UI state out of `src/game`.
 - File format parsing belongs in runtime-facing modules when the game needs to load that format. Current shared parsers: chapter, map, path, project, sprite metadata, state, tileset.
 - Prefer readable text formats while the project is small.
-- Collision is currently tile-based on the mid layer only. Pixel-perfect collision and transparent-object flags are future concerns.
+- All editor panels that load project-level data must store `lastLoadedProjectRoot_` and compare it against `context.assets.projectRoot.string()` on each draw call, reloading if it differs. This prevents stale data appearing when the user switches projects.
 - The sprite editor undo stack snapshots whole state. Command-based undo should replace it once documents become large.
 - Both `WallFloorPaintPanel` and `SpriteEditorPanel` follow the same dirty-buffer pattern: in-memory maps keyed by asset ID hold unsaved state across the session; chapter save flushes dirty entries; chapter switch calls `reset*Buffers()` to clear stale data.
+- Direction-aware sprite rendering is implemented in three parallel functions (`playerSpriteFrame`, `spriteFrameForEntity`, `spriteFrameForNpc`) that share the same frame-selection and W↔E mirroring logic. Any changes to the direction/mirror algorithm should be applied to all three.

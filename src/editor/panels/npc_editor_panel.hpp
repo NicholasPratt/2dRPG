@@ -43,6 +43,7 @@ private:
     int selectedPlacement_ = -1;
     int selectedType_ = 0;
     bool projectLoaded_ = false;
+    std::string lastLoadedProjectRoot_;
 
     int facing_ = 0;
     float awarenessRadius_ = 64.0f;

@@ -17,6 +17,7 @@ public:
 private:
     int selectedWeapon_ = -1;
     bool projectLoaded_ = false;
+    std::string lastLoadedProjectRoot_;
 
     // Inspector buffers for the selected weapon
     std::array<char, 64> weaponId_{'s', 'w', 'o', 'r', 'd', '_', '1', '\0'};

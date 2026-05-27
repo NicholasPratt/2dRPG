@@ -14,6 +14,7 @@ struct EnemyCombatStats {
     float hitboxWidth = 12.0f;
     float hitboxHeight = 12.0f;
     float attackCooldownSeconds = 1.0f;
+    std::vector<EnemyAttackDef> attacks;
 };
 
 struct EnemyPath {

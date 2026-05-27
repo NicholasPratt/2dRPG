@@ -3,8 +3,8 @@ id Farm_House
 start screen_1
 playable billy
 characters 2
-character grandma_spelling
 character billy
+character grandma_spelling
 screens 2
 screen screen_1 screen_1_map 0 0
 links - - - screen_2

@@ -1,14 +1,15 @@
-ADGAME 7
+ADGAME 8
 id game
 playable billy
 characters 2
-character grandma_spelling
 character billy
+character grandma_spelling
 chapters 1
 chapter Farm_House
 enemy_types 1
-enemy_type enemy_1 enemy_1 1 1 12 12 1 64
-weapon_defs 0
+enemy_type enemy_1 enemy_1 1 1 12 12 1 64 0
+weapon_defs 1
+weapon_def Pocket 0 1 8 0.5 200 - - 1
 starting_weapon Pocket
 font "Roboto.ttf"
 state_defs 0

@@ -625,6 +625,7 @@ void Engine::loadPathEntities()
                 path.combat.hitboxWidth = type->hitboxWidth;
                 path.combat.hitboxHeight = type->hitboxHeight;
                 path.combat.attackCooldownSeconds = type->attackCooldownSeconds;
+                path.combat.attacks = type->attacks;
                 if (path.speed <= 0.0f) {
                     path.speed = type->speed;
                 }
@@ -635,6 +636,7 @@ void Engine::loadPathEntities()
             entity.y = entity.path.waypoints.front().y;
             entity.health = std::max(1, entity.path.combat.maxHealth);
             entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+            entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
             if (activeScreen_ != nullptr &&
                 defeatedEnemies_.count(activeScreen_->id + "/" + entity.path.id) > 0) {
                 continue;
@@ -667,6 +669,7 @@ void Engine::loadPathEntities()
         entity.y = entity.path.waypoints.front().y;
         entity.health = std::max(1, entity.path.combat.maxHealth);
         entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+        entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
         if (activeScreen_ != nullptr &&
             defeatedEnemies_.count(activeScreen_->id + "/" + entity.path.id) > 0) {
             continue;
@@ -1265,6 +1268,8 @@ void Engine::updateNpcs(float dt)
         const float step = std::min(dist, segSpeed * dt);
         npc.x += dx / dist * step;
         npc.y += dy / dist * step;
+        npc.facingX = dx / dist;
+        npc.facingY = dy / dist;
     }
 }
 
@@ -1352,7 +1357,8 @@ void Engine::renderNpcs() const
     for (const RuntimeNpcEntity& npc : npcEntities_) {
         auto spriteIt = loadedSprites_.find(npc.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
-            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            bool flipH = false;
+            const SpriteFrameDef* frame = spriteFrameForNpc(spriteIt->second, npc, flipH);
             if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
                 const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
                 const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
@@ -1360,7 +1366,8 @@ void Engine::renderNpcs() const
                 const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
                 const float drawW = static_cast<float>(frame->width);
                 const float drawH = static_cast<float>(frame->height);
-                renderTextureRegion(spriteIt->second.texture, npc.x - drawW * 0.5f, npc.y - drawH * 0.5f, drawW, drawH, u0, v0, u1, v1);
+                renderTextureRegion(spriteIt->second.texture, npc.x - drawW * 0.5f, npc.y - drawH * 0.5f, drawW, drawH,
+                    flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
                 continue;
             }
         }
@@ -1464,9 +1471,20 @@ void Engine::updatePaths(float dt)
 {
     for (RuntimePathEntity& entity : pathEntities_) {
         if (entity.deathSeconds >= 0.0f || entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
+            // Still update animState for idle-behavior entities
+            if (entity.deathSeconds < 0.0f) {
+                if (entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
+                    entity.animState = "idle";
+                    entity.animSeconds = 0.0f;
+                }
+            }
             continue;
         }
         if (entity.atWaypoint) {
+            if (entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
+                entity.animState = "idle";
+                entity.animSeconds = 0.0f;
+            }
             if (entity.waitRemainingSeconds > 0.0f) {
                 entity.waitRemainingSeconds -= dt;
                 continue;
@@ -1481,16 +1499,40 @@ void Engine::updatePaths(float dt)
             }
         }
 
+        // Set walk state when moving (but don't override attack states)
+        if (entity.animState.find("attack") == std::string::npos) {
+            if (entity.animState != "walk") {
+                entity.animState = "walk";
+                entity.animSeconds = 0.0f;
+            }
+        }
+
         if (entity.path.curveMode == PathCurveMode::Spline && entity.path.waypoints.size() >= 3) {
             const float length = approximatePathLength(entity.path);
             if (length <= 0.0f) {
                 continue;
             }
+            const float prevDistance = entity.pathDistance;
             entity.pathDistance += entity.path.speed * dt;
             if (entity.path.loop) {
                 entity.pathDistance = std::fmod(entity.pathDistance, length);
             } else {
                 entity.pathDistance = std::min(entity.pathDistance, length);
+            }
+            // Derive facing direction from spline tangent (sample slightly ahead)
+            constexpr float kTangentDelta = 2.0f;
+            const float d1 = std::min(prevDistance, length);
+            const float d2 = std::min(prevDistance + kTangentDelta, length);
+            if (d2 > d1) {
+                const PathWaypoint p1 = pointAtDistance(entity.path, d1);
+                const PathWaypoint p2 = pointAtDistance(entity.path, d2);
+                const float tdx = p2.x - p1.x;
+                const float tdy = p2.y - p1.y;
+                const float tlen = std::sqrt(tdx * tdx + tdy * tdy);
+                if (tlen > 0.001f) {
+                    entity.facingX = tdx / tlen;
+                    entity.facingY = tdy / tlen;
+                }
             }
             const PathWaypoint point = pointAtDistance(entity.path, entity.pathDistance);
             entity.x = point.x;
@@ -1506,12 +1548,21 @@ void Engine::updatePaths(float dt)
             entity.y = target.y;
             entity.atWaypoint = true;
             entity.waitRemainingSeconds = target.waitSeconds;
+            // Apply waypoint animState override if set
+            if (!target.animState.empty()) {
+                if (entity.animState != target.animState) {
+                    entity.animState = target.animState;
+                    entity.animSeconds = 0.0f;
+                }
+            }
             continue;
         }
         const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride : entity.path.speed;
         const float step = std::min(dist, segSpeed * dt);
         entity.x += dx / dist * step;
         entity.y += dy / dist * step;
+        entity.facingX = dx / dist;
+        entity.facingY = dy / dist;
     }
 }
 
@@ -1533,13 +1584,65 @@ void Engine::updateHazards(float)
 void Engine::updateEnemyCombat(float dt)
 {
     for (RuntimePathEntity& entity : pathEntities_) {
+        // Advance animation timer for all entities
+        entity.animSeconds += dt;
+
         entity.contactCooldownSeconds = std::max(0.0f, entity.contactCooldownSeconds - dt);
-        if (entity.health <= 0 || entity.path.combat.contactDamage <= 0 ||
-            entity.contactCooldownSeconds > 0.0f || !playerOverlapsEnemy(entity)) {
-            continue;
+
+        // Tick per-attack cooldowns (resize if needed — e.g., first frame after load)
+        if (entity.attackCooldowns.size() < entity.path.combat.attacks.size()) {
+            entity.attackCooldowns.resize(entity.path.combat.attacks.size(), 0.0f);
         }
-        damagePlayer(entity.path.combat.contactDamage);
-        entity.contactCooldownSeconds = entity.path.combat.attackCooldownSeconds;
+        for (float& cd : entity.attackCooldowns) {
+            cd = std::max(0.0f, cd - dt);
+        }
+
+        if (entity.health <= 0 || entity.deathSeconds >= 0.0f) continue;
+
+        // Compute vector from entity to player
+        const float ex = playerX_ - entity.x;
+        const float ey = playerY_ - entity.y;
+        const float distToPlayer = std::sqrt(ex * ex + ey * ey);
+
+        // Contact damage (overlap)
+        if (entity.path.combat.contactDamage > 0 && entity.contactCooldownSeconds <= 0.0f && playerOverlapsEnemy(entity)) {
+            damagePlayer(entity.path.combat.contactDamage);
+            entity.contactCooldownSeconds = entity.path.combat.attackCooldownSeconds;
+        }
+
+        // Active attacks
+        for (std::size_t ai = 0; ai < entity.path.combat.attacks.size(); ++ai) {
+            const EnemyAttackDef& atk = entity.path.combat.attacks[ai];
+            if (entity.attackCooldowns[ai] > 0.0f) continue;
+
+            if (atk.type == EnemyAttackType::Melee) {
+                if (distToPlayer <= atk.range) {
+                    damagePlayer(atk.damage);
+                    entity.attackCooldowns[ai] = atk.cooldown;
+                    if (!atk.animState.empty() && entity.animState != atk.animState) {
+                        entity.animState = atk.animState;
+                        entity.animSeconds = 0.0f;
+                    }
+                }
+            } else if (atk.type == EnemyAttackType::Ranged) {
+                if (distToPlayer <= atk.range && distToPlayer > 0.0f) {
+                    RuntimeProjectile proj;
+                    proj.x = entity.x;
+                    proj.y = entity.y;
+                    proj.vx = (ex / distToPlayer) * atk.projectileSpeed;
+                    proj.vy = (ey / distToPlayer) * atk.projectileSpeed;
+                    proj.maxDistance = atk.range;
+                    proj.damage = atk.damage;
+                    proj.spriteId = atk.ammoSpriteId;
+                    projectiles_.push_back(proj);
+                    entity.attackCooldowns[ai] = atk.cooldown;
+                    if (!atk.animState.empty() && entity.animState != atk.animState) {
+                        entity.animState = atk.animState;
+                        entity.animSeconds = 0.0f;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1801,7 +1904,8 @@ void Engine::render()
 
         auto spriteIt = loadedSprites_.find(entity.path.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
-            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            bool flipH = false;
+            const SpriteFrameDef* frame = spriteFrameForEntity(spriteIt->second, entity, flipH);
             if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
                 const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
                 const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
@@ -1809,7 +1913,8 @@ void Engine::render()
                 const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
                 const float drawW = static_cast<float>(frame->width);
                 const float drawH = static_cast<float>(frame->height);
-                renderTextureRegion(spriteIt->second.texture, entity.x - drawW * 0.5f, entity.y - drawH * 0.5f, drawW, drawH, u0, v0, u1, v1);
+                renderTextureRegion(spriteIt->second.texture, entity.x - drawW * 0.5f, entity.y - drawH * 0.5f, drawW, drawH,
+                    flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
                 if (dying) {
                     renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
                         drawW, drawH, 1.0f, 1.0f, 1.0f, deathAlpha * 0.6f);
@@ -2019,6 +2124,127 @@ const SpriteFrameDef* Engine::spriteFrame(const RuntimeSprite& sprite) const
         }
     }
     return &sprite.metadata.frames.back();
+}
+
+const SpriteFrameDef* Engine::spriteFrameForEntity(const RuntimeSprite& sprite, const RuntimePathEntity& entity, bool& flipHorizontal) const
+{
+    flipHorizontal = false;
+    if (sprite.metadata.frames.empty()) return nullptr;
+
+    const std::string& action = entity.animState;
+    const std::string dir = directionFromFacing(entity.facingX, entity.facingY);
+    const std::string mirrorOf = (dir == "W") ? "E" : (dir == "NW") ? "NE" : (dir == "SW") ? "SE" : "";
+
+    auto collectByDir = [&](const std::string& actionName, const std::string& targetDir) -> std::vector<const SpriteFrameDef*> {
+        std::vector<const SpriteFrameDef*> out;
+        for (const SpriteFrameDef& f : sprite.metadata.frames) {
+            if (f.type == actionName && (f.direction.empty() || f.direction == targetDir)) {
+                out.push_back(&f);
+            }
+        }
+        return out;
+    };
+
+    std::vector<const SpriteFrameDef*> candidates = collectByDir(action, dir);
+    if (candidates.empty() && !mirrorOf.empty()) {
+        candidates = collectByDir(action, mirrorOf);
+        if (!candidates.empty()) flipHorizontal = true;
+    }
+    // Fall back to any frame of this action (no direction filter)
+    if (candidates.empty()) {
+        for (const SpriteFrameDef& f : sprite.metadata.frames) {
+            if (f.type == action) candidates.push_back(&f);
+        }
+    }
+    // Fall back to "idle" direction-aware, then any idle
+    if (candidates.empty() && action != "idle") {
+        flipHorizontal = false;
+        candidates = collectByDir("idle", dir);
+        if (candidates.empty() && !mirrorOf.empty()) {
+            candidates = collectByDir("idle", mirrorOf);
+            if (!candidates.empty()) flipHorizontal = true;
+        }
+        if (candidates.empty()) {
+            for (const SpriteFrameDef& f : sprite.metadata.frames) {
+                if (f.type == "idle") candidates.push_back(&f);
+            }
+        }
+    }
+    // Last resort: any frame
+    if (candidates.empty()) {
+        for (const SpriteFrameDef& f : sprite.metadata.frames) candidates.push_back(&f);
+    }
+    if (candidates.empty()) return &sprite.metadata.frames.front();
+
+    int totalMs = 0;
+    for (const SpriteFrameDef* f : candidates) totalMs += std::max(1, f->durationMs);
+    if (totalMs <= 0) return candidates.front();
+
+    int t = static_cast<int>(std::fmod(entity.animSeconds * 1000.0f, static_cast<float>(totalMs)));
+    for (const SpriteFrameDef* f : candidates) {
+        t -= std::max(1, f->durationMs);
+        if (t < 0) return f;
+    }
+    return candidates.back();
+}
+
+const SpriteFrameDef* Engine::spriteFrameForNpc(const RuntimeSprite& sprite, const RuntimeNpcEntity& npc, bool& flipHorizontal) const
+{
+    flipHorizontal = false;
+    if (sprite.metadata.frames.empty()) return nullptr;
+
+    const std::string& action = npc.actionType;
+    const std::string dir = directionFromFacing(npc.facingX, npc.facingY);
+    const std::string mirrorOf = (dir == "W") ? "E" : (dir == "NW") ? "NE" : (dir == "SW") ? "SE" : "";
+
+    auto collectByDir = [&](const std::string& actionName, const std::string& targetDir) -> std::vector<const SpriteFrameDef*> {
+        std::vector<const SpriteFrameDef*> out;
+        for (const SpriteFrameDef& f : sprite.metadata.frames) {
+            if (f.type == actionName && (f.direction.empty() || f.direction == targetDir)) {
+                out.push_back(&f);
+            }
+        }
+        return out;
+    };
+
+    std::vector<const SpriteFrameDef*> candidates = collectByDir(action, dir);
+    if (candidates.empty() && !mirrorOf.empty()) {
+        candidates = collectByDir(action, mirrorOf);
+        if (!candidates.empty()) flipHorizontal = true;
+    }
+    if (candidates.empty()) {
+        for (const SpriteFrameDef& f : sprite.metadata.frames) {
+            if (f.type == action) candidates.push_back(&f);
+        }
+    }
+    if (candidates.empty() && action != "idle") {
+        flipHorizontal = false;
+        candidates = collectByDir("idle", dir);
+        if (candidates.empty() && !mirrorOf.empty()) {
+            candidates = collectByDir("idle", mirrorOf);
+            if (!candidates.empty()) flipHorizontal = true;
+        }
+        if (candidates.empty()) {
+            for (const SpriteFrameDef& f : sprite.metadata.frames) {
+                if (f.type == "idle") candidates.push_back(&f);
+            }
+        }
+    }
+    if (candidates.empty()) {
+        for (const SpriteFrameDef& f : sprite.metadata.frames) candidates.push_back(&f);
+    }
+    if (candidates.empty()) return &sprite.metadata.frames.front();
+
+    int totalMs = 0;
+    for (const SpriteFrameDef* f : candidates) totalMs += std::max(1, f->durationMs);
+    if (totalMs <= 0) return candidates.front();
+
+    int t = static_cast<int>(std::fmod(npc.animSeconds * 1000.0f, static_cast<float>(totalMs)));
+    for (const SpriteFrameDef* f : candidates) {
+        t -= std::max(1, f->durationMs);
+        if (t < 0) return f;
+    }
+    return candidates.back();
 }
 
 void Engine::renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const

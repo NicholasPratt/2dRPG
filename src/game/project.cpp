@@ -56,7 +56,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 7\n";
+    output << "ADGAME 8\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -72,7 +72,19 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         output << "enemy_type " << type.id << ' ' << (type.spriteId.empty() ? "-" : type.spriteId) << ' '
                << type.maxHealth << ' ' << type.contactDamage << ' '
                << type.hitboxWidth << ' ' << type.hitboxHeight << ' '
-               << type.attackCooldownSeconds << ' ' << type.speed << "\n";
+               << type.attackCooldownSeconds << ' ' << type.speed
+               << ' ' << type.attacks.size() << "\n";
+        for (const EnemyAttackDef& atk : type.attacks) {
+            output << "enemy_attack"
+                   << ' ' << static_cast<int>(atk.type)
+                   << ' ' << atk.damage
+                   << ' ' << atk.range
+                   << ' ' << atk.cooldown
+                   << ' ' << atk.projectileSpeed
+                   << ' ' << (atk.animState.empty() ? "-" : atk.animState)
+                   << ' ' << (atk.ammoSpriteId.empty() ? "-" : atk.ammoSpriteId)
+                   << "\n";
+        }
     }
     output << "weapon_defs " << project.weaponDefs.size() << "\n";
     for (const WeaponDef& w : project.weaponDefs) {
@@ -132,7 +144,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 7) {
+    if (magic != "ADGAME" || version < 1 || version > 8) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -177,6 +189,25 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                   >> type.hitboxWidth >> type.hitboxHeight >> type.attackCooldownSeconds >> type.speed;
             if (type.spriteId == "-") {
                 type.spriteId.clear();
+            }
+            int numAttacks = 0;
+            if (version >= 8) {
+                input >> numAttacks;
+                for (int ai = 0; ai < numAttacks && input; ++ai) {
+                    std::string atkKey;
+                    input >> atkKey;
+                    if (atkKey == "enemy_attack") {
+                        EnemyAttackDef atk;
+                        int typeInt = 0;
+                        std::string animState, ammoSprite;
+                        input >> typeInt >> atk.damage >> atk.range >> atk.cooldown
+                              >> atk.projectileSpeed >> animState >> ammoSprite;
+                        atk.type = static_cast<EnemyAttackType>(std::clamp(typeInt, 0, 2));
+                        atk.animState    = (animState  == "-") ? "" : animState;
+                        atk.ammoSpriteId = (ammoSprite == "-") ? "" : ammoSprite;
+                        type.attacks.push_back(std::move(atk));
+                    }
+                }
             }
             if (!type.id.empty()) {
                 loaded.enemyTypes.push_back(std::move(type));

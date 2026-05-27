@@ -135,9 +135,11 @@ std::filesystem::path characterSpriteReference(const EditorContext& context, con
 
 void NpcEditorPanel::draw(EditorContext& context)
 {
-    if (!projectLoaded_) {
+    const std::string currentRoot = context.assets.projectRoot.string();
+    if (!projectLoaded_ || lastLoadedProjectRoot_ != currentRoot) {
         loadProjectNpcTypes(context);
         projectLoaded_ = true;
+        lastLoadedProjectRoot_ = currentRoot;
     }
     if (context.npcTypes.empty()) {
         context.npcTypes.push_back({});
@@ -555,9 +557,11 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
 
 void NpcEditorPanel::drawTypes(EditorContext& context)
 {
-    if (!projectLoaded_) {
+    const std::string currentRoot = context.assets.projectRoot.string();
+    if (!projectLoaded_ || lastLoadedProjectRoot_ != currentRoot) {
         loadProjectNpcTypes(context);
         projectLoaded_ = true;
+        lastLoadedProjectRoot_ = currentRoot;
     }
     if (context.npcTypes.empty()) {
         context.npcTypes.push_back({});

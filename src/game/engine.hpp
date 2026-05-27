@@ -45,6 +45,11 @@ private:
         std::size_t waypointIndex = 0;
         float waitRemainingSeconds = 0.0f;
         bool atWaypoint = false;
+        float animSeconds = 0.0f;
+        std::string animState = "idle";
+        std::vector<float> attackCooldowns;   // one entry per combat.attacks element
+        float facingX = 1.0f;  // unit vector — direction the entity is facing
+        float facingY = 0.0f;
     };
 
     struct RuntimeSprite {
@@ -99,6 +104,8 @@ private:
         bool playerInAwareness = false;
         float waitRemainingSeconds = 0.0f;
         bool atWaypoint = false;
+        float facingX = 1.0f;  // unit vector — direction the NPC is facing
+        float facingY = 0.0f;
     };
 
     enum class InteractionState {
@@ -220,6 +227,8 @@ private:
     void renderTexture(const Texture& texture, float x, float y, float width, float height) const;
     void renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrame(const RuntimeSprite& sprite) const;
+    [[nodiscard]] const SpriteFrameDef* spriteFrameForEntity(const RuntimeSprite& sprite, const RuntimePathEntity& entity, bool& flipHorizontal) const;
+    [[nodiscard]] const SpriteFrameDef* spriteFrameForNpc(const RuntimeSprite& sprite, const RuntimeNpcEntity& npc, bool& flipHorizontal) const;
     [[nodiscard]] const SpriteFrameDef* playerSpriteFrame(bool& flipHorizontal) const;
     static std::string directionFromFacing(float fx, float fy);
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;

@@ -42,8 +42,10 @@ void WeaponEditorPanel::saveWeapons(EditorContext& context)
 
 void WeaponEditorPanel::draw(EditorContext& context)
 {
-    if (!projectLoaded_) {
+    const std::string currentRoot = context.assets.projectRoot.string();
+    if (!projectLoaded_ || lastLoadedProjectRoot_ != currentRoot) {
         loadWeapons(context);
+        lastLoadedProjectRoot_ = currentRoot;
     }
 
     ImGui::TextUnformatted("Weapon Definitions");
