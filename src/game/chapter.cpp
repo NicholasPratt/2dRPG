@@ -111,7 +111,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 8\n";
+    output << "ADCHAPTER 9\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -128,6 +128,8 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                << encodedLink(screen.links.east) << ' '
                << encodedLink(screen.links.west) << "\n";
         output << "respawn " << (screen.respawnEnemies ? 1 : 0) << "\n";
+        output << "music " << std::quoted(screen.musicPath.empty() ? std::string{"-"} : screen.musicPath)
+               << ' ' << (screen.musicLoop ? 1 : 0) << "\n";
         output << "enemies " << screen.enemies.size() << "\n";
         for (const EnemyPlacement& enemy : screen.enemies) {
             output << "enemy " << enemy.id << ' ' << enemy.typeId << ' '
@@ -183,7 +185,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 8) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 9) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -279,6 +281,20 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 return false;
             }
             screen.respawnEnemies = (respawnVal != 0);
+        }
+
+        if (version >= 9) {
+            std::string musicKey;
+            int loopVal = 1;
+            input >> musicKey >> std::quoted(screen.musicPath) >> loopVal;
+            if (musicKey != "music" || !input) {
+                setError(errorMessage, "Expected screen music.");
+                return false;
+            }
+            if (screen.musicPath == "-") {
+                screen.musicPath.clear();
+            }
+            screen.musicLoop = loopVal != 0;
         }
 
         if (version >= 4) {

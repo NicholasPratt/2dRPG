@@ -41,9 +41,11 @@ private:
     enum class ScreenEditMode {
         Layout,
         Graphics,
+        Music,
         Enemies,
         EnemyTypes,
         Items,
+        ItemEdit,
         Npcs,
         NpcTypes,
         Sprite,

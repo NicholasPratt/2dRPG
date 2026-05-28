@@ -65,7 +65,7 @@ std::filesystem::path findProjectRoot()
     for (const std::filesystem::path& candidate : candidates) {
         if (!candidate.empty() &&
             std::filesystem::exists(candidate / "CMakeLists.txt", error) &&
-            std::filesystem::exists(candidate / "assets/game/chapters", error)) {
+            std::filesystem::exists(candidate / "projects", error)) {
             return std::filesystem::weakly_canonical(candidate, error);
         }
     }

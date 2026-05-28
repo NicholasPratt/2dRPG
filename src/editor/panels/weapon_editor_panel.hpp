@@ -30,6 +30,7 @@ private:
     float projectileSpeed_ = 200.0f;
     std::array<char, 64> spriteId_{'\0'};
     std::array<char, 64> ammoTypeId_{'\0'};
+    std::array<char, 64> ammoSpriteId_{'\0'};
     int ammoPerShot_ = 1;
 
     void syncInspectorFromSelected(const EditorContext& context);

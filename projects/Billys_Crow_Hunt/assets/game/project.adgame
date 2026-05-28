@@ -1,4 +1,4 @@
-ADGAME 8
+ADGAME 9
 id game
 playable billy
 characters 2
@@ -9,12 +9,14 @@ chapter Farm_House
 enemy_types 1
 enemy_type enemy_1 enemy_1 1 1 12 12 1 64 0
 weapon_defs 2
-weapon_def Pocketknife 0 22 107 0.5 200 Pocketknife - 1
-weapon_def slingshot 1 9 293 0.59 200 - rock 1
+weapon_def Pocketknife 0 22 107 0.5 200 Pocketknife - - 1
+weapon_def slingshot 1 9 293 0.59 200 slingshot rock - 1
 starting_weapon slingshot
 font "Roboto.ttf"
-state_defs 0
-effect_defs 0
+state_defs 1
+state_def Crows_killed 0 0 0
+effect_defs 1
+effect_def 5crowsdead 1 Crows_killed 5 1
 npc_types 1
 npc_type Fred Dhag - 0 1 15 - 1
 dl "" "Howzit going young fella!"

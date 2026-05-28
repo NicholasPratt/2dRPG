@@ -16,6 +16,8 @@ namespace adventure::editor {
 class ItemPlacementPanel {
 public:
     void draw(EditorContext& context);
+    void drawPlacement(EditorContext& context);
+    void drawEdit(EditorContext& context);
     void openForScreen(EditorContext& context);
     void saveForScreen(EditorContext& context);
 
@@ -45,9 +47,12 @@ private:
     std::array<char, 64> spriteId_{'\0'};
 
     void drawToolbar(EditorContext& context);
+    void drawPlacementDefaults(EditorContext& context);
     void drawItemList(EditorContext& context);
     void drawCanvas(EditorContext& context);
     void drawInspector(EditorContext& context);
+    void flushSelectedInspector(EditorContext& context);
+    void requestEditPickupSprite(EditorContext& context);
     void loadBackground(EditorContext& context);
     void syncInspectorFromSelected(const EditorContext& context);
     void writeInspectorToSelected(EditorContext& context);

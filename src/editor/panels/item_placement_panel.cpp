@@ -41,6 +41,16 @@ const char* pickupTypeLabel(int t)
     }
 }
 
+const game::WeaponDef* findWeaponDef(const EditorContext& context, const std::string& id)
+{
+    for (const game::WeaponDef& weapon : context.weaponDefs) {
+        if (weapon.id == id) {
+            return &weapon;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 void ItemPlacementPanel::openForScreen(EditorContext& context)
@@ -55,6 +65,7 @@ void ItemPlacementPanel::openForScreen(EditorContext& context)
 
 void ItemPlacementPanel::saveForScreen(EditorContext& context)
 {
+    flushSelectedInspector(context);
     if (context.selectedScreenItemsMapId.empty()) {
         return;
     }
@@ -107,28 +118,44 @@ void ItemPlacementPanel::loadBackground(EditorContext& context)
 
 void ItemPlacementPanel::draw(EditorContext& context)
 {
+    drawPlacement(context);
+}
+
+void ItemPlacementPanel::drawPlacement(EditorContext& context)
+{
     loadBackground(context);
 
     drawToolbar(context);
     ImGui::Separator();
 
     const float leftW = 240.0f;
-    const float inspH = 220.0f;
     const float availableH = ImGui::GetContentRegionAvail().y;
 
     ImGui::BeginChild("ItemLeftColumn", ImVec2(leftW, availableH), false);
-    ImGui::BeginChild("ItemListRegion", ImVec2(0.0f, std::max(120.0f, availableH - inspH - 8.0f)), true);
+    drawPlacementDefaults(context);
+    ImGui::Separator();
+    ImGui::BeginChild("ItemListRegion", ImVec2(0.0f, 0.0f), true);
     drawItemList(context);
-    ImGui::EndChild();
-
-    ImGui::BeginChild("ItemInspector", ImVec2(0.0f, inspH), true);
-    drawInspector(context);
     ImGui::EndChild();
     ImGui::EndChild();
 
     ImGui::SameLine();
     ImGui::BeginChild("ItemCanvas", ImVec2(0.0f, availableH), false, ImGuiWindowFlags_HorizontalScrollbar);
     drawCanvas(context);
+    ImGui::EndChild();
+}
+
+void ItemPlacementPanel::drawEdit(EditorContext& context)
+{
+    ImGui::BeginChild("ItemEditInspector", ImVec2(420.0f, 0.0f), true);
+    drawInspector(context);
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("ItemEditList", ImVec2(0.0f, 0.0f), true);
+    ImGui::TextUnformatted("Screen Items");
+    ImGui::Separator();
+    drawItemList(context);
     ImGui::EndChild();
 }
 
@@ -140,6 +167,63 @@ void ItemPlacementPanel::drawToolbar(EditorContext& context)
     ImGui::DragFloat("Zoom##itemzoom", &zoom_, 0.05f, 0.5f, 4.0f);
     ImGui::SameLine();
     ImGui::TextDisabled("Click canvas to place | Right-click to delete");
+}
+
+void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
+{
+    ImGui::TextUnformatted("Place Item");
+
+    const char* typeItems[] = { "Weapon Pickup", "Ammo Pickup", "Health Pickup" };
+    if (ImGui::Combo("New item type##place_type", &pickupType_, typeItems, 3)) {
+        if (pickupType_ == 0 && !context.weaponDefs.empty()) {
+            const game::WeaponDef& weapon = context.weaponDefs.front();
+            copyToBuffer(targetId_, weapon.id);
+            if (spriteId_[0] == '\0') {
+                copyToBuffer(spriteId_, weapon.spriteId);
+            }
+        }
+    }
+
+    if (pickupType_ == 0) {
+        const std::string selectedTarget(targetId_.data());
+        const char* preview = selectedTarget.empty() ? "(choose weapon)" : selectedTarget.c_str();
+        if (ImGui::BeginCombo("Weapon##place_weapon", preview)) {
+            for (const game::WeaponDef& weapon : context.weaponDefs) {
+                const bool selected = weapon.id == selectedTarget;
+                if (ImGui::Selectable(weapon.id.c_str(), selected)) {
+                    copyToBuffer(targetId_, weapon.id);
+                    if (spriteId_[0] == '\0') {
+                        copyToBuffer(spriteId_, weapon.spriteId);
+                    }
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (context.weaponDefs.empty()) {
+            ImGui::TextDisabled("Define weapons in the Weapons tab.");
+        }
+    } else if (pickupType_ == 1) {
+        ImGui::InputText("Ammo type ID##place_ammo", targetId_.data(), targetId_.size());
+        ImGui::DragInt("Quantity##place_qty", &quantity_, 1.0f, 1, 999);
+    } else {
+        ImGui::DragInt("HP restore##place_hp", &quantity_, 1.0f, 1, 99);
+    }
+
+    ImGui::InputText("Pickup sprite ID##place_sprite", spriteId_.data(), spriteId_.size());
+    ImGui::SameLine();
+    if (ImGui::Button("Edit Sprite##place_pickup_sprite")) {
+        std::string spriteId(spriteId_.data());
+        if (spriteId.empty()) {
+            spriteId = pickupType_ == 0 && targetId_[0] != '\0' ? std::string(targetId_.data()) + "_pickup" : "item_pickup";
+            copyToBuffer(spriteId_, spriteId);
+        }
+        context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
+        context.requestEditSprite = true;
+    }
+    ImGui::TextDisabled("This is the map pickup visual, not the weapon or projectile sprite.");
 }
 
 void ItemPlacementPanel::drawItemList(EditorContext& context)
@@ -157,6 +241,15 @@ void ItemPlacementPanel::drawItemList(EditorContext& context)
         context.markDirty();
     }
     if (selectedItem_ >= 0 && selectedItem_ < static_cast<int>(context.selectedScreenItems.size())) {
+        ImGui::SameLine();
+        if (ImGui::Button("Edit Item")) {
+            flushSelectedInspector(context);
+            context.requestEditItemDetails = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Edit Sprite")) {
+            requestEditPickupSprite(context);
+        }
         ImGui::SameLine();
         if (ImGui::Button("Delete")) {
             context.selectedScreenItems.erase(context.selectedScreenItems.begin() + selectedItem_);
@@ -200,7 +293,27 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
     if (ImGui::Combo("Type##itype", &pickupType_, typeItems, 3)) { context.markDirty(); }
 
     if (pickupType_ == 0) {
-        if (ImGui::InputText("Weapon ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
+        const std::string selectedTarget(targetId_.data());
+        const char* preview = selectedTarget.empty() ? "(choose weapon)" : selectedTarget.c_str();
+        if (ImGui::BeginCombo("Weapon ID##itarget_combo", preview)) {
+            for (const game::WeaponDef& weapon : context.weaponDefs) {
+                const bool selected = weapon.id == selectedTarget;
+                if (ImGui::Selectable(weapon.id.c_str(), selected)) {
+                    copyToBuffer(targetId_, weapon.id);
+                    if (spriteId_[0] == '\0') {
+                        copyToBuffer(spriteId_, weapon.spriteId);
+                    }
+                    context.markDirty();
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (context.weaponDefs.empty()) {
+            if (ImGui::InputText("Weapon ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
+        }
     } else if (pickupType_ == 1) {
         if (ImGui::InputText("Ammo type ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
         if (ImGui::DragInt("Quantity##iqty", &quantity_, 1.0f, 1, 999)) { context.markDirty(); }
@@ -209,20 +322,44 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
     }
 
     if (ImGui::Checkbox("Respawn##iresp", &respawn_)) { context.markDirty(); }
-    if (ImGui::InputText("Sprite ID##isprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+    if (ImGui::InputText("Pickup sprite ID##isprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
     ImGui::SameLine();
-    if (ImGui::Button("Edit Sprite##item_sprite")) {
-        writeInspectorToSelected(context);
-        const std::string spriteId(spriteId_.data());
-        if (!spriteId.empty()) {
-            context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
-            context.requestEditSprite = true;
-        }
+    if (ImGui::Button("Edit Pickup Sprite##item_sprite")) {
+        requestEditPickupSprite(context);
+    }
+    if (pickupType_ == 0) {
+        const game::WeaponDef* weapon = findWeaponDef(context, targetId_.data());
+        ImGui::TextDisabled("Weapon sprite: %s | Ammo sprite: %s",
+            weapon == nullptr || weapon->spriteId.empty() ? "(none)" : weapon->spriteId.c_str(),
+            weapon == nullptr || weapon->ammoSpriteId.empty() ? "(uses weapon sprite)" : weapon->ammoSpriteId.c_str());
     }
 
     if (ImGui::Button("Apply##iapply", ImVec2(-1.0f, 0.0f))) {
         writeInspectorToSelected(context);
     }
+}
+
+void ItemPlacementPanel::flushSelectedInspector(EditorContext& context)
+{
+    writeInspectorToSelected(context);
+}
+
+void ItemPlacementPanel::requestEditPickupSprite(EditorContext& context)
+{
+    if (selectedItem_ < 0 || selectedItem_ >= static_cast<int>(context.selectedScreenItems.size())) {
+        return;
+    }
+
+    writeInspectorToSelected(context);
+    game::MapItemPlacement& item = context.selectedScreenItems[static_cast<std::size_t>(selectedItem_)];
+    if (item.spriteId.empty()) {
+        item.spriteId = item.id.empty() ? "item_pickup" : item.id;
+        copyToBuffer(spriteId_, item.spriteId);
+        context.markDirty();
+    }
+
+    context.requestedSpriteReference = (context.assets.gameSpritePath() / (item.spriteId + ".sprite.json")).generic_string();
+    context.requestEditSprite = true;
 }
 
 void ItemPlacementPanel::drawCanvas(EditorContext& context)

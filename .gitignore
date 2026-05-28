@@ -4,6 +4,9 @@ build/
 # ImGui layout state
 imgui.ini
 
+# macOS Finder metadata
+.DS_Store
+
 # Compiled object files
 *.o
 *.a

@@ -120,9 +120,11 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
         }
 
         ImGui::Separator();
-        if (ImGui::InputText("Sprite ID", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+        ImGui::TextUnformatted("Weapon Sprite");
+        ImGui::TextDisabled("Visual for the weapon definition.");
+        if (ImGui::InputText("Weapon sprite ID", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
         ImGui::SameLine();
-        if (ImGui::Button("Edit Sprite##weapon_sprite")) {
+        if (ImGui::Button("Edit Weapon Sprite##weapon_sprite")) {
             std::string spriteId(spriteId_.data());
             if (spriteId.empty()) {
                 spriteId = weaponId_.data();
@@ -132,6 +134,26 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
             writeInspectorToSelected(context);
             if (!spriteId.empty()) {
                 spriteToOpen = context.assets.gameSpritePath() / (spriteId + ".sprite.json");
+            }
+        }
+
+        if (weaponType_ == 1) {
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Ammo Projectile Sprite");
+            ImGui::TextDisabled("Visual for shots fired by this ranged weapon. Leave blank to use the weapon sprite.");
+            if (ImGui::InputText("Ammo sprite ID", ammoSpriteId_.data(), ammoSpriteId_.size())) { context.markDirty(); }
+            ImGui::SameLine();
+            if (ImGui::Button("Edit Ammo Sprite##weapon_ammo_sprite")) {
+                std::string ammoSpriteId(ammoSpriteId_.data());
+                if (ammoSpriteId.empty()) {
+                    ammoSpriteId = std::string(weaponId_.data()) + "_ammo";
+                    copyToBuffer(ammoSpriteId_, ammoSpriteId);
+                    context.markDirty();
+                }
+                writeInspectorToSelected(context);
+                if (!ammoSpriteId.empty()) {
+                    spriteToOpen = context.assets.gameSpritePath() / (ammoSpriteId + ".sprite.json");
+                }
             }
         }
 
@@ -178,6 +200,7 @@ void WeaponEditorPanel::syncInspectorFromSelected(const EditorContext& context)
     projectileSpeed_ = w.projectileSpeed;
     copyToBuffer(spriteId_, w.spriteId);
     copyToBuffer(ammoTypeId_, w.ammoTypeId);
+    copyToBuffer(ammoSpriteId_, w.ammoSpriteId);
     ammoPerShot_ = w.ammoPerShot;
 }
 
@@ -195,6 +218,7 @@ void WeaponEditorPanel::writeInspectorToSelected(EditorContext& context)
     w.projectileSpeed = projectileSpeed_;
     w.spriteId = spriteId_.data();
     w.ammoTypeId = ammoTypeId_.data();
+    w.ammoSpriteId = ammoSpriteId_.data();
     w.ammoPerShot = ammoPerShot_;
 }
 

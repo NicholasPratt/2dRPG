@@ -70,6 +70,8 @@ struct ChapterScreen {
     int gridY = 0;
     ScreenLink links;
     bool respawnEnemies = false;
+    std::string musicPath;
+    bool musicLoop = true;
     std::vector<EnemyPlacement> enemies;
     std::vector<NpcPlacement> npcs;
 };

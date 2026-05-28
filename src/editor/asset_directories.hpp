@@ -19,6 +19,7 @@ struct AssetDirectories {
     std::filesystem::path gamePalettes{"assets/game/palettes"};
     std::filesystem::path gamePaths{"assets/game/paths"};
     std::filesystem::path gameFonts{"assets/game/fonts"};
+    std::filesystem::path gameMusic{"assets/game/music"};
 
     [[nodiscard]] std::filesystem::path rawSpritePath() const;
     [[nodiscard]] std::filesystem::path rawCharacterSpritePath() const;
@@ -33,6 +34,7 @@ struct AssetDirectories {
     [[nodiscard]] std::filesystem::path gamePalettePath() const;
     [[nodiscard]] std::filesystem::path gamePathPath() const;
     [[nodiscard]] std::filesystem::path gameFontPath() const;
+    [[nodiscard]] std::filesystem::path gameMusicPath() const;
 };
 
 } // namespace adventure::editor

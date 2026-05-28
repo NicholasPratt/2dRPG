@@ -7,12 +7,16 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "imstb_truetype.h"
 
+#include <SDL.h>
 #include <GLFW/glfw3.h>
+#include <vorbis/vorbisfile.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -307,8 +311,175 @@ PathWaypoint pointAtDistance(const EnemyPath& path, float targetDistance)
 
 } // namespace
 
+class Engine::MusicPlayer {
+public:
+    ~MusicPlayer()
+    {
+        stop();
+        if (device_ != 0) {
+            SDL_CloseAudioDevice(device_);
+            device_ = 0;
+        }
+        if (audioInitialized_) {
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+        }
+    }
+
+    bool play(const std::filesystem::path& path, bool loop, std::string* errorMessage)
+    {
+        const std::string key = path.string() + (loop ? "#loop" : "#once");
+        if (key == currentKey_ && !pcm_.empty()) {
+            return true;
+        }
+
+        std::vector<std::uint8_t> decoded;
+        SDL_AudioSpec decodedSpec{};
+        if (!decodeOgg(path, decoded, decodedSpec, errorMessage)) {
+            stop();
+            return false;
+        }
+
+        if (!audioInitialized_) {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+                setError(errorMessage, std::string("Failed to initialize SDL audio: ") + SDL_GetError());
+                return false;
+            }
+            audioInitialized_ = true;
+        }
+
+        decodedSpec.callback = &MusicPlayer::audioCallback;
+        decodedSpec.userdata = this;
+
+        if (device_ != 0 &&
+            (deviceSpec_.freq != decodedSpec.freq || deviceSpec_.format != decodedSpec.format ||
+                deviceSpec_.channels != decodedSpec.channels)) {
+            SDL_CloseAudioDevice(device_);
+            device_ = 0;
+            deviceSpec_ = {};
+        }
+
+        if (device_ == 0) {
+            SDL_AudioSpec obtained{};
+            device_ = SDL_OpenAudioDevice(nullptr, 0, &decodedSpec, &obtained, 0);
+            if (device_ == 0) {
+                setError(errorMessage, std::string("Failed to open SDL audio device: ") + SDL_GetError());
+                return false;
+            }
+            deviceSpec_ = obtained;
+        }
+
+        SDL_LockAudioDevice(device_);
+        pcm_ = std::move(decoded);
+        cursor_ = 0;
+        loop_ = loop;
+        currentKey_ = key;
+        SDL_UnlockAudioDevice(device_);
+        SDL_PauseAudioDevice(device_, 0);
+        return true;
+    }
+
+    void stop()
+    {
+        currentKey_.clear();
+        if (device_ == 0) {
+            pcm_.clear();
+            cursor_ = 0;
+            return;
+        }
+        SDL_PauseAudioDevice(device_, 1);
+        SDL_LockAudioDevice(device_);
+        pcm_.clear();
+        cursor_ = 0;
+        loop_ = false;
+        SDL_UnlockAudioDevice(device_);
+    }
+
+private:
+    SDL_AudioDeviceID device_ = 0;
+    SDL_AudioSpec deviceSpec_{};
+    std::vector<std::uint8_t> pcm_;
+    std::size_t cursor_ = 0;
+    bool loop_ = false;
+    bool audioInitialized_ = false;
+    std::string currentKey_;
+
+    static bool decodeOgg(const std::filesystem::path& path, std::vector<std::uint8_t>& outPcm,
+        SDL_AudioSpec& outSpec, std::string* errorMessage)
+    {
+        OggVorbis_File ogg{};
+        if (ov_fopen(path.string().c_str(), &ogg) != 0) {
+            setError(errorMessage, "Failed to open OGG music: " + path.string());
+            return false;
+        }
+
+        vorbis_info* info = ov_info(&ogg, -1);
+        if (info == nullptr || info->channels <= 0 || info->rate <= 0) {
+            ov_clear(&ogg);
+            setError(errorMessage, "Invalid OGG music stream: " + path.string());
+            return false;
+        }
+
+        outSpec = {};
+        outSpec.freq = static_cast<int>(info->rate);
+        outSpec.format = AUDIO_S16SYS;
+        outSpec.channels = static_cast<Uint8>(info->channels);
+        outSpec.samples = 4096;
+
+        int bitstream = 0;
+        char buffer[8192];
+        for (;;) {
+            const long bytes = ov_read(&ogg, buffer, sizeof(buffer),
+                SDL_BYTEORDER == SDL_BIG_ENDIAN ? 1 : 0, 2, 1, &bitstream);
+            if (bytes == 0) {
+                break;
+            }
+            if (bytes < 0) {
+                ov_clear(&ogg);
+                setError(errorMessage, "Failed while decoding OGG music: " + path.string());
+                return false;
+            }
+            const auto* begin = reinterpret_cast<const std::uint8_t*>(buffer);
+            outPcm.insert(outPcm.end(), begin, begin + bytes);
+        }
+        ov_clear(&ogg);
+
+        if (outPcm.empty()) {
+            setError(errorMessage, "OGG music has no decoded samples: " + path.string());
+            return false;
+        }
+        return true;
+    }
+
+    static void audioCallback(void* userdata, Uint8* stream, int len)
+    {
+        auto* player = static_cast<MusicPlayer*>(userdata);
+        SDL_memset(stream, 0, len);
+        if (player == nullptr || player->pcm_.empty()) {
+            return;
+        }
+
+        int written = 0;
+        while (written < len && !player->pcm_.empty()) {
+            const std::size_t remaining = player->pcm_.size() - player->cursor_;
+            if (remaining == 0) {
+                if (player->loop_) {
+                    player->cursor_ = 0;
+                    continue;
+                }
+                break;
+            }
+
+            const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(len - written));
+            std::memcpy(stream + written, player->pcm_.data() + player->cursor_, chunk);
+            player->cursor_ += chunk;
+            written += static_cast<int>(chunk);
+        }
+    }
+};
+
 Engine::Engine(std::filesystem::path projectRoot)
     : projectRoot_(std::move(projectRoot))
+    , musicPlayer_(std::make_unique<MusicPlayer>())
 {
 }
 
@@ -437,8 +608,27 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     interactingNpcIndex_ = -1;
     dialogueLineIndex_ = 0;
     loadAllSprites();
+    updateScreenMusic();
     std::cout << "Loaded screen " << screen->id << " map " << activeMap_.id << "\n";
     return true;
+}
+
+void Engine::updateScreenMusic()
+{
+    if (musicPlayer_ == nullptr || activeScreen_ == nullptr) {
+        return;
+    }
+    if (activeScreen_->musicPath.empty()) {
+        musicPlayer_->stop();
+        return;
+    }
+
+    const std::filesystem::path configuredPath(activeScreen_->musicPath);
+    const std::filesystem::path musicPath = configuredPath.is_absolute() ? configuredPath : projectRoot_ / configuredPath;
+    std::string error;
+    if (!musicPlayer_->play(musicPath, activeScreen_->musicLoop, &error)) {
+        std::cerr << "Failed to play screen music: " << error << "\n";
+    }
 }
 
 bool Engine::loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage)
@@ -502,6 +692,7 @@ void Engine::loadWeapons()
                 const std::string ammoKey = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
                 ammo_[ammoKey] = 0;
                 loadSpriteById(w.spriteId);
+                loadSpriteById(w.ammoSpriteId);
             }
             break;
         }
@@ -725,6 +916,7 @@ void Engine::loadAllSprites()
     }
     if (rangedWeapon_.has_value()) {
         loadSpriteById(rangedWeapon_->spriteId);
+        loadSpriteById(rangedWeapon_->ammoSpriteId);
     }
 }
 
@@ -989,7 +1181,7 @@ void Engine::updateAttack(float dt)
             proj.vy = playerFacingY_ * rangedWeapon_->projectileSpeed;
             proj.maxDistance = rangedWeapon_->range;
             proj.damage = rangedWeapon_->damage;
-            proj.spriteId = rangedWeapon_->spriteId;
+            proj.spriteId = rangedWeapon_->ammoSpriteId.empty() ? rangedWeapon_->spriteId : rangedWeapon_->ammoSpriteId;
             projectiles_.push_back(proj);
         }
     }
@@ -1149,6 +1341,7 @@ void Engine::collectItem(RuntimeItemEntity& item)
                         }
                         gameState_.giveItem(w.id);
                         loadSpriteById(w.spriteId);
+                        loadSpriteById(w.ammoSpriteId);
                         break;
                     }
                 }

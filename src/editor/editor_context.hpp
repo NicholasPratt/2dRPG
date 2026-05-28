@@ -40,6 +40,7 @@ struct EditorContext {
     std::string requestedSpriteReference;
     bool dirty = false;
     bool requestEditScreenGraphics = false;
+    bool requestEditScreenMusic = false;
     bool requestEditEnemies = false;
     bool requestEditEnemyTypes = false;
     bool requestEditSprite = false;
@@ -62,6 +63,7 @@ struct EditorContext {
     std::vector<std::string> importedCharacterIds;
     std::string playableCharacterId;
     bool requestEditItems = false;
+    bool requestEditItemDetails = false;
     bool requestEditNpcs = false;
     bool requestEditNpcTypes = false;
 

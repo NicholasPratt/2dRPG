@@ -1,4 +1,4 @@
-ADCHAPTER 8
+ADCHAPTER 9
 id Farm_House
 start screen_1
 playable billy
@@ -9,6 +9,7 @@ screens 2
 screen screen_1 screen_1_map 0 0
 links - - - screen_2
 respawn 0
+music "assets/game/music/screen1.ogg" 1
 enemies 2
 enemy enemy_1 enemy_1 1 1 64 0 0 1 8
 wp 128 80 0 0 -1 -
@@ -39,13 +40,16 @@ wp 248 72 0 0 -1 -
 wp 136 152 0 0 -1 -
 wp 104 152 0 0 -1 -
 dl "" "There's a lot of crows about!"
-npc npc_2 Fred 568 104 0 64 24 0 1 15 - 1 0
+npc npc_2 Fred 568 104 0 64 24 0 1 15 - 1 1
 wp 568 104 0 0 -1 -
-npc npc_3 Fred 424 344 0 64 24 0 1 15 - 1 0
+dl "" "You Should Find Grandma Spelling, She'll know what to do!"
+npc Dhag1 Fred 424 344 0 64 24 0 1 15 - 1 1
 wp 424 344 0 0 -1 -
+dl "" "I find crows a bit scary..."
 screen screen_2 screen_2_map -1 0
 links - - screen_1 -
 respawn 0
+music "-" 1
 enemies 0
 npcs 0
 end

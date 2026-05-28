@@ -9,6 +9,7 @@
 #include "game/weapon.hpp"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -28,6 +29,8 @@ public:
     void run();
 
 private:
+    class MusicPlayer;
+
     struct Texture {
         unsigned int id = 0;
         int width = 0;
@@ -130,6 +133,7 @@ private:
 
     std::filesystem::path projectRoot_;
     GLFWwindow* window_ = nullptr;
+    std::unique_ptr<MusicPlayer> musicPlayer_;
     Chapter chapter_;
     const ChapterScreen* activeScreen_ = nullptr;
     TileMap activeMap_;
@@ -192,6 +196,7 @@ private:
     void loadAllSprites();
     void loadSpriteById(const std::string& spriteId);
     void loadItemEntities();
+    void updateScreenMusic();
     void update(float dt);
     void updatePlayer(float dt);
     void updateAttack(float dt);

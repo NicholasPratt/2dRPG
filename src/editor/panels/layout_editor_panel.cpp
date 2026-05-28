@@ -14,7 +14,7 @@ namespace {
 
 bool inputString(const char* label, std::string& value, std::size_t maxSize = 64)
 {
-    char buffer[128]{};
+    char buffer[256]{};
     const std::size_t copyLen = std::min(value.size(), std::min(maxSize, sizeof(buffer) - 1));
     std::memcpy(buffer, value.data(), copyLen);
     if (ImGui::InputText(label, buffer, sizeof(buffer))) {
@@ -72,6 +72,24 @@ std::filesystem::path previewPathForMap(const EditorContext& context, const std:
         return gamePath;
     }
     return context.assets.rawTilesetPath() / (mapId + "_preview.png");
+}
+
+std::string portableProjectPath(const EditorContext& context, const std::filesystem::path& path)
+{
+    if (path.empty()) {
+        return {};
+    }
+
+    std::error_code error;
+    const std::filesystem::path absolutePath = path.is_absolute()
+        ? std::filesystem::weakly_canonical(path, error)
+        : std::filesystem::weakly_canonical(context.assets.projectRoot / path, error);
+    const std::filesystem::path absoluteRoot = std::filesystem::weakly_canonical(context.assets.projectRoot, error);
+    const std::filesystem::path relative = std::filesystem::relative(absolutePath, absoluteRoot, error);
+    if (!error && !relative.empty() && relative.native().find("..") != 0) {
+        return relative.generic_string();
+    }
+    return path.generic_string();
 }
 
 } // namespace
@@ -595,12 +613,75 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         context.requestEditNpcTypes = true;
     }
 
+    if (ImGui::Button("Edit Music", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditScreenMusic = true;
+    }
+
     if (ImGui::Button("Edit Screen Graphics", ImVec2(-1.0f, 34.0f))) {
         // EditorApp consumes this request and opens the map/pixel editor on this screen's map.
         // The wall/mid layer remains outlined there for spatial context.
         context.selectedScreenId = screen.id;
         context.selectedScreenMapId = screen.mapId;
         context.requestEditScreenGraphics = true;
+    }
+}
+
+void LayoutEditorPanel::drawScreenMusic(EditorContext& context)
+{
+    if (!selectedScreenValid()) {
+        ImGui::TextDisabled("No screen selected.");
+        return;
+    }
+
+    game::ChapterScreen& screen = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
+    ImGui::Text("Screen: %s", screen.id.c_str());
+    ImGui::Text("Music folder: %s", context.assets.gameMusicPath().string().c_str());
+    ImGui::Separator();
+
+    drawMusicFilePicker(context, screen);
+
+    if (ui::checkbox("Loop music", "##ScreenMusicLoop", &screen.musicLoop, 120.0f)) {
+        context.markDirty();
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Stored on the chapter screen. Use paths relative to the project, such as assets/game/music/screen1.ogg.");
+}
+
+void LayoutEditorPanel::drawMusicFilePicker(EditorContext& context, game::ChapterScreen& screen)
+{
+    if (inputString("Music path", screen.musicPath, 240)) {
+        screen.musicPath = portableProjectPath(context, screen.musicPath);
+        context.markDirty();
+    }
+
+    const std::filesystem::path musicDir = context.assets.gameMusicPath();
+    std::error_code error;
+    if (!std::filesystem::exists(musicDir, error)) {
+        ImGui::TextDisabled("Music folder does not exist yet.");
+        return;
+    }
+
+    ImGui::TextUnformatted("Available music");
+    bool foundAny = false;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(musicDir, error)) {
+        if (error) {
+            break;
+        }
+        if (!entry.is_regular_file(error) || entry.path().extension() != ".ogg") {
+            continue;
+        }
+        foundAny = true;
+        const std::string label = entry.path().filename().string();
+        if (ImGui::Selectable(label.c_str(), screen.musicPath == portableProjectPath(context, entry.path()))) {
+            screen.musicPath = portableProjectPath(context, entry.path());
+            context.markDirty();
+        }
+    }
+    if (!foundAny) {
+        ImGui::TextDisabled("No .ogg files found.");
     }
 }
 

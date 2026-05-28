@@ -84,42 +84,55 @@ find_package(PkgConfig)
 
 if(OpenGL_FOUND AND PkgConfig_FOUND)
     pkg_check_modules(GLFW3 glfw3)
+    pkg_check_modules(SDL2 sdl2)
+    pkg_check_modules(VORBISFILE vorbisfile)
 endif()
 
 if(OpenGL_FOUND AND GLFW3_FOUND)
-    add_executable(adventure_game_window
-        src/app/main_game.cpp
-        src/game/engine.cpp
-        src/editor/stb_image_impl.cpp
-        external/imgui/backends/imgui_impl_glfw.cpp
-        external/imgui/backends/imgui_impl_opengl2.cpp
-    )
+    if(SDL2_FOUND AND VORBISFILE_FOUND)
+        add_executable(adventure_game_window
+            src/app/main_game.cpp
+            src/game/engine.cpp
+            src/editor/stb_image_impl.cpp
+            external/imgui/backends/imgui_impl_glfw.cpp
+            external/imgui/backends/imgui_impl_opengl2.cpp
+        )
 
-    target_include_directories(adventure_game_window PRIVATE
-        external/imgui
-        external/imgui/backends
-        external/stb
-        ${GLFW3_INCLUDE_DIRS}
-    )
+        target_include_directories(adventure_game_window PRIVATE
+            external/imgui
+            external/imgui/backends
+            external/stb
+            ${GLFW3_INCLUDE_DIRS}
+            ${SDL2_INCLUDE_DIRS}
+            ${VORBISFILE_INCLUDE_DIRS}
+        )
 
-    target_compile_definitions(adventure_game_window PRIVATE
-        ADVENTURE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-    )
+        target_compile_definitions(adventure_game_window PRIVATE
+            ADVENTURE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+            SDL_MAIN_HANDLED
+        )
 
-    target_compile_options(adventure_game_window PRIVATE
-        ${GLFW3_CFLAGS_OTHER}
-    )
+        target_compile_options(adventure_game_window PRIVATE
+            ${GLFW3_CFLAGS_OTHER}
+            ${SDL2_CFLAGS_OTHER}
+            ${VORBISFILE_CFLAGS_OTHER}
+        )
 
-    target_link_directories(adventure_game_window PRIVATE
-        ${GLFW3_LIBRARY_DIRS}
-    )
+        target_link_directories(adventure_game_window PRIVATE
+            ${GLFW3_LIBRARY_DIRS}
+            ${SDL2_LIBRARY_DIRS}
+            ${VORBISFILE_LIBRARY_DIRS}
+        )
 
-    target_link_libraries(adventure_game_window PRIVATE
-        imgui
-        adventure_game
-        OpenGL::GL
-        ${GLFW3_LIBRARIES}
-    )
+        target_link_libraries(adventure_game_window PRIVATE
+            imgui
+            adventure_game
+            OpenGL::GL
+            ${GLFW3_LIBRARIES}
+            ${SDL2_LIBRARIES}
+            ${VORBISFILE_LIBRARIES}
+        )
+    endif()
 
     add_executable(adventure_editor_window
         src/app/main_editor.cpp

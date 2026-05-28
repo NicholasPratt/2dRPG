@@ -62,7 +62,7 @@ std::filesystem::path findProjectRoot()
             continue;
         }
         if (std::filesystem::exists(candidate / "CMakeLists.txt", error) &&
-            std::filesystem::exists(candidate / "assets/game/chapters", error)) {
+            std::filesystem::exists(candidate / "projects", error)) {
             return std::filesystem::weakly_canonical(candidate, error);
         }
     }
@@ -226,6 +226,16 @@ void EditorApp::draw()
         spriteEditorLaunchedFromCharacter_ = false;
     }
 
+    if (context_.requestEditScreenMusic) {
+        context_.requestEditScreenMusic = false;
+        if (!context_.selectedScreenId.empty()) {
+            layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+        }
+        enterScreenMode(ScreenEditMode::Music);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
     if (context_.requestEditEnemies) {
         context_.requestEditEnemies = false;
         if (!context_.selectedScreenId.empty()) {
@@ -246,6 +256,13 @@ void EditorApp::draw()
     if (context_.requestEditItems) {
         context_.requestEditItems = false;
         enterScreenMode(ScreenEditMode::Items);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
+    if (context_.requestEditItemDetails) {
+        context_.requestEditItemDetails = false;
+        enterScreenMode(ScreenEditMode::ItemEdit);
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
     }
@@ -419,6 +436,11 @@ void EditorApp::drawScreensTab()
                 wallFloorPaint_.draw(context_);
             }
             break;
+        case ScreenEditMode::Music:
+            drawScopedEditHeader("Editing Screen Music", true, true);
+            ImGui::Separator();
+            layoutEditor_.drawScreenMusic(context_);
+            break;
         case ScreenEditMode::Enemies:
             drawScopedEditHeader("Editing Screen Enemies", true, true);
             ImGui::Separator();
@@ -432,7 +454,12 @@ void EditorApp::drawScreensTab()
         case ScreenEditMode::Items:
             drawScopedEditHeader("Placing Screen Items", true, true);
             ImGui::Separator();
-            itemPlacementEditor_.draw(context_);
+            itemPlacementEditor_.drawPlacement(context_);
+            break;
+        case ScreenEditMode::ItemEdit:
+            drawScopedEditHeader("Editing Screen Item", true, true);
+            ImGui::Separator();
+            itemPlacementEditor_.drawEdit(context_);
             break;
         case ScreenEditMode::Npcs:
             drawScopedEditHeader("Editing Screen NPCs", true, true);
@@ -607,6 +634,9 @@ void EditorApp::exitScreenModeSaving()
                 (void)layoutEditor_.saveCurrentChapter(context_);
             }
             break;
+        case ScreenEditMode::Music:
+            (void)layoutEditor_.saveCurrentChapter(context_);
+            break;
         case ScreenEditMode::Enemies:
             layoutEditor_.applyContextSelectedScreenData(context_);
             (void)layoutEditor_.saveCurrentChapter(context_);
@@ -624,6 +654,9 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::Items:
             itemPlacementEditor_.saveForScreen(context_);
             break;
+        case ScreenEditMode::ItemEdit:
+            itemPlacementEditor_.saveForScreen(context_);
+            break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);
             if (spriteEditorLaunchedFromCharacter_) {
@@ -634,7 +667,8 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::Layout:
             break;
     }
-    screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ : ScreenEditMode::Layout;
+    screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ :
+        (screenEditMode_ == ScreenEditMode::ItemEdit ? ScreenEditMode::Items : ScreenEditMode::Layout);
 }
 
 void EditorApp::exitScreenModeDiscarding()
@@ -646,6 +680,8 @@ void EditorApp::exitScreenModeDiscarding()
                 wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
                 mapEditor_.openMapId(context_, context_.selectedScreenMapId);
             }
+            break;
+        case ScreenEditMode::Music:
             break;
         case ScreenEditMode::Enemies:
             context_.selectedScreenEnemies = enemyPlacementSnapshot_;
@@ -663,6 +699,11 @@ void EditorApp::exitScreenModeDiscarding()
             break;
         case ScreenEditMode::Items:
             context_.selectedScreenItems = itemPlacementSnapshot_;
+            itemPlacementEditor_.openForScreen(context_);
+            break;
+        case ScreenEditMode::ItemEdit:
+            context_.selectedScreenItems = itemPlacementSnapshot_;
+            itemPlacementEditor_.openForScreen(context_);
             break;
         case ScreenEditMode::Sprite:
             spriteEditor_.resetDocumentBuffers();
@@ -671,7 +712,8 @@ void EditorApp::exitScreenModeDiscarding()
         case ScreenEditMode::Layout:
             break;
     }
-    screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ : ScreenEditMode::Layout;
+    screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ :
+        (screenEditMode_ == ScreenEditMode::ItemEdit ? ScreenEditMode::Items : ScreenEditMode::Layout);
 }
 
 void EditorApp::requestExit()
@@ -747,6 +789,7 @@ void EditorApp::ensureProjectDirectories() const
     std::filesystem::create_directories(context_.assets.gamePalettePath(), error);
     std::filesystem::create_directories(context_.assets.gamePathPath(), error);
     std::filesystem::create_directories(context_.assets.gameFontPath(), error);
+    std::filesystem::create_directories(context_.assets.gameMusicPath(), error);
 }
 
 void EditorApp::selectProject(const std::string& projectId)
@@ -763,11 +806,21 @@ void EditorApp::loadProjectMetadata()
 {
     game::GameProject project;
     if (game::loadGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr)) {
+        context_.playableCharacterId = project.playableCharacterId;
+        context_.importedCharacterIds = project.characterIds;
+        context_.enemyTypes = project.enemyTypes;
+        context_.weaponDefs = project.weaponDefs;
+        context_.startingWeaponId = project.startingWeaponId;
         context_.stateVariables = project.stateVariables;
         context_.effectDefs = project.effectDefs;
         context_.npcTypes = project.npcTypes;
         context_.fontPath = project.fontPath;
     } else {
+        context_.playableCharacterId.clear();
+        context_.importedCharacterIds.clear();
+        context_.enemyTypes.clear();
+        context_.weaponDefs.clear();
+        context_.startingWeaponId.clear();
         context_.stateVariables.clear();
         context_.effectDefs.clear();
         context_.npcTypes.clear();
@@ -785,6 +838,11 @@ void EditorApp::saveProjectMetadata()
     if (!game::loadGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr)) {
         project.id = "game";
     }
+    project.playableCharacterId = context_.playableCharacterId;
+    project.characterIds = context_.importedCharacterIds;
+    project.enemyTypes = context_.enemyTypes;
+    project.weaponDefs = context_.weaponDefs;
+    project.startingWeaponId = context_.startingWeaponId;
     project.stateVariables = context_.stateVariables;
     project.effectDefs = context_.effectDefs;
     project.npcTypes = context_.npcTypes;
@@ -916,6 +974,7 @@ void EditorApp::chooseChapter(const std::string& chapterId)
     if (currentProjectId_.empty()) {
         return;
     }
+    loadProjectMetadata();
     if (layoutEditor_.loadChapterById(context_, chapterId)) {
         wallFloorPaint_.resetScreenBuffers();
         spriteEditor_.resetDocumentBuffers();
@@ -1051,6 +1110,9 @@ void EditorApp::saveActiveEditingScope()
                 wallFloorPaint_.saveForChapter(context_);
             }
             break;
+        case ScreenEditMode::Music:
+            (void)layoutEditor_.saveCurrentChapter(context_);
+            break;
         case ScreenEditMode::Enemies:
             layoutEditor_.applyContextSelectedScreenData(context_);
             break;
@@ -1064,6 +1126,9 @@ void EditorApp::saveActiveEditingScope()
             npcEditor_.saveProjectNpcTypes(context_);
             break;
         case ScreenEditMode::Items:
+            itemPlacementEditor_.saveForScreen(context_);
+            break;
+        case ScreenEditMode::ItemEdit:
             itemPlacementEditor_.saveForScreen(context_);
             break;
         case ScreenEditMode::Sprite:

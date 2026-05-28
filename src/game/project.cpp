@@ -56,7 +56,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 8\n";
+    output << "ADGAME 9\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -96,6 +96,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << w.projectileSpeed
                << ' ' << (w.spriteId.empty() ? "-" : w.spriteId)
                << ' ' << (w.ammoTypeId.empty() ? "-" : w.ammoTypeId)
+               << ' ' << (w.ammoSpriteId.empty() ? "-" : w.ammoSpriteId)
                << ' ' << w.ammoPerShot << "\n";
     }
     output << "starting_weapon " << (project.startingWeaponId.empty() ? "-" : project.startingWeaponId) << "\n";
@@ -144,7 +145,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 8) {
+    if (magic != "ADGAME" || version < 1 || version > 9) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -221,11 +222,17 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             int weaponType = 0;
             std::string spriteId;
             std::string ammoTypeId;
+            std::string ammoSpriteId;
             input >> w.id >> weaponType >> w.damage >> w.range >> w.attackCooldown
-                  >> w.projectileSpeed >> spriteId >> ammoTypeId >> w.ammoPerShot;
+                  >> w.projectileSpeed >> spriteId >> ammoTypeId;
+            if (version >= 9) {
+                input >> ammoSpriteId;
+            }
+            input >> w.ammoPerShot;
             w.type = (weaponType == 1) ? WeaponType::Ranged : WeaponType::Melee;
             w.spriteId = (spriteId == "-") ? std::string{} : spriteId;
             w.ammoTypeId = (ammoTypeId == "-") ? std::string{} : ammoTypeId;
+            w.ammoSpriteId = (ammoSpriteId == "-") ? std::string{} : ammoSpriteId;
             if (!w.id.empty()) {
                 loaded.weaponDefs.push_back(std::move(w));
             }
