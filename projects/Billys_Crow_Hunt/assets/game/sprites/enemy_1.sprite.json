@@ -7,7 +7,9 @@
   "frames": [
     {"rect": [0, 0, 16, 16], "durationMs": 100, "type": "idle", "direction": "E"},
     {"rect": [16, 0, 16, 16], "durationMs": 100, "type": "walk", "direction": "E"},
-    {"rect": [32, 0, 16, 16], "durationMs": 100, "type": "walk", "direction": "E"}
+    {"rect": [32, 0, 16, 16], "durationMs": 100, "type": "walk", "direction": "E"},
+    {"rect": [48, 0, 16, 16], "durationMs": 100, "type": "walk", "direction": "S"},
+    {"rect": [64, 0, 16, 16], "durationMs": 100, "type": "walk", "direction": "S"}
   ],
   "tags": ["idle"]
 }

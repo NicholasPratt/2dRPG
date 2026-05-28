@@ -4,13 +4,15 @@
 #include "game/weapon.hpp"
 
 #include <array>
+#include <filesystem>
+#include <optional>
 #include <string>
 
 namespace adventure::editor {
 
 class WeaponEditorPanel {
 public:
-    void draw(EditorContext& context);
+    std::optional<std::filesystem::path> draw(EditorContext& context);
     void loadWeapons(EditorContext& context);
     void saveWeapons(EditorContext& context);
 

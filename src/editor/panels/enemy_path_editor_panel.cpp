@@ -186,7 +186,7 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     if (ImGui::Button("Edit Sprite")) {
         const std::string spriteId(spriteId_.data());
         if (!spriteId.empty()) {
-            context.requestedSpriteReference = (context.assets.gameSprites / (spriteId + ".sprite.json")).generic_string();
+            context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
             context.requestEditSprite = true;
         }
     }
@@ -251,6 +251,13 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     ImGui::SameLine(360.0f);
     if (ui::checkbox("Respawn enemy", "##EnemyRespawn", &respawn_, 110.0f)) {
         writeCurrentPlacement(context);
+    }
+    ImGui::SameLine(500.0f);
+    if (ui::checkbox("Above walls", "##EnemyAboveWalls", &renderAboveWalls_, 110.0f)) {
+        writeCurrentPlacement(context);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Render this enemy after the wall texture instead of underneath it.");
     }
 
     ui::sliderFloat("Zoom", "##EnemyEditorZoom", &zoom_, 0.5f, 6.0f, "%.1fx", 80.0f, 54.0f);
@@ -640,7 +647,7 @@ void EnemyPathEditorPanel::drawAnimationStateHelper(EditorContext& context)
     if (ImGui::Button("Open sprite states")) {
         const std::string spriteId(spriteId_.data());
         if (!spriteId.empty()) {
-            context.requestedSpriteReference = (context.assets.gameSprites / (spriteId + ".sprite.json")).generic_string();
+            context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
             context.requestEditSprite = true;
         }
     }
@@ -1062,6 +1069,7 @@ void EnemyPathEditorPanel::selectPlacement(EditorContext& context, int index)
     speed_ = placement.speedOverride;
     loop_ = placement.loop;
     respawn_ = placement.respawn;
+    renderAboveWalls_ = placement.renderAboveWalls;
     waypoints_.clear();
     for (const game::PathWaypoint& waypoint : placement.waypoints) {
         Waypoint wp;
@@ -1089,6 +1097,7 @@ void EnemyPathEditorPanel::writeCurrentPlacement(EditorContext& context)
     placement.speedOverride = std::max(0.0f, speed_);
     placement.loop = loop_;
     placement.respawn = respawn_;
+    placement.renderAboveWalls = renderAboveWalls_;
     placement.waypoints.clear();
     placement.waypoints.reserve(waypoints_.size());
     for (const Waypoint& waypoint : waypoints_) {

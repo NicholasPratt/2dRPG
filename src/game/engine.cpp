@@ -617,6 +617,7 @@ void Engine::loadPathEntities()
             path.speed = placement.speedOverride;
             path.loop = placement.loop;
             path.respawn = placement.respawn;
+            path.renderAboveWalls = placement.renderAboveWalls;
             path.waypoints = placement.waypoints;
             if (const EnemyType* type = typeForId(placement.typeId)) {
                 path.spriteId = type->spriteId;
@@ -1897,32 +1898,9 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
-        const bool dying = entity.deathSeconds >= 0.0f;
-        const float deathAlpha = dying
-            ? 1.0f - std::clamp(entity.deathSeconds / kEnemyDeathVisualSeconds, 0.0f, 1.0f)
-            : 1.0f;
-
-        auto spriteIt = loadedSprites_.find(entity.path.spriteId);
-        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
-            bool flipH = false;
-            const SpriteFrameDef* frame = spriteFrameForEntity(spriteIt->second, entity, flipH);
-            if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
-                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
-                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
-                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
-                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
-                const float drawW = static_cast<float>(frame->width);
-                const float drawH = static_cast<float>(frame->height);
-                renderTextureRegion(spriteIt->second.texture, entity.x - drawW * 0.5f, entity.y - drawH * 0.5f, drawW, drawH,
-                    flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
-                if (dying) {
-                    renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
-                        drawW, drawH, 1.0f, 1.0f, 1.0f, deathAlpha * 0.6f);
-                }
-                continue;
-            }
+        if (!entity.path.renderAboveWalls) {
+            renderEnemyEntity(entity);
         }
-        renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, dying ? deathAlpha : 1.0f);
     }
 
     for (const MapObstacle& obstacle : activeMap_.obstacles) {
@@ -1995,6 +1973,12 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
+        if (entity.path.renderAboveWalls) {
+            renderEnemyEntity(entity);
+        }
+    }
+
+    for (const RuntimePathEntity& entity : pathEntities_) {
         if (entity.path.combat.maxHealth <= 1 || entity.deathSeconds >= 0.0f) {
             continue;
         }
@@ -2015,6 +1999,36 @@ void Engine::render()
 void Engine::renderTexture(const Texture& texture, float x, float y, float width, float height) const
 {
     renderTextureRegion(texture, x, y, width, height, 0.0f, 0.0f, 1.0f, 1.0f);
+}
+
+void Engine::renderEnemyEntity(const RuntimePathEntity& entity) const
+{
+    const bool dying = entity.deathSeconds >= 0.0f;
+    const float deathAlpha = dying
+        ? 1.0f - std::clamp(entity.deathSeconds / kEnemyDeathVisualSeconds, 0.0f, 1.0f)
+        : 1.0f;
+
+    auto spriteIt = loadedSprites_.find(entity.path.spriteId);
+    if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+        bool flipH = false;
+        const SpriteFrameDef* frame = spriteFrameForEntity(spriteIt->second, entity, flipH);
+        if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+            const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+            const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+            const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+            const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+            const float drawW = static_cast<float>(frame->width);
+            const float drawH = static_cast<float>(frame->height);
+            renderTextureRegion(spriteIt->second.texture, entity.x - drawW * 0.5f, entity.y - drawH * 0.5f, drawW, drawH,
+                flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
+            if (dying) {
+                renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
+                    drawW, drawH, 1.0f, 1.0f, 1.0f, deathAlpha * 0.6f);
+            }
+            return;
+        }
+    }
+    renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, dying ? deathAlpha : 1.0f);
 }
 
 void Engine::renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const

@@ -36,6 +36,7 @@ struct EnemyPlacement {
     float speedOverride = 0.0f;
     bool loop = true;
     bool respawn = false;
+    bool renderAboveWalls = false;
     std::vector<PathWaypoint> waypoints;
 };
 

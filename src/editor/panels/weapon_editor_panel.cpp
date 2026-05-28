@@ -40,8 +40,10 @@ void WeaponEditorPanel::saveWeapons(EditorContext& context)
     game::saveGameProject(context.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
 }
 
-void WeaponEditorPanel::draw(EditorContext& context)
+std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& context)
 {
+    std::optional<std::filesystem::path> spriteToOpen;
+
     const std::string currentRoot = context.assets.projectRoot.string();
     if (!projectLoaded_ || lastLoadedProjectRoot_ != currentRoot) {
         loadWeapons(context);
@@ -121,11 +123,15 @@ void WeaponEditorPanel::draw(EditorContext& context)
         if (ImGui::InputText("Sprite ID", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
         ImGui::SameLine();
         if (ImGui::Button("Edit Sprite##weapon_sprite")) {
+            std::string spriteId(spriteId_.data());
+            if (spriteId.empty()) {
+                spriteId = weaponId_.data();
+                copyToBuffer(spriteId_, spriteId);
+                context.markDirty();
+            }
             writeInspectorToSelected(context);
-            const std::string spriteId(spriteId_.data());
             if (!spriteId.empty()) {
-                context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
-                context.requestEditSprite = true;
+                spriteToOpen = context.assets.gameSpritePath() / (spriteId + ".sprite.json");
             }
         }
 
@@ -155,6 +161,7 @@ void WeaponEditorPanel::draw(EditorContext& context)
     }
 
     ImGui::EndChild();
+    return spriteToOpen;
 }
 
 void WeaponEditorPanel::syncInspectorFromSelected(const EditorContext& context)

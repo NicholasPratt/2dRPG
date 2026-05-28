@@ -226,6 +226,7 @@ private:
     void render();
     void renderTexture(const Texture& texture, float x, float y, float width, float height) const;
     void renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const;
+    void renderEnemyEntity(const RuntimePathEntity& entity) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrame(const RuntimeSprite& sprite) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrameForEntity(const RuntimeSprite& sprite, const RuntimePathEntity& entity, bool& flipHorizontal) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrameForNpc(const RuntimeSprite& sprite, const RuntimeNpcEntity& npc, bool& flipHorizontal) const;

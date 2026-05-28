@@ -111,7 +111,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 7\n";
+    output << "ADCHAPTER 8\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -133,6 +133,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
             output << "enemy " << enemy.id << ' ' << enemy.typeId << ' '
                    << static_cast<int>(enemy.behavior) << ' ' << static_cast<int>(enemy.curveMode) << ' '
                    << enemy.speedOverride << ' ' << (enemy.loop ? 1 : 0) << ' ' << (enemy.respawn ? 1 : 0) << ' '
+                   << (enemy.renderAboveWalls ? 1 : 0) << ' '
                    << enemy.waypoints.size() << "\n";
             for (const PathWaypoint& waypoint : enemy.waypoints) {
                 output << "wp " << waypoint.x << ' ' << waypoint.y
@@ -182,7 +183,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 7) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 8) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -294,6 +295,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 int curve = 0;
                 int loopVal = 1;
                 int respawnVal = 0;
+                int renderAboveWallsVal = 0;
                 int waypointCount = 0;
                 input >> key;
                 if (key != "enemy") {
@@ -301,7 +303,11 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                     return false;
                 }
                 input >> enemy.id >> enemy.typeId >> behavior >> curve >> enemy.speedOverride
-                      >> loopVal >> respawnVal >> waypointCount;
+                      >> loopVal >> respawnVal;
+                if (version >= 8) {
+                    input >> renderAboveWallsVal;
+                }
+                input >> waypointCount;
                 if (!input || waypointCount < 0 || waypointCount > kMaxEnemyWaypoints) {
                     setError(errorMessage, "Invalid enemy entry.");
                     return false;
@@ -310,6 +316,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 enemy.curveMode = static_cast<PathCurveMode>(std::clamp(curve, 0, 1));
                 enemy.loop = loopVal != 0;
                 enemy.respawn = respawnVal != 0;
+                enemy.renderAboveWalls = renderAboveWallsVal != 0;
                 enemy.waypoints.reserve(static_cast<std::size_t>(waypointCount));
                 for (int waypointIndex = 0; waypointIndex < waypointCount; ++waypointIndex) {
                     PathWaypoint waypoint;

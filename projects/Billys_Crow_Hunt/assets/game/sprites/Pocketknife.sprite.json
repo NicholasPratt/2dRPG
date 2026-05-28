@@ -1,0 +1,11 @@
+{
+  "id": "Pocketknife",
+  "source": "assets/raw/sprites/Pocketknife_sheet.png",
+  "canvasSize": [12, 8],
+  "gridSize": [12, 8],
+  "pivot": [4, 2],
+  "frames": [
+    {"rect": [0, 0, 12, 8], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

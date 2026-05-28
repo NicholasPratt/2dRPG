@@ -303,7 +303,14 @@ void EditorApp::draw()
                 if (weaponsTabFlags != 0) {
                     hasRequestedTab_ = false;
                 }
-                weaponEditor_.draw(context_);
+                if (auto spriteToOpen = weaponEditor_.draw(context_)) {
+                    spriteEditor_.openSpriteReference(*spriteToOpen);
+                    spriteEditorLaunchedFromCharacter_ = false;
+                    spriteReturnMode_ = ScreenEditMode::Layout;
+                    enterScreenMode(ScreenEditMode::Sprite);
+                    requestedTab_ = MainTab::Layout;
+                    hasRequestedTab_ = true;
+                }
                 ImGui::EndTabItem();
             }
 

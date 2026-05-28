@@ -62,6 +62,7 @@ private:
     float attackCooldownSeconds_ = 1.0f;
     bool loop_ = true;
     bool respawn_ = false;
+    bool renderAboveWalls_ = false;
 
     // Waypoints
     std::vector<Waypoint> waypoints_;

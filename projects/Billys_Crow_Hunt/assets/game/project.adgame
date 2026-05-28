@@ -8,9 +8,10 @@ chapters 1
 chapter Farm_House
 enemy_types 1
 enemy_type enemy_1 enemy_1 1 1 12 12 1 64 0
-weapon_defs 1
-weapon_def Pocket 0 1 8 0.5 200 - - 1
-starting_weapon Pocket
+weapon_defs 2
+weapon_def Pocketknife 0 22 107 0.5 200 Pocketknife - 1
+weapon_def slingshot 1 9 293 0.59 200 - rock 1
+starting_weapon slingshot
 font "Roboto.ttf"
 state_defs 0
 effect_defs 0
