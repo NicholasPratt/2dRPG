@@ -55,7 +55,7 @@ npcs 0
 screen screen_3 screen_3_map 1 0
 links - screen_4 - screen_1
 respawn 0
-music "-" 1
+music "assets/game/music/merrydigging.ogg" 1
 enemies 0
 npcs 0
 screen screen_4 screen_4_map 1 1
