@@ -5,9 +5,9 @@ playable billy
 characters 2
 character billy
 character grandma_spelling
-screens 2
+screens 4
 screen screen_1 screen_1_map 0 0
-links - - - screen_2
+links - - screen_3 screen_2
 respawn 0
 music "assets/game/music/screen1.ogg" 1
 enemies 2
@@ -48,6 +48,18 @@ wp 424 344 0 0 -1 -
 dl "" "I find crows a bit scary..."
 screen screen_2 screen_2_map -1 0
 links - - screen_1 -
+respawn 0
+music "-" 1
+enemies 0
+npcs 0
+screen screen_3 screen_3_map 1 0
+links - screen_4 - screen_1
+respawn 0
+music "-" 1
+enemies 0
+npcs 0
+screen screen_4 screen_4_map 1 1
+links screen_3 - - -
 respawn 0
 music "-" 1
 enemies 0
