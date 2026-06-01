@@ -37,6 +37,39 @@ struct GameEffectDef {
     bool boolValue = true;
 };
 
+enum class ItemDefType {
+    Weapon = 0,
+    Ammo = 1,
+    Health = 2,
+    Mana = 3,
+    Currency = 4,
+    Key = 5,
+    Quest = 6,
+    Consumable = 7,
+    Material = 8,
+    Equipment = 9,
+    Custom = 10,
+};
+
+struct ItemDef {
+    std::string id = "item_1";
+    std::string name = "Item";
+    ItemDefType type = ItemDefType::Consumable;
+    std::string spriteId;
+    std::string targetId;
+    int value = 1;
+    bool stackable = true;
+    std::string customType;
+};
+
+struct ShopItemDef {
+    std::string itemId;
+    int buyPrice = 1;
+    int sellPrice = 1;
+    int quantity = 1;
+    bool unlimited = true;
+};
+
 enum class EnemyAttackType {
     Contact = 0,  // damage when player overlaps enemy (legacy behaviour)
     Melee   = 1,  // swing attack when player is within range
@@ -63,6 +96,12 @@ struct EnemyType {
     float attackCooldownSeconds = 1.0f;
     float speed = 64.0f;
     std::vector<EnemyAttackDef> attacks;
+    // Action-RPG hit reaction & AI tuning (ADGAME v12+)
+    float knockbackResistance = 0.0f;   // 0 = full knockback, 1 = immovable
+    float hitstunSeconds = 0.18f;       // stun/hurt window when damaged
+    float aggroRange = 0.0f;            // 0 = never chase; >0 = chase player within this radius (px)
+    std::string killVariable;           // GameState int incremented on death (quest hook)
+    int killAmount = 1;                 // amount added to killVariable on death
 };
 
 enum class NpcMovementMode {
@@ -92,6 +131,7 @@ struct NpcTypeDef {
     float defaultSpeed = 32.0f;
     std::string defaultGraphId;
     std::vector<DialogueLine> defaultDialogue;
+    std::vector<ShopItemDef> shopInventory;
 };
 
 struct GameProject {
@@ -103,6 +143,7 @@ struct GameProject {
     std::vector<std::string> chapterIds;
     std::vector<EnemyType> enemyTypes;
     std::vector<WeaponDef> weaponDefs;
+    std::vector<ItemDef> itemDefs;
     std::vector<StateVariableDef> stateVariables;
     std::vector<GameEffectDef> effectDefs;
     std::vector<NpcTypeDef> npcTypes;

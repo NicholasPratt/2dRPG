@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="User manual for the Adventure RPG Engine editor: how to build chapters, screens, sprites, enemies, NPCs, weapons, items, quests and combat effects.">
+<meta name="generator" content="hand-authored, kept in sync with RPG_Engine_Specification.md and code_base.md">
+<title>Adventure RPG Engine — Editor Manual</title>
+<style>
+  :root { --fg:#1f2937; --muted:#5b6573; --accent:#0f766e; --bg:#fbfbfa; --code:#f3f4f6; --border:#e2e5e9; }
+  * { box-sizing: border-box; }
+  body { margin:0; color:var(--fg); background:var(--bg);
+         font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 2rem 1.25rem 6rem; }
+  h1 { font-size: 2rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.45rem; margin: 2.6rem 0 .6rem; padding-top: .5rem; border-top: 2px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 1.6rem 0 .4rem; color: var(--accent); }
+  h4 { font-size: 1rem; margin: 1.1rem 0 .3rem; }
+  p, li { color: var(--fg); }
+  a { color: var(--accent); }
+  code { background: var(--code); padding: .1em .35em; border-radius: 4px; font-size: .9em;
+         font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  pre { background: var(--code); padding: .9rem 1rem; border-radius: 8px; overflow:auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .95rem; }
+  th, td { border: 1px solid var(--border); padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #eef2f1; }
+  .lead { font-size: 1.05rem; color: var(--muted); }
+  .note { background:#eef6f5; border-left:4px solid var(--accent); padding:.6rem .9rem; border-radius:0 6px 6px 0; margin:1rem 0; }
+  .toc { background:#fff; border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; }
+  .toc ul { margin:.3rem 0; }
+  .recipe { border:1px solid var(--border); border-radius:8px; padding: .25rem 1rem 1rem; margin:1rem 0; background:#fff; }
+  .recipe h4 { color: var(--accent); }
+  .kbd { display:inline-block; border:1px solid #c7ccd1; border-bottom-width:2px; border-radius:4px;
+         padding:0 .4em; background:#fff; font-family:monospace; font-size:.85em; }
+  footer { margin-top:3rem; color:var(--muted); font-size:.9rem; border-top:1px solid var(--border); padding-top:1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Adventure RPG Engine — Editor Manual</h1>
+  <p class="lead">How to build a 2D action-RPG (SNES/GBA style) with the integrated editor: chapters, screens,
+  sprites, enemies, NPCs, weapons, items, quests, and the combat feel.</p>
+  <div class="note" id="for-llms">
+    <strong>For AI assistants:</strong> This manual is the authoritative source for answering
+    user questions like “how do I make an enemy chase the player?” or “how do I make a quest that counts kills?”
+    Each task is documented as a numbered recipe under <a href="#recipes">How do I…?</a>, and the concepts those
+    recipes rely on are explained under <a href="#concepts">Core concepts</a> and <a href="#combat">Combat model</a>.
+    When the codebase contradicts this manual, the code wins — see <code>RPG_Engine_Specification.md</code> and
+    <code>code_base.md</code> at the repository root. Terms in <code>monospace</code> are exact field/control names
+    in the editor or data formats.
+  </div>
+</header>
+
+<nav class="toc" id="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#overview">1. Overview</a></li>
+    <li><a href="#start">2. Getting started &amp; launching the game</a></li>
+    <li><a href="#tabs">3. Editor tabs &amp; sub-editors reference</a></li>
+    <li><a href="#concepts">4. Core concepts</a></li>
+    <li><a href="#combat">5. Combat model reference</a></li>
+    <li><a href="#recipes">6. How do I…? (recipes)</a></li>
+    <li><a href="#controls">7. Runtime controls</a></li>
+    <li><a href="#glossary">8. Glossary</a></li>
+  </ul>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="overview">1. Overview</h2>
+<p>The engine renders top-down screens of 16&times;16-pixel tiles, 48&times;32 tiles per screen
+(768&times;512 px native). A <strong>game</strong> is made of one or more <strong>chapters</strong>; each chapter is
+a grid of <strong>screens</strong> linked north/south/east/west. The editor produces data files the runtime loads;
+runtime code never depends on the editor.</p>
+<p>Reusable assets (characters, enemy types, NPC types, weapons, items, quest variables) live in a project-wide
+library (<code>assets/game/project.adgame</code>). Chapters reference those assets by id. Dialogue trees are
+chapter-specific. Every project is isolated under <code>projects/&lt;project&gt;/</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="start">2. Getting started &amp; launching the game</h2>
+<h3>Opening a project</h3>
+<p>On startup the editor shows an <strong>Open Project</strong> modal. Pick an existing project + chapter, or type a
+new project/chapter name to create <code>projects/&lt;project&gt;/</code> with its asset folders. Closing the editor
+or switching chapters prompts you to save or discard unsaved work.</p>
+
+<h3>Saving</h3>
+<p>Saving a chapter does a lot at once: it writes the chapter file, flushes all edited sprites (metadata + sheet
+PNGs), exports each modified screen’s floor/wall/preview PNGs, and writes the project library
+(<code>project.adgame</code>). Sprite and screen-graphics edits are held in in-memory buffers during the session and
+only written on save.</p>
+
+<h3>Playing &amp; testing</h3>
+<p>The editor launches the separate runtime window (<code>adventure_game_window</code>). There are three launch
+buttons (next to each scoped editor’s toolbar and under the <strong>Chapter</strong> menu):</p>
+<table>
+  <tr><th>Button</th><th>Starts at</th><th>State</th><th>Use when</th></tr>
+  <tr><td><code>Save and Play</code></td><td>Chapter start screen</td><td>Loads your saved progress (<code>save.adstate</code>)</td><td>Playing the game as a player would</td></tr>
+  <tr><td><code>Play Selected Screen</code></td><td>The screen selected in the Screens tab</td><td><strong>Fresh</strong>: full HP, all placed enemies present, save untouched</td><td>Iterating on the screen you’re editing</td></tr>
+  <tr><td><code>Play From Last Entry</code></td><td>The screen you last entered while playing</td><td><strong>Fresh</strong></td><td>Resuming a test where you last were</td></tr>
+</table>
+<div class="note"><strong>Why a “fresh” test matters:</strong> the runtime permanently remembers defeated enemies
+in <code>save.adstate</code>. If you re-use enemy ids and load that save, freshly-placed enemies can appear
+pre-killed. The fresh test launches ignore the save so all authored enemies always spawn, and never overwrite your
+real progress. The runtime records the last-entered screen + position in <code>assets/game/test_checkpoint</code>,
+which the “Play From Last Entry” button reads.</div>
+
+<!-- ============================================================ -->
+<h2 id="tabs">3. Editor tabs &amp; sub-editors reference</h2>
+<p>Top-level tabs (in order):</p>
+<table>
+  <tr><th>Tab</th><th>Purpose</th></tr>
+  <tr><td><strong>Characters</strong></td><td>Character sheets: name, bio, sprite reference, per-frame animation assignments, and the <em>Playable Character</em> flag (only one playable at a time). Add/Delete Character. <code>Edit Sprite</code> opens the sprite editor for that character.</td></tr>
+  <tr><td><strong>Weapons</strong></td><td>Create/edit <code>WeaponDef</code>s (melee or ranged) and choose the project’s starting weapon. Ranged weapons expose damage, range, cooldown, projectile speed, ammo type, and an <code>On wall hit</code> behavior (Break / Rebound).</td></tr>
+  <tr><td><strong>Items</strong></td><td>Create/edit project-wide <code>ItemDef</code>s (weapon, ammo, health, mana, currency, key, quest, consumable, material, equipment, or custom). Can seed common defaults; warns on empty/duplicate ids.</td></tr>
+  <tr><td><strong>Quest State</strong></td><td>Define designer-named state variables (integer / boolean / item) and reusable effects. These are the variables quests, dialogue, and kill-counters read and write.</td></tr>
+  <tr><td><strong>Screens</strong></td><td>The chapter laid out as a continuous grid. Select/center a screen, create &amp; link neighbours (N/S/E/W), edit the selected screen’s tile map, and open the scoped sub-editors below.</td></tr>
+  <tr><td><strong>Tilesets</strong></td><td>Generate tileset definitions from a source PNG grid.</td></tr>
+  <tr><td><strong>Assets</strong></td><td>Asset directory listing.</td></tr>
+</table>
+
+<h3>Scoped sub-editors (reached from Screens/Characters)</h3>
+<table>
+  <tr><th>Sub-editor</th><th>Opened from</th><th>Does</th></tr>
+  <tr><td><strong>Edit Screen Graphics</strong> (Wall/Floor Paint)</td><td>Screens → selected screen</td><td>Pixel/tile paint the Floor and Wall layers for that screen; can switch to <strong>Map Logic</strong> for the same screen (tile layers, spawn, obstacles, hazards).</td></tr>
+  <tr><td><strong>Edit Enemy Types</strong></td><td>Screens (enemy context)</td><td>Reusable <code>EnemyType</code> library: sprite, HP, hitbox, speed, contact damage, the <em>Hit Reaction &amp; AI</em> block, and per-type attacks.</td></tr>
+  <tr><td><strong>Edit Enemies</strong> / <strong>Edit Splines</strong></td><td>Screens (enemy context)</td><td>Place enemy instances on the screen and draw their patrol/spline paths.</td></tr>
+  <tr><td><strong>Edit NPC Types</strong></td><td>Screens (NPC context)</td><td>Reusable <code>NpcTypeDef</code>s: sprite/character, movement &amp; interaction mode, default dialogue, shop inventory.</td></tr>
+  <tr><td><strong>Edit NPCs</strong></td><td>Screens (NPC context)</td><td>Place NPC instances, set awareness/interaction radius, patrol paths, and instance dialogue.</td></tr>
+  <tr><td><strong>Edit Instance Dialogue</strong></td><td>NPC placement</td><td>Node/flow graph editor for that NPC instance’s conversation (Start/Dialogue/Choice/Condition/Action/End).</td></tr>
+  <tr><td><strong>Edit Items</strong></td><td>Screens (item context)</td><td>Place item/ammo/health/weapon pickups on the screen.</td></tr>
+  <tr><td><strong>Sprite Editor</strong></td><td>Characters / enemy / NPC sprite ids</td><td>Pixel-paint frames; assign each frame an action type, facing direction, and duration.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="concepts">4. Core concepts</h2>
+
+<h3 id="screens">Chapters, screens &amp; transitions</h3>
+<p>A chapter is a grid of screens. Each screen has a tile map (<code>.admap</code>) and N/S/E/W links to neighbours.
+Crossing a screen edge slides to the linked screen (when one exists and the destination entry isn’t blocked).
+Defeated-enemy and quest progress carry across screens via the game state registry.</p>
+
+<h3 id="layers">Tile layers &amp; collision</h3>
+<p>Each map has three layers: <strong>Floor</strong> (layer 0, walkable texture), <strong>Mid</strong> (layer 1,
+player-level, <em>collision</em>), and <strong>Ceiling</strong> (layer 2). Collision is binary: any non-zero mid-layer
+cell is solid. Wall art is painted in <em>Edit Screen Graphics</em>; the mid layer is the structural collision guide.
+Hazards (spikes, pits, timed spikes) live in the map and respawn the player at the map spawn.</p>
+
+<h3 id="sprites">Sprites &amp; 8-direction animation</h3>
+<p>Sprites are authored in the Sprite Editor. Every frame has an <strong>action type</strong> (e.g.
+<code>idle</code>, <code>walk</code>, <code>attack_1</code>, <code>hurt</code>, <code>dead</code>, <code>cast</code>),
+a <strong>facing direction</strong> (<code>E,W,N,S,NE,NW,SE,SW</code>, or empty = any), and a <strong>duration</strong>
+in ms. Multiple frames sharing an action+direction loop as a clip. The runtime auto-mirrors: if there are no
+west-facing frames it flips the east ones (same for NW↔NE, SW↔SE). This direction system is identical for the
+player, enemies, and NPCs. The runtime drives action state automatically (idle/walk, attack/hurt/dead), so to make
+an animation appear you just provide frames with the matching action-type label.</p>
+
+<h3 id="state">Game state registry (quests)</h3>
+<p>A single runtime registry holds named <strong>integers</strong>, <strong>booleans</strong>, and
+<strong>item ownership</strong>. Everything quest-related routes through it: enemy kills, item pickups, money,
+dialogue conditions and actions. Variable names are entirely designer-authored (define them in <strong>Quest
+State</strong>) — there are no hard-coded quest names in the engine. Money is the integer variable
+<code>Money</code> by convention. Runtime progress is saved to <code>save.adstate</code>.</p>
+
+<h3 id="persistence">Persistence &amp; respawn</h3>
+<p>By default a defeated enemy stays dead — its id is recorded (<code>"&lt;screenId&gt;/&lt;enemyId&gt;"</code>) and
+filtered out when that screen reloads, persisting across screens and across play sessions. Set a placement’s
+<code>respawn</code> flag (or a screen’s <em>respawn enemies</em> flag) to make it come back. Quest counters and
+items persist the same way. Fresh test launches ignore this save so authored content always appears.</p>
+
+<!-- ============================================================ -->
+<h2 id="combat">5. Combat model reference</h2>
+<p>Combat aims for a 2D-Zelda feel with Metroidvania attack timing. Per-enemy-type tuning lives in
+<em>Edit Enemy Types → Hit Reaction &amp; AI</em>; global feel constants live in the runtime
+(<code>src/game/engine.cpp</code>).</p>
+
+<h3>Player attacks</h3>
+<ul>
+  <li><strong>Melee</strong> (<span class="kbd">Z</span>): a swing with windup → active hit-window → recovery. The
+  hitbox only connects during the active window, and each enemy is hit once per swing. Range/damage/cooldown come
+  from the equipped melee <code>WeaponDef</code>.</li>
+  <li><strong>Ranged</strong> (<span class="kbd">X</span>): fires a projectile using the ranged <code>WeaponDef</code>
+  (speed, range, damage, ammo cost). Consumes ammo from the matching pool.</li>
+</ul>
+
+<h3>Hit reactions (enemies)</h3>
+<p>Damaging an enemy flashes it white, applies <strong>knockback</strong> in the hit direction (scaled by the type’s
+<code>knockback resistance</code>: 0 = flies back, 1 = immovable), and applies <strong>hitstun</strong> (the type’s
+<code>hitstun</code> seconds) during which it can’t move or attack. A lethal hit plays the <code>dead</code> state
+and fades out; a non-lethal hit plays <code>hurt</code>. The player is also knocked back away from whatever damages
+them.</p>
+
+<h3>Enemy attacks &amp; AI</h3>
+<p>Each enemy type defines any number of attacks: <strong>Contact</strong> (damage on overlap), <strong>Melee</strong>
+(damage within range), or <strong>Ranged</strong> (fires a projectile at the player). Each attack has its own damage,
+range, cooldown, projectile speed, ammo sprite, and optional animation state. If a type’s <code>aggro range</code>
+is &gt; 0, the enemy leaves its patrol to chase the player within that radius and, when the player escapes (past a
+hysteresis margin), walks back to the nearest point on its path and resumes patrol.</p>
+
+<h3 id="projectiles">Projectiles &amp; wall behavior</h3>
+<p>Projectiles know which side fired them: player shots hit enemies, enemy shots hit the player (both with
+knockback). Each ranged weapon’s <code>On wall hit</code> setting controls what happens at a wall:</p>
+<table>
+  <tr><th>Behavior</th><th>Effect</th><th>Example</th></tr>
+  <tr><td><code>Break</code></td><td>Vanishes on contact.</td><td>Arrow, bullet</td></tr>
+  <tr><td><code>Rebound</code></td><td>Bounces off the wall, loses energy each bounce, then settles on the ground and fades.</td><td>Slingshot stone</td></tr>
+</table>
+
+<h3>Enemy type fields (Hit Reaction &amp; AI)</h3>
+<table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><code>Max HP</code></td><td>Set &gt; 1 to see knockback/hitstun before death (HP 1 enemies pop instantly).</td></tr>
+  <tr><td><code>Knockback resist</code></td><td>0–1. 0 = full knockback, 1 = immovable.</td></tr>
+  <tr><td><code>Hitstun (s)</code></td><td>Stagger duration after being hit.</td></tr>
+  <tr><td><code>Aggro range (px)</code></td><td>0 = patrol only; &gt; 0 = chase the player within this radius.</td></tr>
+  <tr><td><code>Kill counter var</code> / <code>+amt</code></td><td>State variable incremented on death (and by how much). The quest hook.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="recipes">6. How do I…? (recipes)</h2>
+<p>Each recipe is a concrete sequence in the editor. These are the answers to most “how is this effect achieved”
+questions.</p>
+
+<div class="recipe" id="recipe-chase">
+  <h4>R1. Make an enemy chase the player</h4>
+  <p>Screens → <code>Edit Enemy Types</code> → select the type → <em>Hit Reaction &amp; AI</em> → set
+  <code>Aggro range</code> &gt; 0 (e.g. 120 px). The enemy will leave its patrol within that radius, chase, and
+  return to the nearest point on its path when you escape. Set <code>0</code> to keep it strictly on waypoints.</p>
+</div>
+
+<div class="recipe" id="recipe-knockback">
+  <h4>R2. Make an enemy fly back / be immovable when hit</h4>
+  <p>Same panel → <code>Knockback resist</code>. <code>0</code> = launched hard, <code>~0.7</code> = barely budges,
+  <code>1</code> = immovable. Also raise <code>Max HP</code> above 1 so the reaction is visible before it dies.</p>
+</div>
+
+<div class="recipe" id="recipe-stagger">
+  <h4>R3. Make hits stagger an enemy (hitstun)</h4>
+  <p>Same panel → <code>Hitstun (s)</code> (e.g. 0.2–0.4). During hitstun the enemy can’t move or attack and plays
+  its <code>hurt</code> animation if that sprite frame exists.</p>
+</div>
+
+<div class="recipe" id="recipe-rebound">
+  <h4>R4. Make a thrown/shot projectile bounce off walls (slingshot stone) vs. break (arrow)</h4>
+  <p>Weapons tab → select the ranged weapon → <code>On wall hit</code> → <code>Rebound</code> (bounces then settles
+  on the ground) or <code>Break</code> (vanishes). Bullets/arrows use <code>Break</code>; a slingshot stone uses
+  <code>Rebound</code>.</p>
+</div>
+
+<div class="recipe" id="recipe-ranged-enemy">
+  <h4>R5. Make an enemy shoot projectiles at the player</h4>
+  <p><code>Edit Enemy Types</code> → select type → attack editor → <em>Add attack</em> → set type
+  <code>Ranged</code>, then set damage, range (trigger distance), cooldown, projectile speed, and an
+  <code>ammo sprite id</code>. Enemy projectiles damage the player on hit.</p>
+</div>
+
+<div class="recipe" id="recipe-killquest">
+  <h4>R6. Make a “kill N enemies” quest (e.g. shoot 12 crows for Grandma)</h4>
+  <ol>
+    <li><strong>Quest State</strong> tab → add an integer variable, e.g. <code>Crows_Killed</code> (default 0), and a
+    boolean like <code>Crow_Quest_Done</code>.</li>
+    <li><code>Edit Enemy Types</code> → the crow type → set <code>Kill counter var</code> = <code>Crows_Killed</code>,
+    <code>+amt</code> = 1. Every crow death now increments it.</li>
+    <li>Place the quest-giver NPC → <code>Edit Instance Dialogue</code>. Add a <strong>Condition</strong> node:
+    <code>Crows_Killed &ge; 12</code>. On the “not yet” branch play reminder dialogue; on the “done” branch play
+    completion dialogue plus an <strong>Action</strong> node that sets <code>Crow_Quest_Done = true</code> and gives
+    the reward item.</li>
+  </ol>
+  <p>Because everything reads/writes the same state registry, the counter persists and the dialogue branches react to
+  it automatically. Nothing about “crows” is hard-coded — use any variable, threshold, enemy, and reward.</p>
+</div>
+
+<div class="recipe" id="recipe-respawn">
+  <h4>R7. Make defeated enemies stay dead — or respawn</h4>
+  <p>Staying dead is the default (persisted in <code>save.adstate</code>). To make an enemy respawn, enable the
+  placement’s <code>respawn</code> flag in <code>Edit Enemies</code>, or the screen’s <em>respawn enemies</em> flag.
+  While iterating in the editor, use <code>Play Selected Screen</code> / <code>Play From Last Entry</code> (fresh
+  launches) so your placed enemies always appear regardless of past kills.</p>
+</div>
+
+<div class="recipe" id="recipe-enemies-not-appearing">
+  <h4>R8. My newly-placed enemies don’t appear in game</h4>
+  <p>Most likely they share ids with enemies already recorded as defeated in <code>save.adstate</code>, so the
+  persistence filter hides them. Launch with <code>Play Selected Screen</code> (fresh — ignores the save), give
+  placements unique ids, or delete <code>projects/&lt;project&gt;/assets/game/save.adstate</code> to clear progress.</p>
+</div>
+
+<div class="recipe" id="recipe-shop">
+  <h4>R9. Make a shop NPC</h4>
+  <p><strong>Whether an NPC is a shop is a property of its NPC <em>type</em>, not the placement.</strong> The runtime
+  reads <code>interactionMode = type.defaultInteraction</code>; there is <em>no per-placement interaction override</em>.
+  A placement can only override the shop <em>stock</em> (<code>shopInventoryOverride</code>), never turn a non-shop
+  type into a shop.</p>
+  <p>So:</p>
+  <ul>
+    <li><strong>Set up the shop on a type:</strong> <code>Edit NPC Types</code> → select/create a type → set
+    <code>default interaction</code> = <strong>Shop</strong> → add inventory rows (project item id from the Items tab,
+    buy price, sell price, stock count, unlimited flag).</li>
+    <li><strong>Place it:</strong> <code>Edit NPCs</code> → place an instance of that Shop type. You may override its
+    stock per instance for a one-off shop, but the type must already be Shop.</li>
+    <li><strong>Don’t reuse a Talk/Quest type</strong> for a single shop NPC — changing that type to Shop makes
+    <em>every</em> instance of it a shop. Create a dedicated Shop type instead.</li>
+  </ul>
+  <p>In game, interacting opens a buy/sell screen; the player spends/earns <code>Money</code> and limited stock
+  decrements on buy / increments when sold back.</p>
+  <div class="note"><strong>Common mistake:</strong> setting a shop stock override on a placement whose type is
+  <code>Talk</code>. The stock is saved but ignored — the NPC stays a talker (and if it also has no dialogue/graph it
+  becomes non-interactive entirely). Fix by pointing the placement at a type whose interaction is Shop.</div>
+</div>
+
+<div class="recipe" id="recipe-dialogue">
+  <h4>R10. Make branching dialogue / a choice</h4>
+  <p>Place an NPC → <code>Edit Instance Dialogue</code>. Build the graph: <strong>Start</strong> → <strong>Dialogue</strong>
+  nodes for lines, <strong>Choice</strong> nodes for player responses, <strong>Condition</strong> nodes to branch on
+  state/inventory/money, <strong>Action</strong> nodes for effects (give/take item or money, set int/bool, heal/damage,
+  move/hide/show/follow NPC, set animation, start/complete quest), and <strong>End</strong>. Use <em>Validate</em> to
+  catch broken links and <em>Simulate</em> to walk the graph.</p>
+</div>
+
+<div class="recipe" id="recipe-pickup">
+  <h4>R11. Place an item / weapon / health pickup on a screen</h4>
+  <p>Define the item in the <strong>Items</strong> tab (or use a built-in pickup type). Screens → select screen →
+  <code>Edit Items</code> → place the pickup on the canvas. Walking over it collects it: weapons equip, ammo fills the
+  pool, health restores HP, and project items go to the inventory + write ownership to the state registry.</p>
+</div>
+
+<div class="recipe" id="recipe-playable">
+  <h4>R12. Choose the playable character / edit its sprite</h4>
+  <p>Characters tab → select a character → tick <em>Playable Character</em> (only one at a time). Click
+  <code>Edit Sprite</code> to open its sprite sheet; assign frames with action types <code>idle</code>/<code>walk</code>
+  /<code>attack_1</code>/etc. and facing directions. <code>Return to Character</code> saves and refreshes assignments.</p>
+</div>
+
+<div class="recipe" id="recipe-attack-anim">
+  <h4>R13. Make attack / hurt / death animations show up</h4>
+  <p>In the Sprite Editor add frames labelled with the matching action type: player melee uses <code>attack_1</code>,
+  ranged uses <code>cast</code>, taking damage uses <code>hit_react</code>, dying uses <code>death</code>; enemies use
+  <code>hurt</code> and <code>dead</code>. The runtime switches action state automatically — you only need to supply
+  frames with the right label (and optional per-direction variants).</p>
+</div>
+
+<div class="recipe" id="recipe-link-screens">
+  <h4>R14. Add a new screen and link it</h4>
+  <p>Screens tab → select the source screen → use the directional (N/S/E/W) controls to create/select a neighbour;
+  links are written reciprocally. Paint its graphics with <code>Edit Screen Graphics</code> and edit its collision in
+  Map Logic.</p>
+</div>
+
+<div class="recipe" id="recipe-test-screen">
+  <h4>R15. Quickly test the screen I’m editing</h4>
+  <p>Select the screen in the Screens tab and press <code>Play Selected Screen</code>. It launches fresh on that
+  screen with full HP and all placed enemies present, without touching your save. <code>Play From Last Entry</code>
+  resumes where you last entered a screen (needs at least one prior play so a checkpoint exists).</p>
+</div>
+
+<div class="recipe" id="recipe-music">
+  <h4>R16. Tune the combat “feel” globally</h4>
+  <p>Per-type values (knockback resist, hitstun, aggro) are authored in <em>Edit Enemy Types</em>. Global feel —
+  knockback strength, melee windup/active-window timing, rebound restitution, hit-flash duration, invulnerability
+  frames — are constants at the top of <code>src/game/engine.cpp</code> (e.g. <code>kMeleeWindupSeconds</code>,
+  <code>kEnemyKnockbackBasePxPerSecond</code>, <code>kProjectileReboundRestitution</code>) and require a rebuild.</p>
+</div>
+
+<div class="recipe" id="recipe-not-appearing">
+  <h4>R17. A placed NPC/enemy doesn’t appear, or doesn’t react</h4>
+  <p>Work through these in order — they cover almost every case:</p>
+  <ol>
+    <li><strong>The placement wasn’t saved.</strong> Creating a <em>type</em> (in <code>Edit Enemy Types</code> /
+    <code>Edit NPC Types</code>) does not put anything on a screen. You must place an <em>instance</em>
+    (<code>Edit Enemies</code> / <code>Edit NPCs</code>, in “Place” mode) <em>and save the chapter</em>. Verify a
+    <code>npc &lt;id&gt; &lt;typeId&gt; …</code> / <code>enemy …</code> line exists for that screen after saving.</li>
+    <li><strong>Sprite id case / name mismatch.</strong> The runtime looks up
+    <code>assets/game/sprites/&lt;spriteId&gt;.sprite.json</code> and the filesystem is case-sensitive. If the type’s
+    sprite id is <code>Silas</code> but the file is <code>silas.sprite.json</code>, nothing draws. Make the sprite id
+    match the file exactly (lowercase/uppercase included). Note sprite id takes precedence over characterId; characterId
+    is only used as a fallback when sprite id is empty, and it resolves through
+    <code>assets/game/characters/&lt;characterId&gt;.adcharacter</code> (which must exist).</li>
+    <li><strong>It appears but won’t interact (NPCs).</strong> Interaction is manual: stand close enough for the green
+    prompt to show, then press <span class="kbd">E</span>. The default <em>interaction radius</em> (24px) is small and
+    measured center-to-center — raise it (~40–48) in <code>Edit NPCs</code> if the prompt never appears. Also confirm
+    the NPC is actually interactable: a <code>Talk</code>/<code>Quest</code> NPC needs a dialogue graph or fallback
+    lines, and a shop needs its <em>type</em>’s interaction set to Shop (see <a href="#recipe-shop">R9</a>) — a
+    placement-only stock override on a Talk type stays non-interactive.</li>
+    <li><strong>Enemy hidden by the defeated-enemy save.</strong> See <a href="#recipe-enemies-not-appearing">R8</a> —
+    use a fresh test launch or clear <code>save.adstate</code>.</li>
+    <li><strong>Walled off.</strong> Make sure the player can actually reach within the interaction radius; an NPC
+    boxed in by solid mid-layer tiles can’t be approached.</li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="controls">7. Runtime controls</h2>
+<table>
+  <tr><th>Action</th><th>Keyboard</th><th>Gamepad</th></tr>
+  <tr><td>Move / menu navigate</td><td>WASD or Arrows</td><td>D-pad / left stick</td></tr>
+  <tr><td>Interact / confirm / use</td><td><span class="kbd">E</span></td><td>South face button</td></tr>
+  <tr><td>Melee attack</td><td><span class="kbd">Z</span></td><td>West face button</td></tr>
+  <tr><td>Ranged attack</td><td><span class="kbd">X</span></td><td>East face button</td></tr>
+  <tr><td>Toggle inventory</td><td><span class="kbd">I</span></td><td>North / Select / Start</td></tr>
+  <tr><td>Scroll dialogue / select response</td><td>Up/Down or W/S</td><td>D-pad / left stick</td></tr>
+  <tr><td>Quit the game window</td><td><span class="kbd">Esc</span></td><td>—</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="glossary">8. Glossary</h2>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td>Project</td><td>An isolated game under <code>projects/&lt;project&gt;/</code> with its own assets and library.</td></tr>
+  <tr><td>Chapter</td><td>A grid of linked screens; saved as <code>.adchapter</code>.</td></tr>
+  <tr><td>Screen</td><td>One 48&times;32-tile playfield with a tile map (<code>.admap</code>) and N/S/E/W links.</td></tr>
+  <tr><td>Project library</td><td><code>project.adgame</code>: reusable characters, enemy types, NPC types, weapons, items, quest variables.</td></tr>
+  <tr><td>EnemyType</td><td>Reusable enemy definition (sprite, HP, hitbox, speed, attacks, knockback/hitstun/aggro, kill counter).</td></tr>
+  <tr><td>NpcTypeDef</td><td>Reusable NPC definition (sprite/character, movement, interaction mode, dialogue, shop).</td></tr>
+  <tr><td>WeaponDef</td><td>Melee or ranged weapon; ranged ones carry projectile + wall-behavior data.</td></tr>
+  <tr><td>ItemDef</td><td>Project-wide item definition (category, sprite, value, stackable).</td></tr>
+  <tr><td>State variable</td><td>Designer-named integer/boolean/item in the game state registry; drives quests &amp; dialogue.</td></tr>
+  <tr><td>Dialogue graph</td><td>Chapter-scoped node graph for an NPC conversation (<code>.addialogue</code>).</td></tr>
+  <tr><td>Checkpoint</td><td><code>assets/game/test_checkpoint</code>: last-entered screen + position, used by “Play From Last Entry”.</td></tr>
+  <tr><td>save.adstate</td><td>Persisted runtime progress: ints, bools, owned items, defeated enemies.</td></tr>
+</table>
+
+<footer>
+  <p>Adventure RPG Engine editor manual. Authoritative feature sources: <code>RPG_Engine_Specification.md</code> and
+  <code>code_base.md</code> at the repository root. If a described control or field is missing, the build may predate
+  it — verify against the current editor.</p>
+</footer>
+
+</div>
+</body>
+</html>

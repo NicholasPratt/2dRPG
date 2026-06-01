@@ -328,6 +328,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                 switch (pickupTypeValue) {
                     case 1: item.pickupType = ItemPickupType::Ammo; break;
                     case 2: item.pickupType = ItemPickupType::Health; break;
+                    case 3: item.pickupType = ItemPickupType::ProjectItem; break;
                     default: item.pickupType = ItemPickupType::Weapon; break;
                 }
                 loaded.items.push_back(item);

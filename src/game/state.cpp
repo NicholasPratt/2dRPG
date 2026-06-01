@@ -100,11 +100,24 @@ void GameState::takeItem(const std::string& id)
     items_.erase(id);
 }
 
+bool GameState::isEnemyDefeated(const std::string& key) const
+{
+    return defeatedEnemies_.find(key) != defeatedEnemies_.end();
+}
+
+void GameState::markEnemyDefeated(const std::string& key)
+{
+    if (!key.empty()) {
+        defeatedEnemies_.insert(key);
+    }
+}
+
 void GameState::clear()
 {
     ints_.clear();
     bools_.clear();
     items_.clear();
+    defeatedEnemies_.clear();
 }
 
 bool saveGameState(const std::filesystem::path& path, const GameState& state, std::string* errorMessage)
@@ -139,7 +152,7 @@ bool saveGameState(const std::filesystem::path& path, const GameState& state, st
         return false;
     }
 
-    output << "ADSTATE 1\n";
+    output << "ADSTATE 2\n";
 
     const std::vector<std::string> intKeys = sortedKeys(state.ints());
     output << "ints " << intKeys.size() << "\n";
@@ -159,6 +172,12 @@ bool saveGameState(const std::filesystem::path& path, const GameState& state, st
         output << "item " << id << "\n";
     }
 
+    const std::vector<std::string> defeatedKeys = sortedItems(state.defeatedEnemies());
+    output << "defeated " << defeatedKeys.size() << "\n";
+    for (const std::string& key : defeatedKeys) {
+        output << "defeated_enemy " << key << "\n";
+    }
+
     output << "end\n";
     return static_cast<bool>(output);
 }
@@ -174,7 +193,7 @@ bool loadGameState(const std::filesystem::path& path, GameState& state, std::str
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADSTATE" || version != 1) {
+    if (magic != "ADSTATE" || version < 1 || version > 2) {
         setError(errorMessage, "Unsupported game state file.");
         return false;
     }
@@ -182,9 +201,13 @@ bool loadGameState(const std::filesystem::path& path, GameState& state, std::str
     GameState loaded;
     std::string key;
     while (input >> key) {
-        if (key == "ints" || key == "bools" || key == "items") {
+        if (key == "ints" || key == "bools" || key == "items" || key == "defeated") {
             std::size_t ignoredCount = 0;
             input >> ignoredCount;
+        } else if (key == "defeated_enemy") {
+            std::string enemyKey;
+            input >> enemyKey;
+            loaded.markEnemyDefeated(enemyKey);
         } else if (key == "int") {
             std::string id;
             int value = 0;

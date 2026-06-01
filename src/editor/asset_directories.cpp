@@ -62,6 +62,11 @@ std::filesystem::path AssetDirectories::gamePathPath() const
     return projectRoot / gamePaths;
 }
 
+std::filesystem::path AssetDirectories::gameDialoguePath() const
+{
+    return projectRoot / gameDialogue;
+}
+
 std::filesystem::path AssetDirectories::gameFontPath() const
 {
     return projectRoot / gameFonts;

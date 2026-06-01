@@ -20,6 +20,7 @@ enum class ItemPickupType {
     Weapon = 0,
     Ammo = 1,
     Health = 2,
+    ProjectItem = 3,
 };
 
 struct MapItemPlacement {

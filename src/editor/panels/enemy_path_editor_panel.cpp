@@ -607,6 +607,46 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Minimum seconds between contact damage hits");
 
+    // Hit reaction & AI (action-RPG feel)
+    ImGui::Separator();
+    ImGui::TextDisabled("Hit Reaction & AI");
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputFloat("Knockback resist##kbr", &type.knockbackResistance, 0.05f, 0.2f, "%.2f")) {
+        type.knockbackResistance = std::clamp(type.knockbackResistance, 0.0f, 1.0f);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = full knockback when hit, 1 = immovable");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputFloat("Hitstun (s)##hs", &type.hitstunSeconds, 0.02f, 0.1f, "%.2f")) {
+        type.hitstunSeconds = std::clamp(type.hitstunSeconds, 0.0f, 5.0f);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stagger duration after being hit (cannot move or attack)");
+
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputFloat("Aggro range (px)##agr", &type.aggroRange, 4.0f, 16.0f, "%.0f")) {
+        type.aggroRange = std::clamp(type.aggroRange, 0.0f, 2048.0f);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = follow waypoints only; >0 = chase the player within this radius");
+
+    char killVarBuf[64]{};
+    std::memcpy(killVarBuf, type.killVariable.data(), std::min(type.killVariable.size(), sizeof(killVarBuf) - 1));
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::InputText("Kill counter var##kv", killVarBuf, sizeof(killVarBuf))) {
+        type.killVariable = killVarBuf;
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("State variable incremented when this enemy dies (e.g. Crows_Killed)");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(70.0f);
+    if (ImGui::InputInt("+amt##kva", &type.killAmount)) {
+        type.killAmount = std::clamp(type.killAmount, 1, 9999);
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Amount added to the kill counter per death");
+
     ImGui::EndGroup();
 
     // Below both columns: attack editor

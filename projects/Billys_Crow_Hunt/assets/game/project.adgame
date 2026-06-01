@@ -1,4 +1,4 @@
-ADGAME 9
+ADGAME 13
 id game
 playable billy
 characters 2
@@ -6,18 +6,27 @@ character billy
 character grandma_spelling
 chapters 1
 chapter Farm_House
-enemy_types 1
-enemy_type enemy_1 enemy_1 1 1 12 12 1 64 0
+enemy_types 2
+enemy_type enemy_1 enemy_1 1 1 15 15 1 64 0 0.18 8 - 1 1
+enemy_attack 1 1 32 1 120 attack_1 -
+enemy_type wevfer enemy_type_2 1 1 30 29 1 33 0 0.18 60 - 1 1
+enemy_attack 1 1 32 1 120 attack_1 -
 weapon_defs 2
-weapon_def Pocketknife 0 22 107 0.5 200 Pocketknife - - 1
-weapon_def slingshot 1 9 293 0.59 200 slingshot rock - 1
-starting_weapon slingshot
+weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0
+weapon_def slingshot 1 9 293 0.59 200 slingshot rock - 1 0
+item_defs 2
+item_def coins "Coins" 4 coin 1 1 1 -
+item_def ss_rock "Slingshot Rock" 1 rock ss_rock 1 1 -
+starting_weapon Pocketknife
 font "Roboto.ttf"
-state_defs 1
+state_defs 2
 state_def Crows_killed 0 0 0
+state_def player_coins 0 0 0
 effect_defs 1
 effect_def 5crowsdead 1 Crows_killed 5 1
-npc_types 1
-npc_type Fred Dhag - 0 1 15 - 1
+npc_types 2
+npc_type Fred Dhag - 0 1 15 - 1 0
 dl "" "Howzit going young fella!"
+npc_type Merchantile silas silas 0 2 32 - 0 1
+shop_item ss_rock 1 1 1 1
 end

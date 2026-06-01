@@ -38,12 +38,14 @@ struct EditorContext {
     std::string selectedScreenMapId;
     std::string requestedChapterSwitchId;
     std::string requestedSpriteReference;
+    std::string requestedDialogueGraphId;
     bool dirty = false;
     bool requestEditScreenGraphics = false;
     bool requestEditScreenMusic = false;
     bool requestEditEnemies = false;
     bool requestEditEnemyTypes = false;
     bool requestEditSprite = false;
+    bool requestEditDialogueGraph = false;
     bool requestChapterSwitch = false;
     std::vector<TilePaletteEntry> tilePalette;
     std::vector<ChapterScreenEntry> chapterScreens;
@@ -51,6 +53,7 @@ struct EditorContext {
     std::string selectedScreenEnemiesOwnerId;
     std::vector<game::EnemyType> enemyTypes;
     std::vector<game::WeaponDef> weaponDefs;
+    std::vector<game::ItemDef> itemDefs;
     std::vector<game::StateVariableDef> stateVariables;
     std::vector<game::GameEffectDef> effectDefs;
     std::string startingWeaponId;

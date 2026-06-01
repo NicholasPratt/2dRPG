@@ -1,4 +1,4 @@
-ADCHAPTER 9
+ADCHAPTER 10
 id Farm_House
 start screen_1
 playable billy
@@ -34,16 +34,16 @@ wp 704 256 0 0 -1 -
 wp 224 320 0 0 -1 -
 wp 384 112 0 0 -1 -
 npcs 3
-npc npc_1 Fred 64 64 0 64 24 1 1 32 - 4 1
+npc npc_1 Fred 64 64 0 64 24 1 1 32 - 4 1 0
 wp 64 64 0 0 -1 -
 wp 248 72 0 0 -1 -
 wp 136 152 0 0 -1 -
 wp 104 152 0 0 -1 -
 dl "" "There's a lot of crows about!"
-npc npc_2 Fred 568 104 0 64 24 0 1 15 - 1 1
+npc npc_2 Fred 568 104 0 64 24 0 1 15 - 1 1 0
 wp 568 104 0 0 -1 -
 dl "" "You Should Find Grandma Spelling, She'll know what to do!"
-npc Dhag1 Fred 424 344 0 64 24 0 1 15 - 1 1
+npc Dhag1 Fred 424 344 0 64 24 0 1 15 - 1 1 0
 wp 424 344 0 0 -1 -
 dl "" "I find crows a bit scary..."
 screen screen_2 screen_2_map -1 0
@@ -57,11 +57,71 @@ links - screen_4 - screen_1
 respawn 0
 music "assets/game/music/merrydigging.ogg" 1
 enemies 0
-npcs 0
+npcs 3
+npc npc_1 Fred 296 280 2 64 24 0 1 15 screen_3_npc_1_dialogue 2 1 0
+wp 296 280 0 0 -1 -
+wp 488 280 0 0 -1 -
+dl "" "Hello!"
+npc npc_2 Fred 184 104 0 64 24 0 1 15 screen_3_npc_2_dialogue 1 0 0
+wp 184 104 0 0 -1 -
+npc npc_4 Merchantile 616 168 0 64 58 0 1 32 - 1 0 0
+wp 616 168 0 0 -1 -
 screen screen_4 screen_4_map 1 1
 links screen_3 - - -
 respawn 0
 music "-" 1
-enemies 0
+enemies 9
+enemy enemy_1 wevfer 1 0 64 1 0 0 6
+wp 144 112 0 0 -1 -
+wp 352 112 0 0 -1 -
+wp 528 240 0 0 -1 -
+wp 80 224 0 0 -1 -
+wp 320 64 0 0 -1 -
+wp 64 256 0 0 -1 -
+enemy enemy_2 wevfer 1 0 64 1 0 0 3
+wp 416 144 0 0 -1 -
+wp 272 160 0 0 -1 -
+wp 64 256 0 0 -1 -
+enemy enemy_3 wevfer 1 1 64 1 0 0 4
+wp 304 256 0 0 -1 -
+wp 416 144 0 0 -1 -
+wp 272 176 0 0 -1 -
+wp 160 192 0 0 -1 -
+enemy enemy_4 wevfer 1 1 64 1 0 0 4
+wp 272 208 0 0 -1 -
+wp 464 48 0 0 -1 -
+wp 496 176 0 0 -1 -
+wp 496 288 0 0 -1 -
+enemy enemy_5 enemy_1 1 0 64 1 0 0 5
+wp 320 64 0 0 -1 -
+wp 128 176 0 0 -1 -
+wp 224 240 0 0 -1 -
+wp 464 288 0 0 -1 -
+wp 480 160 0 0 -1 -
+enemy enemy_6 enemy_1 1 1 64 1 0 0 4
+wp 144 240 0 0 -1 -
+wp 144 192 0 0 -1 -
+wp 368 160 0 0 -1 -
+wp 416 224 0 0 -1 -
+enemy enemy_7 enemy_1 1 1 64 1 0 0 5
+wp 464 240 0 0 -1 -
+wp 208 176 0 0 -1 -
+wp 112 240 0 0 -1 -
+wp 400 288 0 0 -1 -
+wp 464 128 0 0 -1 -
+enemy enemy_8 enemy_1 1 1 64 1 0 0 6
+wp 464 48 0 0 -1 -
+wp 208 176 0 0 -1 -
+wp 400 240 0 0 -1 -
+wp 544 160 0 0 -1 -
+wp 208 32 0 0 -1 -
+wp 176 128 0 0 -1 -
+enemy enemy_9 enemy_1 1 1 64 1 0 0 6
+wp 176 288 0 0 -1 -
+wp 240 160 0 0 -1 -
+wp 400 224 0 0 -1 -
+wp 480 192 0 0 -1 -
+wp 416 112 0 0 -1 -
+wp 320 96 0 0 -1 -
 npcs 0
 end

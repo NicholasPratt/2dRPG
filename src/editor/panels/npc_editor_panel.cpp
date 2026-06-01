@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <cstdint>
 #include <fstream>
@@ -80,6 +81,21 @@ bool editString(const char* label, std::string& value)
         return true;
     }
     return false;
+}
+
+std::string graphIdForPlacement(const EditorContext& context, const std::string& npcId)
+{
+    std::string id = context.selectedScreenId.empty() ? "screen" : context.selectedScreenId;
+    id += "_";
+    id += npcId.empty() ? "npc" : npcId;
+    id += "_dialogue";
+    for (char& c : id) {
+        const unsigned char ch = static_cast<unsigned char>(c);
+        if (!std::isalnum(ch) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    return id;
 }
 
 std::filesystem::path characterSpriteReference(const EditorContext& context, const std::string& characterId)
@@ -245,6 +261,18 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
         writeCurrentPlacement(context);
     }
 
+    if (ImGui::InputText("Graph Override", graphId_.data(), graphId_.size())) {
+        writeCurrentPlacement(context);
+    }
+    if (ImGui::Button("Edit Instance Dialogue", ImVec2(-1.0f, 22.0f))) {
+        if (graphId_.data()[0] == '\0') {
+            copyToBuffer(graphId_, graphIdForPlacement(context, placementId_.data()));
+            writeCurrentPlacement(context);
+        }
+        context.requestedDialogueGraphId = graphId_.data();
+        context.requestEditDialogueGraph = true;
+    }
+
     if (ImGui::SliderFloat("Awareness", &awarenessRadius_, 0.0f, 256.0f, "%.0f px")) {
         writeCurrentPlacement(context);
     }
@@ -294,6 +322,67 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
     }
     if (ImGui::Button("+ Dialogue Line", ImVec2(-1.0f, 22.0f))) {
         dialogueLines_.push_back({"", "Hello!"});
+        writeCurrentPlacement(context);
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Shop Override");
+    const game::NpcTypeDef* selectedType = nullptr;
+    if (selectedType_ >= 0 && selectedType_ < static_cast<int>(context.npcTypes.size())) {
+        selectedType = &context.npcTypes[static_cast<std::size_t>(selectedType_)];
+    }
+    if (selectedType == nullptr || selectedType->defaultInteraction != game::NpcInteractionMode::Shop) {
+        ImGui::TextDisabled("Selected NPC type is not a shop.");
+    }
+    if (shopInventoryOverride_.empty()) {
+        ImGui::TextDisabled("Using project NPC type stock.");
+        if (selectedType != nullptr && !selectedType->shopInventory.empty() &&
+            ImGui::Button("Copy Type Stock", ImVec2(-1.0f, 22.0f))) {
+            shopInventoryOverride_ = selectedType->shopInventory;
+            writeCurrentPlacement(context);
+        }
+    }
+    for (int i = 0; i < static_cast<int>(shopInventoryOverride_.size()); ++i) {
+        ImGui::PushID(6000 + i);
+        game::ShopItemDef& shopItem = shopInventoryOverride_[static_cast<std::size_t>(i)];
+        const char* preview = shopItem.itemId.empty() ? "(choose item)" : shopItem.itemId.c_str();
+        if (ImGui::BeginCombo("Item", preview)) {
+            for (const game::ItemDef& item : context.itemDefs) {
+                if (ImGui::Selectable(item.id.c_str(), item.id == shopItem.itemId)) {
+                    shopItem.itemId = item.id;
+                    if (shopItem.buyPrice <= 1) { shopItem.buyPrice = std::max(1, item.value); }
+                    if (shopItem.sellPrice <= 1) { shopItem.sellPrice = std::max(1, item.value / 2); }
+                    writeCurrentPlacement(context);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (editString("Item ID", shopItem.itemId)) { writeCurrentPlacement(context); }
+        if (ImGui::DragInt("Buy", &shopItem.buyPrice, 1.0f, 0, 999999)) { writeCurrentPlacement(context); }
+        if (ImGui::DragInt("Sell", &shopItem.sellPrice, 1.0f, 0, 999999)) { writeCurrentPlacement(context); }
+        if (ImGui::Checkbox("Unlimited", &shopItem.unlimited)) { writeCurrentPlacement(context); }
+        if (!shopItem.unlimited && ImGui::DragInt("Stock", &shopItem.quantity, 1.0f, 0, 999999)) { writeCurrentPlacement(context); }
+        if (ImGui::Button("Remove")) {
+            shopInventoryOverride_.erase(shopInventoryOverride_.begin() + i);
+            writeCurrentPlacement(context);
+            ImGui::PopID();
+            break;
+        }
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+    if (ImGui::Button("+ Override Shop Item", ImVec2(-1.0f, 22.0f))) {
+        game::ShopItemDef item;
+        if (!context.itemDefs.empty()) {
+            item.itemId = context.itemDefs.front().id;
+            item.buyPrice = std::max(1, context.itemDefs.front().value);
+            item.sellPrice = std::max(1, context.itemDefs.front().value / 2);
+        }
+        shopInventoryOverride_.push_back(std::move(item));
+        writeCurrentPlacement(context);
+    }
+    if (!shopInventoryOverride_.empty() && ImGui::Button("Clear Override", ImVec2(-1.0f, 22.0f))) {
+        shopInventoryOverride_.clear();
         writeCurrentPlacement(context);
     }
 
@@ -594,7 +683,19 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
     game::NpcTypeDef& npc = context.npcTypes[static_cast<std::size_t>(selectedType_)];
 
     if (editString("NPC ID", npc.id)) { context.markDirty(); }
-    if (editString("Character ID", npc.characterId)) { context.markDirty(); }
+    if (ImGui::BeginCombo("Project Character", npc.characterId.empty() ? "-" : npc.characterId.c_str())) {
+        if (ImGui::Selectable("-", npc.characterId.empty())) {
+            npc.characterId.clear();
+            context.markDirty();
+        }
+        for (const std::string& characterId : context.importedCharacterIds) {
+            if (ImGui::Selectable(characterId.c_str(), characterId == npc.characterId)) {
+                npc.characterId = characterId;
+                context.markDirty();
+            }
+        }
+        ImGui::EndCombo();
+    }
     if (editString("Sprite ID Override", npc.spriteId)) { context.markDirty(); }
     ImGui::SameLine();
     if (ImGui::Button("Edit Sprite")) {
@@ -622,6 +723,10 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
         context.markDirty();
     }
     if (editString("Default Graph ID", npc.defaultGraphId)) { context.markDirty(); }
+    if (!npc.defaultGraphId.empty() && ImGui::Button("Open Default Graph")) {
+        context.requestedDialogueGraphId = npc.defaultGraphId;
+        context.requestEditDialogueGraph = true;
+    }
 
     ImGui::Separator();
     ImGui::TextUnformatted("Default Dialogue");
@@ -653,6 +758,55 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
     }
     if (ImGui::Button("+ Add Dialogue Line")) {
         npc.defaultDialogue.push_back({"", "Hello!"});
+        context.markDirty();
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Shop Inventory");
+    if (npc.defaultInteraction != game::NpcInteractionMode::Shop) {
+        ImGui::TextDisabled("Set Default Interaction to Shop to use these items at runtime.");
+    }
+    for (int i = 0; i < static_cast<int>(npc.shopInventory.size()); ++i) {
+        ImGui::PushID(5000 + i);
+        game::ShopItemDef& shopItem = npc.shopInventory[static_cast<std::size_t>(i)];
+        const char* preview = shopItem.itemId.empty() ? "(choose item)" : shopItem.itemId.c_str();
+        if (ImGui::BeginCombo("Item", preview)) {
+            for (const game::ItemDef& item : context.itemDefs) {
+                if (ImGui::Selectable(item.id.c_str(), item.id == shopItem.itemId)) {
+                    shopItem.itemId = item.id;
+                    if (shopItem.buyPrice <= 1) {
+                        shopItem.buyPrice = std::max(1, item.value);
+                    }
+                    if (shopItem.sellPrice <= 1) {
+                        shopItem.sellPrice = std::max(1, item.value / 2);
+                    }
+                    context.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (editString("Item ID", shopItem.itemId)) { context.markDirty(); }
+        if (ImGui::DragInt("Buy Price", &shopItem.buyPrice, 1.0f, 0, 999999)) { context.markDirty(); }
+        if (ImGui::DragInt("Sell Price", &shopItem.sellPrice, 1.0f, 0, 999999)) { context.markDirty(); }
+        if (ImGui::Checkbox("Unlimited", &shopItem.unlimited)) { context.markDirty(); }
+        if (!shopItem.unlimited && ImGui::DragInt("Stock", &shopItem.quantity, 1.0f, 0, 999999)) { context.markDirty(); }
+        if (ImGui::Button("Remove Shop Item")) {
+            npc.shopInventory.erase(npc.shopInventory.begin() + i);
+            context.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+    if (ImGui::Button("+ Add Shop Item")) {
+        game::ShopItemDef item;
+        if (!context.itemDefs.empty()) {
+            item.itemId = context.itemDefs.front().id;
+            item.buyPrice = std::max(1, context.itemDefs.front().value);
+            item.sellPrice = std::max(1, context.itemDefs.front().value / 2);
+        }
+        npc.shopInventory.push_back(std::move(item));
         context.markDirty();
     }
 
@@ -774,6 +928,7 @@ void NpcEditorPanel::selectPlacement(EditorContext& context, int index)
     const game::NpcPlacement& npc = context.selectedScreenNpcs[static_cast<std::size_t>(index)];
     copyToBuffer(placementId_, npc.id);
     copyToBuffer(typeId_, npc.typeId);
+    copyToBuffer(graphId_, npc.graphOverride);
     const auto typeIt = std::find_if(context.npcTypes.begin(), context.npcTypes.end(), [&](const game::NpcTypeDef& type) {
         return type.id == npc.typeId;
     });
@@ -798,6 +953,7 @@ void NpcEditorPanel::selectPlacement(EditorContext& context, int index)
         waypoints_.push_back(std::move(w));
     }
     dialogueLines_ = npc.dialogueOverride;
+    shopInventoryOverride_ = npc.shopInventoryOverride;
     selectedWaypoint_ = -1;
 }
 
@@ -809,6 +965,7 @@ void NpcEditorPanel::writeCurrentPlacement(EditorContext& context)
     game::NpcPlacement& npc = context.selectedScreenNpcs[static_cast<std::size_t>(selectedPlacement_)];
     npc.id = placementId_.data();
     npc.typeId = typeId_.data();
+    npc.graphOverride = graphId_.data();
     npc.facing = facing_;
     npc.awarenessRadius = awarenessRadius_;
     npc.interactionRadius = interactionRadius_;
@@ -832,6 +989,7 @@ void NpcEditorPanel::writeCurrentPlacement(EditorContext& context)
         npc.y = npc.waypoints.front().y;
     }
     npc.dialogueOverride = dialogueLines_;
+    npc.shopInventoryOverride = shopInventoryOverride_;
     context.markDirty();
 }
 

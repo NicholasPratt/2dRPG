@@ -102,5 +102,14 @@ layer 2
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 obstacles 0
-items 0
+items 9
+item item_1 3 coins 1 213.333 104 0 coin
+item item_2 3 coins 1 573.333 86 0 coin
+item item_3 3 coins 1 602.667 188 0 coin
+item item_4 3 coins 1 446 383.333 0 coin
+item item_5 3 coins 1 277.333 469.333 0 coin
+item item_6 3 coins 1 248 257.333 0 coin
+item item_7 3 coins 1 338 263.333 0 coin
+item item_8 3 coins 1 558 246 0 coin
+item item_9 3 coins 1 722 28 0 coin
 end

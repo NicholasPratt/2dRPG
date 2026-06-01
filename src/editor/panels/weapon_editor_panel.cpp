@@ -117,6 +117,9 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
             if (ImGui::DragFloat("Projectile speed", &projectileSpeed_, 1.0f, 50.0f, 2000.0f)) { context.markDirty(); }
             if (ImGui::InputText("Ammo type ID", ammoTypeId_.data(), ammoTypeId_.size())) { context.markDirty(); }
             if (ImGui::DragInt("Ammo per shot", &ammoPerShot_, 0.1f, 1, 100)) { context.markDirty(); }
+            const char* wallItems[] = { "Break (arrow/bullet)", "Rebound (slingshot stone)" };
+            if (ImGui::Combo("On wall hit", &wallBehavior_, wallItems, 2)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Break: projectile vanishes on a wall.\nRebound: bounces, loses energy, then settles on the ground.");
         }
 
         ImGui::Separator();
@@ -202,6 +205,7 @@ void WeaponEditorPanel::syncInspectorFromSelected(const EditorContext& context)
     copyToBuffer(ammoTypeId_, w.ammoTypeId);
     copyToBuffer(ammoSpriteId_, w.ammoSpriteId);
     ammoPerShot_ = w.ammoPerShot;
+    wallBehavior_ = (w.wallBehavior == game::ProjectileWallBehavior::Rebound) ? 1 : 0;
 }
 
 void WeaponEditorPanel::writeInspectorToSelected(EditorContext& context)
@@ -220,6 +224,7 @@ void WeaponEditorPanel::writeInspectorToSelected(EditorContext& context)
     w.ammoTypeId = ammoTypeId_.data();
     w.ammoSpriteId = ammoSpriteId_.data();
     w.ammoPerShot = ammoPerShot_;
+    w.wallBehavior = (wallBehavior_ == 1) ? game::ProjectileWallBehavior::Rebound : game::ProjectileWallBehavior::Break;
 }
 
 } // namespace adventure::editor

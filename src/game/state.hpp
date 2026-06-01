@@ -20,16 +20,22 @@ public:
     void giveItem(const std::string& id);
     void takeItem(const std::string& id);
 
+    // Defeated enemy instances, keyed "<screenId>/<enemyId>" — persists kills across screens/sessions.
+    [[nodiscard]] bool isEnemyDefeated(const std::string& key) const;
+    void markEnemyDefeated(const std::string& key);
+
     void clear();
 
     [[nodiscard]] const std::unordered_map<std::string, int>& ints() const { return ints_; }
     [[nodiscard]] const std::unordered_map<std::string, bool>& bools() const { return bools_; }
     [[nodiscard]] const std::unordered_set<std::string>& items() const { return items_; }
+    [[nodiscard]] const std::unordered_set<std::string>& defeatedEnemies() const { return defeatedEnemies_; }
 
 private:
     std::unordered_map<std::string, int> ints_;
     std::unordered_map<std::string, bool> bools_;
     std::unordered_set<std::string> items_;
+    std::unordered_set<std::string> defeatedEnemies_;
 };
 
 [[nodiscard]] bool saveGameState(const std::filesystem::path& path, const GameState& state, std::string* errorMessage = nullptr);

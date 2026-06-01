@@ -32,6 +32,7 @@ private:
     std::array<char, 64> ammoTypeId_{'\0'};
     std::array<char, 64> ammoSpriteId_{'\0'};
     int ammoPerShot_ = 1;
+    int wallBehavior_ = 0;  // 0=Break, 1=Rebound
 
     void syncInspectorFromSelected(const EditorContext& context);
     void writeInspectorToSelected(EditorContext& context);

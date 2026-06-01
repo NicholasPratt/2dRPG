@@ -1,0 +1,16 @@
+{
+  "id": "coin",
+  "source": "assets/raw/sprites/coin_sheet.png",
+  "canvasSize": [32, 32],
+  "gridSize": [32, 32],
+  "pivot": [16, 16],
+  "frames": [
+    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [32, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [64, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [96, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [128, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [160, 0, 32, 32], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

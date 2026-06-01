@@ -39,6 +39,7 @@ private:
 
     std::array<char, 64> placementId_{'n', 'p', 'c', '_', '1', '\0'};
     std::array<char, 64> typeId_{'n', 'p', 'c', '_', '1', '\0'};
+    std::array<char, 64> graphId_{'\0'};
     std::array<char, 64> mapId_{'\0'};
     int selectedPlacement_ = -1;
     int selectedType_ = 0;
@@ -54,6 +55,7 @@ private:
 
     std::vector<Waypoint> waypoints_;
     std::vector<game::DialogueLine> dialogueLines_;
+    std::vector<game::ShopItemDef> shopInventoryOverride_;
     int selectedWaypoint_ = -1;
     bool dragging_ = false;
     CanvasMode canvasMode_ = CanvasMode::PlaceNpcs;

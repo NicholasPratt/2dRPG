@@ -25,9 +25,13 @@ The goal is to develop a 2D Action RPG engine and integrated development environ
 
 ### 3.3. Combat & Persistence
 - **Action-Oriented:** Real-time, timed combat mechanics. [cite: 1]
-- **Enemy Persistence:** Defeated enemies do not respawn by default unless a "respawn" flag is set. [cite: 1]
+- **Hit Feel (Zelda/Metroidvania):** Player melee uses a windup → active hit window → recovery so timing matters; each swing hits a given enemy once. Damaging an enemy applies knockback (scaled by the enemy type's knockback resistance), a brief hitstun stagger during which it cannot move or attack, and a white hit flash. Taking damage knocks the player back away from the source. Lethal hits transition the enemy to a `dead` animation/fade.
+- **Enemy AI:** Enemy types may define an aggro range; within it the enemy abandons its waypoint path and chases the player. When the player escapes past a hysteresis margin, the enemy walks back to the nearest point on its path and resumes patrol from there (no snapping to a stale waypoint).
+- **Enemy Persistence:** Defeated enemies do not respawn by default unless a "respawn" flag is set. [cite: 1] Defeats are stored in runtime game state (`save.adstate`), filtered out at screen load, and persist across screens and play sessions. Each enemy type can name a state variable to increment on death, feeding quest counters through the shared registry.
 - **Enemy Attack Types:** Each enemy type can define multiple attacks, each with an independently configured attack type: Contact (overlap-based), Melee (range-triggered swing), or Ranged (fires a projectile toward the player). Each attack has its own damage, range, cooldown, projectile speed, ammo sprite ID, and optional animation state.
 - **Player Attacks:** Melee (Z key) sweeps a hitbox in the facing direction with a brief flash. Ranged (X key) fires a projectile using `WeaponDef` data. Both respect per-weapon cooldowns.
+- **Projectiles:** Projectiles know which team fired them — player projectiles damage enemies, enemy projectiles damage the player, both with directional knockback. Each ranged weapon defines a wall-impact behavior: `Break` (the projectile vanishes — arrow, bullet) or `Rebound` (it bounces off the wall, loses energy each bounce, then settles on the ground — slingshot stone).
+- **Minimal Controller Support:** Runtime input is mapped through a shared keyboard/gamepad layer. D-pad or left stick moves and navigates menus, south face button interacts/confirms/uses, west face button performs melee, east face button performs ranged attack, and north face button, Select, or Start toggles inventory.
 
 ### 3.4. Runtime Shell
 - **Executable:** `adventure_game_window` is the current runtime executable.
@@ -48,9 +52,10 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Session Safety:** Exiting the editor or switching chapters must trigger a prompt to save or discard changes. [cite: 1]
 - **Exporting:** Saving a chapter must automatically generate/update PNG sprite sheets for all edited sprites, save dirty screen maps, and export wall/floor paint graphics into game-ready PNGs for every modified screen. [cite: 1]
 - **Dirty-Buffer System:** Both the sprite editor and wall/floor paint panel hold unsaved edits in per-asset in-memory buffers (keyed by asset ID) during the session. Disk writes happen only when the chapter is saved. Switching chapters clears all buffers so data from one chapter cannot bleed into another.
-- **Game Library Save:** Character sheets, enemy types, NPC type definitions, weapon definitions, state variable definitions, and reusable effect definitions are saved as reusable game-library assets. `assets/game/project.adgame` records available character IDs, chapter IDs, enemy type definitions, NPC type definitions, weapon definitions, project state/effect definitions, and the project default playable character. `.adchapter` files record imported character IDs and chapter playable character ID.
+- **Game Library Save:** Character sheets, enemy types, NPC type definitions, weapon definitions, item definitions, state variable definitions, and reusable effect definitions are saved as reusable game-library assets. `assets/game/project.adgame` records available character IDs, chapter IDs, enemy type definitions, NPC type definitions, weapon definitions, item definitions, project state/effect definitions, and the project default playable character. `.adchapter` files record imported character IDs and chapter playable character ID.
 - **Character Management:** The Characters tab exposes Add Character and Delete Character controls in the main character workflow. Deleting a character removes it from the in-memory project list immediately and removes the `.adcharacter` document on save; at least one character is always retained.
 - **Save and Play:** `Chapter > Save and Play Game` and scoped editor `Save and Play` controls save active editor data, then launch the separate `adventure_game_window` runtime executable with the selected chapter path. Runtime asset lookup is derived from that chapter's project folder. Escape closes the game window.
+- **Test Launches:** Alongside Save and Play, `Play Selected Screen` and `Play From Last Entry` start a fresh test run (full HP, all placed enemies present, saved progress left untouched) on, respectively, the screen selected in the editor or the screen the player last entered during play. The runtime records the last-entered screen and entry position to a checkpoint file on each screen crossing so test runs can resume from there.
 - **Direct Runtime Launch:** Opening `adventure_game_window` directly scans `projects/<project>/assets/game/chapters/*.adchapter` plus repository fallback assets and asks the user which project/chapter to load.
 - **State Registry:** Maintains a registry of defeated enemies and handles the "Dirty Flag" system for modified screens.
 
@@ -95,6 +100,7 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 - **Enemy Type Editor:** The `Edit Enemy Types` sub-panel shows:
   - **Left column:** Live sprite preview showing the first idle frame of the type's sprite sheet at pixel scale, with a toggleable red hitbox overlay.
   - **Right column:** Type ID, sprite ID (with Edit Sprite link), max HP, movement speed, hitbox dimensions, and contact damage fields. Both columns use `BeginGroup`/`EndGroup` so text and controls do not overlap.
+  - **Hit Reaction & AI:** Knockback resistance, hitstun duration, aggro range, and a kill-counter variable name + amount.
   - **Attack editor:** Collapsing sections (one per defined attack) expose attack type, damage, range, cooldown, animation state, and ranged-specific fields (projectile speed, ammo sprite ID).
 - **Enemy Screen Context:** When editing enemies for a screen, the editor must show the screen wall map, graphics, features, and grid as context behind the enemy markers and paths.
 - **Enemy Editing Modes:** Adding enemies and editing enemy splines are separate canvas states. Add Enemies mode places/selects/deletes enemy anchors. Edit Splines mode edits the selected enemy's waypoint/spline path.
@@ -116,8 +122,8 @@ NPC interaction is a major engine/editor subsystem and must be designed delibera
 - **Persistence:** Runtime state can be round-tripped through the ADSTATE format. Editor-authored defaults live in project/chapter data; runtime progress belongs in save-game data.
 
 #### 4.5.2. NPC Data Model
-- **NPC Type Definitions:** Reusable `NpcTypeDef` records live in the project game library (`project.adgame`). Each definition stores: id, sprite ID, optional character ID, default movement mode, default interaction mode, default speed, graph ID, and default dialogue lines.
-- **NPC Placements:** Screens can place NPC instances with ID, type ID, map/screen position, facing direction, awareness radius, interaction radius, movement path (inline waypoints), loop flag, speed override, graph override, and dialogue override.
+- **NPC Type Definitions:** Reusable `NpcTypeDef` records live in the project game library (`project.adgame`). Each definition stores: id, optional sprite ID override, optional project-wide character ID, default movement mode, default interaction mode, default speed, optional default graph ID, default fallback dialogue lines, and optional shop inventory rows. Characters and NPC type definitions are project-wide reusable assets.
+- **NPC Placements:** Screens place chapter/screen-specific NPC instances with ID, type ID, map/screen position, facing direction, awareness radius, interaction radius, movement path (inline waypoints), loop flag, speed override, graph override, fallback dialogue override, and optional shop stock override. Placement dialogue graph references point to chapter-specific dialogue graph assets, so an instance can have unique conversation flow without duplicating the reusable NPC type.
 - **NPC vs Enemy:** NPCs are not enemy placements. Enemies prioritize combat/pathing. NPCs prioritize dialogue, scripted movement, player awareness, and stateful interaction.
 - **Player Awareness:** NPCs detect player proximity. When the player enters the awareness radius, the NPC stops patrolling and idles. When the player enters the interaction radius and presses E, dialogue begins.
 
@@ -130,40 +136,47 @@ NPC interaction is a major engine/editor subsystem and must be designed delibera
 
 #### 4.5.4. Conversation and Interaction Runtime
 - **Player Engagement:** When the player enters an NPC interaction radius and presses E, the NPC starts/resumes its dialogue.
-- **Dialogue Presentation:** Dialogue lines display speaker and text in a speech bubble or dialogue box above the NPC.
-- **Branching Dialogue:** Choices and condition nodes will route the graph based on game state, inventory, quest progress, or prior dialogue (planned).
-- **Effects:** Interaction graphs can give/take items, change integers/booleans, start/complete quests, equip or unlock weapons, change NPC movement, and play animations (planned).
+- **Dialogue Presentation:** Dialogue lines display speaker and text in a speech bubble or dialogue box above the NPC. Runtime dialogue boxes have bounded height, wrap long text, and support Up/Down or W/S scrolling for lengthy lines.
+- **Shop Interaction:** NPC types with default interaction set to Shop can define an inventory of project item IDs. Each shop row stores buy price, sell price, finite stock count, and unlimited-stock flag. Interacting with a shop opens a comparison screen showing player money, shop stock, and player inventory. Selecting the shop panel buys from the NPC; selecting the player panel sells to the NPC. Limited stock decreases on buy and increases when the player sells that item back.
+- **Branching Dialogue:** Dialogue graph choices and condition nodes route conversation based on game state, inventory, money, quest flags, or other designer-authored variables.
+- **Player Choice Input:** While a graph presents responses, Up/Down or W/S changes the selected response and E confirms it.
+- **Effects:** Interaction graph action nodes can give/take items, give/take money, change integers/booleans, start/complete quest flags, heal/damage the player, move/hide/show an NPC, make an NPC follow or stop following the player, and change NPC animation state.
 - **Example Quest:** Grandma asks Billy to shoot 12 crows with a slingshot. Each crow death increments a designer-authored counter by 1. Approaching Grandma with that counter below the configured threshold plays reminder dialogue. Approaching with the counter at or above the threshold plays completion dialogue, sets a configured completion flag, and gives the configured reward item.
 - **Example Scope Note:** The Grandma/Billy/crows quest is an example content scenario. The editor must allow the same flow to be built with any designer-defined variable name, threshold, NPC, enemy, item, or reward.
 
 #### 4.5.5. Flow Graph Editor
-- **Graphical Editor:** NPC interaction authoring should use a node/flow diagram editor rather than only text fields.
-- **Node Types:** Planned nodes include `Start`, `Dialogue`, `Choice`, `Condition`, `SetInt`, `AddInt`, `SetBool`, `GiveItem`, `TakeItem`, `StartQuest`, `CompleteQuest`, `PlayAnimation`, `MoveNpc`, `Wait`, and `End`.
-- **Condition Types:** Conditions include integer comparisons using designer-defined variable IDs, boolean checks, item ownership, quest state, weapon ownership/equipped state, and screen/chapter state.
-- **Inspector:** Selecting a node opens an inspector for speaker, dialogue text, variable names, comparison operators, item IDs, movement targets, animation names, and outgoing edge labels.
-- **Validation:** The editor must warn about missing target nodes, missing item IDs, missing variable definitions, unreachable nodes, duplicate start nodes, and graph cycles that cannot exit.
-- **Simulation:** The editor should include a lightweight test/simulate panel where designers can set temporary game state values and preview which dialogue/effects would run.
+- **Graphical Editor:** NPC interaction authoring uses a node/flow diagram editor rather than only text fields. The dialogue editor is opened as a scoped sub-screen from NPC placement so the graph being edited is tied to a specific NPC instance. Reusable NPC types can still provide a default graph ID, but instance-specific conversation is authored through the placement's graph override.
+- **Chapter Scope:** Dialogue graph files are chapter-specific assets stored under `assets/game/dialogue/<chapterId>/<graphId>.addialogue`. Characters and NPC definitions remain project-wide; dialogue trees are chapter content.
+- **Node Types:** Implemented nodes include `Start`, `Dialogue`, `Choice`, `Condition`, `Action`, and `End`. Action rows cover state changes, inventory/money changes, player heal/damage, NPC movement/visibility/following, animation state, and quest flags.
+- **Condition Types:** Conditions include integer comparisons using designer-defined variable IDs, boolean checks, item ownership, and money thresholds.
+- **Inspector and Navigation:** Selecting a node opens an inspector for speaker, dialogue text, variable names, comparison operators, item IDs, movement targets, animation names, and outgoing edges. The editor also includes a node navigator; clicking a canvas node or navigator entry selects it, scrolls the canvas toward it, and resets the inspector to the node editor.
+- **Validation:** The editor warns about missing target nodes, missing item IDs, missing variable definitions, unreachable nodes, duplicate IDs, and empty choice sets.
+- **Simulation:** The editor includes a lightweight simulation panel that walks the graph with project default state and first available choices, showing the dialogue/action path that would run.
 
 #### 4.5.6. Implementation Phases
 1. Add the game state registry and runtime helpers first. **Implemented:** `GameState`, ADSTATE round-trip, ADGAME v4 state/effect definitions, and editor context persistence.
 2. Add NPC definitions, NPC placements, and runtime rendering/placement. **Implemented:** `NpcTypeDef`, `NpcPlacement` in chapter screens, `RuntimeNpcEntity`, `NpcEditorPanel`, runtime movement + awareness + dialogue.
 3. Add interact-near-NPC behavior and simple dialogue script execution. **Implemented:** E key interaction, speech bubble / dialogue box rendering, multi-line sequential dialogue.
 4. Add spline movement upgrades for NPCs, including speed, wait, and animation-per-segment data. **Implemented:** patrol waypoints, wait-at-waypoint, speed override, facing-direction-aware sprite rendering.
-5. Add graph data files and a non-graph runtime executor. *(Planned)*
-6. Build the graphical flow diagram editor on top of the graph data model. *(Planned)*
-7. Integrate quest examples such as Grandma/Billy/crows and validate that enemy death, item rewards, and dialogue branching all use the shared state registry without hard-coded example variable names. *(Planned)*
+5. Add graph data files and a graph runtime executor. **Implemented:** `.addialogue` graph files, `DialogueGraph` load/save, graph node execution, branching choices, conditions, and action effects.
+6. Build the graphical flow diagram editor on top of the graph data model. **Implemented:** scoped NPC dialogue graph editor with canvas nodes, arrows, node picker links, inspector editing, validation, simulation, and node navigation.
+7. Integrate quest examples such as Grandma/Billy/crows and validate that enemy death, item rewards, and dialogue branching all use the shared state registry without hard-coded example variable names. **Implemented (runtime wiring):** each enemy type can name a kill-counter state variable; enemy death increments it through `GameState`, dialogue condition/action nodes read and reward against the same registry, and the counter persists in `save.adstate`. Variable names remain fully designer-authored.
 
 ## 5. Data & Persistence
 - **Asset Storage:** Assets are stored in portable formats (JSON/binary) for engine use. [cite: 1]
 - **Project Folders:** Active projects are stored under `projects/<project>/`. Each project has its own `assets/game/...` and `assets/raw/...` tree. The repo-root `assets/` tree is retained as a fallback/default asset set, but new editor work should live in project folders.
 - **Game Project Library:** `assets/game/project.adgame` stores game-level reusable asset references, currently character IDs, chapter IDs, enemy type definitions (with attack defs), NPC type definitions, weapon definitions, default playable character ID, project state variable definitions, reusable effect definitions, and an optional font path.
 - **Project State and Effects:** `.adgame` v4+ stores designer-authored state variable definitions and reusable effect definitions. Supported variable types are integer, boolean, and item. Supported effect types are set integer, add integer, set boolean, give item, and take item.
+- **Project Item Definitions:** `.adgame` v10 stores project-wide item definitions. Built-in item categories include weapon, ammo, health, mana, currency, key, quest item, consumable, material, and equipment, plus a custom type string for designer-defined categories. Item definitions include display name, sprite ID, target ID, value, and stackable flag.
 - **Enemy Attack Definitions:** `.adgame` v8 adds per-enemy-type attack definition sub-records (`enemy_attack`), each storing attack type, damage, range, cooldown, projectile speed, animation state, and ammo sprite ID.
-- **Runtime Game State:** `.adstate` stores per-playthrough runtime state values: named integer values, named boolean values, and owned item IDs.
+- **Enemy Hit-Reaction & AI Fields:** `.adgame` v12 adds per-enemy-type knockback resistance, hitstun duration, aggro range, and a kill-counter state variable + amount.
+- **Projectile Wall Behavior:** `.adgame` v13 adds a per-weapon projectile wall-impact behavior (break vs rebound) to each `WeaponDef`.
+- **Runtime Game State:** `.adstate` (v2) stores per-playthrough runtime state values: named integer values, named boolean values, owned item IDs, and the set of defeated enemy instances (keyed `"<screenId>/<enemyId>"`). v1 files without the defeated block still load. The runtime save file is `assets/game/save.adstate`.
 - **Screen Tile Maps:** Screen tile data is stored as `.admap` files under `assets/game/maps/`. [cite: 1]
-- **Map Obstacles and Items:** `.admap` v4 stores obstacle rectangles with type, sprite ID, size, and timing data. `.admap` v5 adds weapon/ammo/health item placements. Older `.admap` versions remain loadable.
+- **Map Obstacles and Items:** `.admap` v4 stores obstacle rectangles with type, sprite ID, size, and timing data. `.admap` v5 adds item placements. Placements can use legacy weapon/ammo/health pickup behavior or reference a project-wide item definition. Older `.admap` versions remain loadable.
 - **Chapter Files:** Chapter layout and metadata stored as `.adchapter` files under `assets/game/chapters/`. Current chapter files store screen layout, per-screen enemy placements, per-screen NPC placements, imported character IDs, and chapter playable character ID. [cite: 1]
 - **Character Files:** Reusable character sheets are stored under `assets/game/characters/*.adcharacter`. Character documents store name, bio, base sprite metadata path, playable flag, animation slots, and per-frame animation assignments.
+- **Dialogue Graph Files:** Chapter-specific NPC dialogue trees are stored under `assets/game/dialogue/<chapterId>/*.addialogue`. NPC placements store graph override IDs that reference these files. `NpcTypeDef::defaultGraphId` remains available as a reusable default reference, but dialogue tree authoring is chapter-scoped.
 - **Enemy Placements:** Enemy instance data (typeId, path behavior, waypoints, speed, loop, respawn) is stored per-screen inside `.adchapter` files rather than in separate `.adpath` files for the new enemy type system.
 - **Game-Ready Graphics:** Wall/Floor Paint exports floor, wall, and preview PNGs per screen to both `assets/raw/tilesets/` and `assets/game/tilesets/`, named `<mapId>_floor.png`, `<mapId>_wall.png`, `<mapId>_preview.png`. Writes are deferred until chapter save.
 - **Sprite Sheets:** The sprite editor exports `<id>_sheet.png` and individual `<id>_frame_<n>.png` files to `assets/raw/sprites/`, and metadata to `assets/game/sprites/<id>.sprite.json` on chapter save. Multiple open sprites are buffered in memory and all dirty ones are flushed together.
@@ -176,30 +189,41 @@ Implemented:
 - Chapter, map, tileset, enemy path, and sprite metadata load/save modules in `src/game`.
 - Project-level game library load/save module in `src/game/project.*`.
 - Generic game state registry in `src/game/state.*`, including ADSTATE save/load for named ints, bools, and items.
-- `.adgame` v8 project-level data including state variable definitions, reusable effect definitions, enemy type definitions with per-type attack definitions, NPC type definitions, weapon definitions, and font path.
+- `.adgame` v10 project-level data including state variable definitions, reusable effect definitions, enemy type definitions with per-type attack definitions, NPC type definitions, weapon definitions, item definitions, and font path.
 - Project-folder startup flow in the editor and project/chapter picker in the direct runtime executable.
-- Integrated editor tabs for chapters/screens, maps, wall/floor paint, sprites, tilesets, characters, enemy paths, **weapons**, **NPC types**, and **Quest State** definitions.
+- Integrated editor tabs and scoped sub-screens for chapters/screens, maps, wall/floor paint, sprites, tilesets, characters, enemy paths, **weapons**, **items**, **NPC types**, **NPC instance dialogue graphs**, and **Quest State** definitions.
 - Per-screen wall/floor paint buffers and per-sprite document buffers flushed on chapter save.
 - Character document save/load, playable character selection, sprite frame assignment, and runtime playable-character texture loading.
 - Basic runtime shell with fixed-step update, direct-launch project selection, pre-baked PNG rendering, tile collision, screen-link transitions, playable character rendering, sprite-backed hazards, linear/spline path-following enemies, and contact-damage combat.
-- **Weapon system:** `WeaponDef` data model (melee + ranged) stored in `.adgame` project data. Editor `Weapons` tab to create/edit weapon definitions and set the project starting weapon.
-- **Item placement system:** `MapItemPlacement` (weapon/ammo/health pickups) stored in `.admap` v5 items section. Editor `Edit Items` per-screen canvas to place/delete/configure pickups.
+- **Weapon system:** `WeaponDef` data model (melee + ranged, with per-weapon projectile wall behavior) stored in `.adgame` project data. Editor `Weapons` tab to create/edit weapon definitions, choose projectile wall behavior (break/rebound), and set the project starting weapon.
+- **Project item system:** `ItemDef` records live project-wide in `.adgame` and cover common RPG categories plus custom designer types. The editor `Items` tab creates item definitions, warns about empty/duplicate IDs, and can seed missing common defaults such as gold, keys, quest tokens, potions, herbs, mana orbs, ore, and equipment.
+- **Shop system:** `NpcTypeDef` shop inventory is stored project-wide in `.adgame` v11. Individual NPC placements can override shop stock in `.adchapter` v10. The NPC type editor exposes reusable shop rows, and the NPC placement editor can copy type stock into an instance override for one-off shops.
+- **Item placement system:** `MapItemPlacement` pickups are stored in `.admap` v5 items section. Editor `Edit Items` per-screen canvas can place/delete/configure legacy weapon/ammo/health pickups or project item pickups that reference `ItemDef` assets.
 - **Runtime attack:** Z key for melee (hitbox sweep in facing direction, brief flash), X key for ranged (projectile with configurable speed/range). Both keys respect per-weapon cooldowns. Melee shows a direction-matched yellow flash; projectiles render as sprites or yellow rectangles.
-- **Runtime item collection:** player walks over item pickup to collect it. Weapon pickup equips the weapon to the melee/ranged slot. Ammo pickup adds to the ammo pool. Health pickup restores HP.
-- **HUD additions:** melee-weapon indicator bar and ammo pool bar rendered above the health hearts.
+- **Runtime item collection:** player walks over item pickup to collect it. Legacy weapon pickup equips the weapon to the melee/ranged slot, ammo pickup adds to the ammo pool, and health pickup restores HP immediately. Project item pickups add to the inventory and write item ownership to `GameState`; currency also updates the configured money variable and ammo items can fill ammo pools.
+- **HUD additions:** melee-weapon indicator bar and ammo pool bar rendered above the health hearts. Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay that renders item sprites as pictograms and shows stack/value counts as pictogram/number pairs. While open, Up/Down, W/S, D-pad, or left stick selects an item and E/Space/Enter/controller south face button uses usable items such as health, mana, ammo, consumables, and weapon equipment.
 - **Enemy type system:** `EnemyType` definitions stored project-wide in `.adgame`. Each type has id, sprite, health, hitbox, speed, contact damage, and any number of `EnemyAttackDef` entries (Contact / Melee / Ranged). The runtime fires each attack independently with per-attack cooldowns. Ranged attacks spawn projectiles toward the player; Melee attacks deal damage within range.
 - **Enemy type editor:** Sprite preview panel shows the first idle frame of the enemy sprite with a toggleable hitbox overlay. Two-column layout (preview left, stats right) uses `BeginGroup`/`EndGroup` so text and controls are properly separated. Attack editor shows per-attack collapsing sections.
 - **Direction-aware player animation:** player sprite loaded from the character's `.sprite.json`. Action state (`idle`/`walk`/attack states) drives frame selection; 8-directional facing (`E/W/N/S/NE/NW/SE/SW`) selects directional frame subsets. W/NW/SW auto-mirror from E/NE/SE via horizontal texture flip. Animation timer resets on action-state change.
 - **Direction-aware enemy animation:** `RuntimePathEntity` tracks `facingX/facingY` updated each movement step (tangent-sampled for spline paths). `spriteFrameForEntity` mirrors `playerSpriteFrame` logic with direction filtering and `bool& flipHorizontal` output. The enemy render loop applies the flip.
 - **Direction-aware NPC animation:** `RuntimeNpcEntity` tracks `facingX/facingY` updated while patrolling. `spriteFrameForNpc` applies the same direction + mirror logic using `npc.actionType` and `npc.animSeconds`. The NPC render loop applies the flip.
-- **NPC runtime:** `RuntimeNpcEntity` with patrol movement (waypoints, wait, speed override), player awareness radius, interaction radius, E key dialogue trigger, speech bubble / dialogue box rendering, and sequential multi-line dialogue. NPCs pause patrol and idle when the player is within awareness radius.
+- **NPC runtime:** `RuntimeNpcEntity` with patrol movement (waypoints, wait, speed override), player awareness radius, interaction radius, E key dialogue trigger, speech bubble / dialogue box rendering, bounded/scrollable dialogue boxes, sequential fallback dialogue, and chapter-specific graph dialogue execution. NPCs pause patrol and idle when the player is within awareness radius.
+- **Dialogue graph system:** `DialogueGraph` data model and `.addialogue` load/save module support `Start`, `Dialogue`, `Choice`, `Condition`, `Action`, and `End` nodes. The runtime follows graph links, evaluates conditions against `GameState`, shows player choices with directional selection, and applies action effects.
+- **Dialogue graph editor:** NPC placement includes `Edit Instance Dialogue`, which opens a scoped graph editor for the selected NPC instance. The editor supports draggable nodes, visual arrows, node-target pickers, node navigation, validation, and simulation.
 - **Project root tracking:** all editor panels that load assets (`EnemyPathEditorPanel`, `NpcEditorPanel`, `WeaponEditorPanel`) store `lastLoadedProjectRoot_` and reload when the active project changes, preventing stale data from a previously opened project.
+
+Implemented (this iteration):
+
+- **Enemy defeat persistence:** defeats recorded in `GameState` and `save.adstate`, respawn flags respected at screen load, persisting across screens and sessions; per-type kill-counter variables wired to the shared registry.
+- **Action-RPG hit feel:** active-frames melee window, player + enemy knockback, enemy hitstun, hit flash, and `hurt`/`dead` enemy state transitions.
+- **Basic enemy aggro:** per-type aggro range drives chase-the-player behavior with hysteresis release; on release the enemy returns to the nearest point on its path and resumes patrol smoothly.
+- **Runtime save/load:** state seeded from project variable defaults, merged with `save.adstate`, written on screen transition and quit.
+- **Projectile combat:** friend/foe targeting (enemy projectiles damage the player) and per-weapon wall behavior — `Break` (arrow/bullet vanish) or `Rebound` (slingshot stone bounces, loses energy, then settles on the ground).
 
 Planned:
 
-- Enemy defeat persistence (respawn flags respected, registry per chapter/screen).
-- Enemy and item game-library documents plus chapter import/placement UX beyond the current path-backed enemy instances.
-- Branching NPC dialogue, flow graph execution, graphical flow diagram editor.
-- Player attack animations; enemy hurt/death state transitions.
+- Dedicated item documents and richer inventory UX beyond the current project-manifest item definitions.
+- Recoverable projectiles: let a settled rebound projectile become re-collectible ammo.
+- Polished player attack animations and additional enemy state transitions (animation content is per-character).
 - Shader/core-profile renderer to replace fixed-pipeline OpenGL.
 - Explicit collision/interaction flags, only when gameplay needs exceed binary mid-layer collision.

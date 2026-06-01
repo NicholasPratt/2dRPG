@@ -102,7 +102,22 @@ layer 2
 1 1 0 0 0 0 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 0 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 obstacles 0
-items 2
+items 17
 item item_2 1 - 5 202.667 122 0 -
 item item_2 0 slingshot 5 47.3333 368.667 0 Pocketknife
+item item_3 3 coins 1 137.333 72.6667 0 coin
+item item_4 3 coins 1 310.667 68.6667 0 coin
+item item_5 3 coins 1 524.667 73.3333 0 coin
+item item_6 3 coins 1 525.333 202 0 coin
+item item_7 3 coins 1 395.333 428.667 0 coin
+item item_8 3 coins 1 488.667 322 0 coin
+item item_9 3 coins 1 134 426 0 coin
+item item_10 3 coins 1 156.667 359.333 0 coin
+item item_11 3 coins 1 159.333 292.667 0 coin
+item item_12 3 coins 1 105.333 269.333 0 coin
+item item_13 3 coins 1 74.6667 322.667 0 coin
+item item_14 3 coins 1 76.6667 373.333 0 coin
+item item_15 3 coins 1 85.3333 414 0 coin
+item item_16 3 coins 1 148 390 0 coin
+item item_17 3 coins 1 158 318.667 0 coin
 end

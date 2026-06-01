@@ -111,7 +111,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 9\n";
+    output << "ADCHAPTER 10\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -152,7 +152,8 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                    << static_cast<int>(npc.movementOverride) << ' '
                    << (npc.loop ? 1 : 0) << ' ' << npc.speedOverride << ' '
                    << (npc.graphOverride.empty() ? "-" : npc.graphOverride) << ' '
-                   << npc.waypoints.size() << ' ' << npc.dialogueOverride.size() << "\n";
+                   << npc.waypoints.size() << ' ' << npc.dialogueOverride.size()
+                   << ' ' << npc.shopInventoryOverride.size() << "\n";
             for (const PathWaypoint& waypoint : npc.waypoints) {
                 output << "wp " << waypoint.x << ' ' << waypoint.y
                        << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
@@ -161,6 +162,14 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
             }
             for (const DialogueLine& dl : npc.dialogueOverride) {
                 output << "dl " << std::quoted(dl.speaker) << ' ' << std::quoted(dl.text) << "\n";
+            }
+            for (const ShopItemDef& item : npc.shopInventoryOverride) {
+                output << "shop_item " << (item.itemId.empty() ? "-" : item.itemId)
+                       << ' ' << item.buyPrice
+                       << ' ' << item.sellPrice
+                       << ' ' << item.quantity
+                       << ' ' << (item.unlimited ? 1 : 0)
+                       << "\n";
             }
         }
     }
@@ -185,7 +194,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 9) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 10) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -372,13 +381,17 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                     return false;
                 }
                 int dialogueCount = 0;
+                int shopCount = 0;
                 input >> npc.id >> npc.typeId >> npc.x >> npc.y >> npc.facing
                       >> npc.awarenessRadius >> npc.interactionRadius
                       >> movement >> loopVal >> npc.speedOverride >> graphOverride >> waypointCount;
                 if (version >= 6) {
                     input >> dialogueCount;
                 }
-                if (!input || waypointCount < 0 || waypointCount > kMaxNpcWaypoints || dialogueCount < 0) {
+                if (version >= 10) {
+                    input >> shopCount;
+                }
+                if (!input || waypointCount < 0 || waypointCount > kMaxNpcWaypoints || dialogueCount < 0 || shopCount < 0) {
                     setError(errorMessage, "Invalid NPC entry.");
                     return false;
                 }
@@ -406,6 +419,21 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                     input >> dlKey >> std::quoted(dl.speaker) >> std::quoted(dl.text);
                     if (dlKey == "dl") {
                         npc.dialogueOverride.push_back(std::move(dl));
+                    }
+                }
+                for (int si = 0; si < shopCount && input; ++si) {
+                    std::string shopKey;
+                    std::string itemId;
+                    ShopItemDef shopItem;
+                    int unlimited = 1;
+                    input >> shopKey >> itemId >> shopItem.buyPrice >> shopItem.sellPrice >> shopItem.quantity >> unlimited;
+                    if (shopKey == "shop_item") {
+                        shopItem.itemId = (itemId == "-") ? std::string{} : itemId;
+                        shopItem.buyPrice = std::max(0, shopItem.buyPrice);
+                        shopItem.sellPrice = std::max(0, shopItem.sellPrice);
+                        shopItem.quantity = std::max(0, shopItem.quantity);
+                        shopItem.unlimited = unlimited != 0;
+                        npc.shopInventoryOverride.push_back(std::move(shopItem));
                     }
                 }
                 screen.npcs.push_back(std::move(npc));

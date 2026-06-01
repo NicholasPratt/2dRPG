@@ -15,6 +15,12 @@ struct EnemyCombatStats {
     float hitboxHeight = 12.0f;
     float attackCooldownSeconds = 1.0f;
     std::vector<EnemyAttackDef> attacks;
+    // Action-RPG hit reaction & AI tuning (copied from EnemyType at load)
+    float knockbackResistance = 0.0f;
+    float hitstunSeconds = 0.18f;
+    float aggroRange = 0.0f;
+    std::string killVariable;
+    int killAmount = 1;
 };
 
 struct EnemyPath {

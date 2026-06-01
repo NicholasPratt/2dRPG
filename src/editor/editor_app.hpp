@@ -2,6 +2,7 @@
 
 #include "editor/editor_context.hpp"
 #include "editor/panels/character_editor_panel.hpp"
+#include "editor/panels/dialogue_graph_editor_panel.hpp"
 #include "editor/panels/enemy_path_editor_panel.hpp"
 #include "editor/panels/layout_editor_panel.hpp"
 #include "editor/panels/map_editor_panel.hpp"
@@ -31,6 +32,7 @@ private:
     enum class MainTab {
         Characters,
         Weapons,
+        Items,
         QuestState,
         Layout,
         Tilesets,
@@ -48,6 +50,7 @@ private:
         ItemEdit,
         Npcs,
         NpcTypes,
+        DialogueGraph,
         Sprite,
     };
 
@@ -59,12 +62,14 @@ private:
     TilesetEditorPanel tilesetEditor_;
     WallFloorPaintPanel wallFloorPaint_;
     EnemyPathEditorPanel enemyPathEditor_;
+    DialogueGraphEditorPanel dialogueGraphEditor_;
     WeaponEditorPanel weaponEditor_;
     ItemPlacementPanel itemPlacementEditor_;
     NpcEditorPanel npcEditor_;
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
     bool spriteEditorLaunchedFromCharacter_ = false;
+    bool spriteEditorLaunchedFromProjectItems_ = false;
     bool screenMapLogicMode_ = false;
     ScreenEditMode screenEditMode_ = ScreenEditMode::Layout;
     ScreenEditMode spriteReturnMode_ = ScreenEditMode::Layout;
@@ -103,10 +108,13 @@ private:
     void completeChapterSwitch(bool saveFirst);
     void saveActiveEditingScope();
     void saveCurrentChapterAndExports();
-    void launchGame();
+    // Launch the runtime. fresh = ignore/preserve save; startScreen empty = chapter start;
+    // fromCheckpoint = resume the last-entered screen + position recorded by the runtime.
+    void launchGame(bool fresh = false, const std::string& startScreen = {}, bool fromCheckpoint = false);
     void enterScreenMode(ScreenEditMode mode);
     void drawScreensTab();
     void drawProjectStateTab();
+    void drawProjectItemsTab();
     void drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving);
     void exitScreenModeSaving();
     void exitScreenModeDiscarding();

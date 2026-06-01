@@ -4,7 +4,7 @@ This project is a C++ 2D RPG engine and integrated editor scaffold targeting a S
 
 The main architectural rule is that the editor creates data the game can load. Runtime code lives outside `src/editor` and must not depend on ImGui.
 
-The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters, enemy types, NPC types, weapon definitions, and project state/effect definitions live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data.
+The current asset architecture separates reusable game-library assets from chapter usage, and separates projects from each other. New work is stored under `projects/<project>/assets/...`; the repo-root `assets/` tree is retained as a fallback/default asset set. Reusable assets such as characters, enemy types, NPC types, weapon definitions, item definitions, and project state/effect definitions live in each project's `assets/game/...` library and are indexed by that project's `assets/game/project.adgame`; chapters import/reference those asset ids rather than copying asset data. Dialogue graph trees are chapter-specific content stored under `assets/game/dialogue/<chapterId>/`.
 
 ## Current Layout
 
@@ -20,12 +20,13 @@ The current asset architecture separates reusable game-library assets from chapt
       tilesets/                     # raw map tileset images
     game/
       project.json                  # legacy/simple asset root manifest
-      project.adgame                # game-library manifest: characters, enemies, NPCs, weapons, quest state/effects
+      project.adgame                # game-library manifest: characters, enemies, NPCs, weapons, items, quest state/effects
       chapters/                     # .adchapter chapter files
       maps/                         # .admap tile maps
       sprites/                      # .sprite.json metadata
       character_sprites/            # game-ready character sprite assets
       characters/                   # .adcharacter reusable character sheets
+      dialogue/                     # chapter-specific .addialogue graph trees
       animations/                   # planned animation data
       palettes/                     # planned palette data
       paths/                        # .adpath enemy waypoint paths (legacy; placements now in .adchapter)
@@ -39,6 +40,7 @@ The current asset architecture separates reusable game-library assets from chapt
           maps/                     # project .admap files
           sprites/                  # project .sprite.json files
           characters/               # project .adcharacter files
+          dialogue/                 # chapter-specific project .addialogue files
           paths/                    # project .adpath enemy waypoint paths (legacy)
           tilesets/                 # project screen graphics and tileset definitions
   external/
@@ -58,8 +60,9 @@ The current asset architecture separates reusable game-library assets from chapt
       stb_image_impl.cpp            # stb_image implementation unit
       panels/
         character_editor_panel.hpp/.cpp
+        dialogue_graph_editor_panel.hpp/.cpp  # scoped NPC dialogue graph editor
         enemy_path_editor_panel.hpp/.cpp  # enemy type defs + per-screen enemy placements + spline editor
-        item_placement_panel.hpp/.cpp     # place weapon/ammo/health pickups on screens (ScreenEditMode::Items)
+        item_placement_panel.hpp/.cpp     # place pickups/project items on screens (ScreenEditMode::Items)
         layout_editor_panel.hpp/.cpp
         map_editor_panel.hpp/.cpp         # legacy/detail map panel; not a top-level tab
         npc_editor_panel.hpp/.cpp         # NPC type defs + per-screen NPC placements + patrol path editor
@@ -69,10 +72,11 @@ The current asset architecture separates reusable game-library assets from chapt
         weapon_editor_panel.hpp/.cpp      # create/edit WeaponDef game-library assets (Weapons tab)
     game/
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
+      dialogue_graph.hpp/.cpp       # DialogueGraph type and .addialogue load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
       map.hpp/.cpp                  # TileMap type and .admap load/save (v5 adds item placements)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
-      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef and .adgame load/save (v8)
+      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v10)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       state.hpp/.cpp                # GameState runtime store and .adstate save/load
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
@@ -83,10 +87,10 @@ The current asset architecture separates reusable game-library assets from chapt
 
 ```text
 imgui                    Static Dear ImGui library.
-adventure_game           Runtime-facing game/data code (chapter, project, map, path, sprite metadata, state, tileset).
+adventure_game           Runtime-facing game/data code (chapter, dialogue graph, project, map, path, sprite metadata, state, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads .admap, .adchapter, .sprite.json, and round-trips .adpath, .adstate, and project state/effect definitions through runtime code.
+adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate (v2, incl. defeated enemies), and project state/effect/enemy-type definitions (ADGAME v12) through runtime code.
 adventure_game_window    GLFW/OpenGL runtime game window (built when OpenGL + GLFW found).
 adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
@@ -106,6 +110,8 @@ cmake --build build --parallel
 ```
 
 From the editor, `Chapter > Save and Play Game` and scoped `Save and Play` buttons save the current project/chapter data and launch `adventure_game_window` as a separate runtime process with an explicit chapter path. The game executable derives its runtime asset root from that chapter path, so editor launches use the selected project folder. Escape closes the game window.
+
+Two **test launches** sit beside Save and Play (and in the Chapter menu): **Play Selected Screen** (`launchGame(fresh=true, startScreen=selectedScreen)`) and **Play From Last Entry** (`launchGame(fresh=true, fromCheckpoint=true)`, which reads `assets/game/test_checkpoint`). Both pass `--fresh` so authored enemies always appear and the player's real `save.adstate` is left untouched. `launchDetachedProcess` forwards the chapter path plus these extra args via `execv`.
 
 When `adventure_game_window` is launched without arguments it scans `projects/<project>/assets/game/chapters/*.adchapter` and the repo-root fallback assets, then shows a small ImGui picker asking which project/chapter to load.
 
@@ -130,12 +136,13 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 |-----|-------|---------|
 | Characters | `CharacterEditorPanel` | Character sheets with sprite references, Add Character/Delete Character, playable selection |
 | Weapons | `WeaponEditorPanel` | Create/edit project-level WeaponDefs (melee + ranged) and set starting weapon |
+| Items | inline `EditorApp` project-items view | Create/edit project-level ItemDefs and seed common RPG item defaults |
 | Quest State | inline `EditorApp` project-state view | Create/edit designer-defined state variables and reusable effects |
 | Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
 | Assets | *(inline)* | Asset directory listing |
 
-`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, and `ItemPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, `Edit NPCs`, `Edit NPC Types`, and `Edit Items` open scoped screen editors.
+`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, `DialogueGraphEditorPanel`, and `ItemPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, `Edit NPCs`, `Edit NPC Types`, and `Edit Items` open scoped screen editors. `Edit Instance Dialogue` opens `DialogueGraphEditorPanel` as a sub-screen of NPC placement so the graph is tied to the selected NPC instance.
 
 ---
 
@@ -143,7 +150,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 
 Implemented in `src/game/project.hpp/.cpp`.
 
-`assets/game/project.adgame` (current version: **8**) is the project-level game-library manifest. It stores:
+`assets/game/project.adgame` (current version: **10**) is the project-level game-library manifest. It stores:
 
 ```cpp
 enum class EnemyAttackType { Contact = 0, Melee = 1, Ranged = 2 };
@@ -168,6 +175,12 @@ struct EnemyType {
     float attackCooldownSeconds = 1.0f;  // legacy contact cooldown
     float speed = 64.0f;
     std::vector<EnemyAttackDef> attacks;
+    // Action-RPG hit reaction & AI tuning (ADGAME v12+)
+    float knockbackResistance = 0.0f;    // 0 = full knockback, 1 = immovable
+    float hitstunSeconds = 0.18f;        // stagger window when damaged
+    float aggroRange = 0.0f;             // 0 = waypoints only; >0 = chase player within radius (px)
+    std::string killVariable;            // GameState int incremented on death (quest hook)
+    int killAmount = 1;                  // amount added to killVariable per death
 };
 
 enum class NpcMovementMode { Stationary = 0, Patrol = 1, Wander = 2 };
@@ -176,6 +189,14 @@ enum class NpcInteractionMode { None = 0, Talk = 1, Shop = 2, Quest = 3 };
 struct DialogueLine {
     std::string speaker;
     std::string text;
+};
+
+struct ShopItemDef {
+    std::string itemId;
+    int buyPrice;
+    int sellPrice;
+    int quantity;
+    bool unlimited;
 };
 
 struct NpcTypeDef {
@@ -187,6 +208,7 @@ struct NpcTypeDef {
     float defaultSpeed = 32.0f;
     std::string defaultGraphId;
     std::vector<DialogueLine> defaultDialogue;
+    std::vector<ShopItemDef> shopInventory;
 };
 
 enum class StateVariableType { Integer, Boolean, Item };
@@ -194,6 +216,20 @@ struct StateVariableDef { std::string id; StateVariableType type; int defaultInt
 
 enum class GameEffectType { SetInt, AddInt, SetBool, GiveItem, TakeItem };
 struct GameEffectDef { std::string id; GameEffectType type; std::string targetId; int intValue; bool boolValue; };
+
+enum class ItemDefType {
+    Weapon, Ammo, Health, Mana, Currency, Key, Quest, Consumable, Material, Equipment, Custom
+};
+struct ItemDef {
+    std::string id;
+    std::string name;
+    ItemDefType type;
+    std::string spriteId;
+    std::string targetId;
+    int value;
+    bool stackable;
+    std::string customType;
+};
 
 struct GameProject {
     std::string id;
@@ -204,16 +240,17 @@ struct GameProject {
     std::vector<std::string> chapterIds;
     std::vector<EnemyType> enemyTypes;
     std::vector<WeaponDef> weaponDefs;
+    std::vector<ItemDef> itemDefs;
     std::vector<StateVariableDef> stateVariables;
     std::vector<GameEffectDef> effectDefs;
     std::vector<NpcTypeDef> npcTypes;
 };
 ```
 
-Format (ADGAME 8):
+Format (ADGAME 12):
 
 ```text
-ADGAME 8
+ADGAME 12
 id game
 playable hero
 characters 1
@@ -221,10 +258,12 @@ character hero
 chapters 1
 chapter chapter_1
 enemy_types 1
-enemy_type crow enemy_1 3 1 12.0 12.0 1.0 64.0 1
+enemy_type crow enemy_1 3 1 12.0 12.0 1.0 64.0 0.25 0.2 120.0 Crows_Killed 1 1
 enemy_attack 2 1 200.0 2.0 120.0 attack_1 ammo_stone
 weapon_defs 1
 weapon_def slingshot 1 1 96.0 0.35 240.0 ammo_stone ammo_stone 1
+item_defs 1
+item_def gold "Gold" 4 gold Money 1 1 -
 starting_weapon slingshot
 font "assets/raw/fonts/myfont.ttf"
 state_defs 1
@@ -232,23 +271,28 @@ state_def Example_Count 0 0 0
 effect_defs 1
 effect_def increment_example 1 Example_Count 1 1
 npc_types 1
-npc_type shopkeeper shopkeeper_sprite - 0 1 32.0 - 2
+npc_type shopkeeper shopkeeper_sprite - 0 2 32.0 - 2 1
 dialogue Hello there!
 dialogue Come back soon.
+shop_item potion 10 5 3 0
 end
 ```
 
-`enemy_type` line fields: `id spriteId maxHealth contactDamage hitboxW hitboxH contactCooldown speed attackCount`  
+`enemy_type` line fields: `id spriteId maxHealth contactDamage hitboxW hitboxH contactCooldown speed knockbackResistance hitstunSeconds aggroRange killVariable killAmount attackCount` (knockbackResistance..killAmount present only in v12+; `killVariable` is `-` when empty)  
 `enemy_attack` fields: `type damage range cooldown projectileSpeed animState ammoSpriteId` (type: 0=Contact, 1=Melee, 2=Ranged)
 
-Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs).
+`weapon_def` line fields: `id type damage range cooldown projSpeed spriteId ammoTypeId [ammoSpriteId(v9+)] ammoPerShot [wallBehavior(v13+)]` (wallBehavior: 0=Break, 1=Rebound)
+
+Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs), v9 (weapon projectile sprites/ammo-per-shot), v10 (item_defs), v11 (NPC shop inventory), v12 (enemy knockback resistance, hitstun, aggro range, kill-counter variable/amount), v13 (weapon projectile wall behavior: break vs rebound).
 
 Editor behavior:
 
 - `CharacterEditorPanel::saveForChapter` saves reusable character documents and writes `project.adgame`.
 - `EnemyPathEditorPanel::saveProjectEnemyTypes` saves reusable enemy type definitions (including attack defs) into `project.adgame`.
 - `NpcEditorPanel::saveProjectNpcTypes` saves reusable NPC type definitions into `project.adgame`.
-- `WeaponEditorPanel` saves weapon definitions and the project starting weapon into `project.adgame`.
+- NPC type definitions can include shop inventory rows. Each row references a project item ID and stores buy price, sell price, stock count, and unlimited-stock flag.
+- `WeaponEditorPanel` saves weapon definitions and the project starting weapon into `project.adgame`. For ranged weapons it exposes an "On wall hit" combo (Break / Rebound) that sets `WeaponDef::wallBehavior`.
+- The top-level `Items` tab saves project-wide item definitions into `project.adgame`. Item categories cover common RPG types plus a custom category string for user-defined item groups. The tab can add missing common defaults and warns on empty or duplicate item IDs.
 - The Quest State tab in `EditorApp` saves state variable definitions and reusable effect definitions into `project.adgame`.
 - All panels that load project data track `lastLoadedProjectRoot_` and reload when the active project folder changes, preventing stale data from a previously opened project.
 
@@ -257,7 +301,64 @@ Runtime behavior:
 - `Engine::loadPlayableCharacter` first resolves `Chapter::playableCharacterId`.
 - If the chapter has no playable id, it falls back to `project.adgame`.
 - A legacy scan of `.adcharacter` files remains as a fallback.
-- Weapon pickups call into `GameState::giveItem`, so item ownership and quest state use the same runtime registry.
+- Weapon pickups call into `GameState::giveItem`; project item pickups also update the runtime inventory and `GameState`, so item ownership and quest state use the same runtime registry.
+
+---
+
+## Dialogue Graph System
+
+Implemented in `src/game/dialogue_graph.*`, `src/editor/panels/dialogue_graph_editor_panel.*`, and runtime execution helpers in `src/game/engine.*`.
+
+Dialogue graphs are chapter-specific assets stored under:
+
+```text
+assets/game/dialogue/<chapterId>/<graphId>.addialogue
+```
+
+Characters and reusable NPC type definitions are project-wide. A screen `NpcPlacement` stores a `graphOverride` ID that references one of the active chapter's graph files. `NpcTypeDef::defaultGraphId` can provide a reusable default reference, but authoring instance-specific dialogue is done from NPC placement with `Edit Instance Dialogue`.
+
+### Data model
+
+```cpp
+enum class DialogueNodeType { Start, Dialogue, Choice, Condition, Action, End };
+enum class DialogueConditionType { Always, IntCompare, BoolEquals, HasItem, HasMoney };
+enum class DialogueActionType {
+    SetInt, AddInt, SetBool,
+    GiveItem, TakeItem,
+    GiveMoney, TakeMoney,
+    HealPlayer, DamagePlayer,
+    MoveNpc, HideNpc, ShowNpc,
+    FollowPlayer, StopFollowingPlayer,
+    SetNpcAnimation,
+    StartQuest, CompleteQuest
+};
+
+struct DialogueGraph {
+    std::string id;
+    std::string startNodeId;
+    std::vector<DialogueNode> nodes;
+};
+```
+
+### Editor behavior
+
+- `DialogueGraphEditorPanel` is opened as a scoped NPC-placement sub-screen, not a top-level tab.
+- If a selected NPC instance has no `graphOverride`, `Edit Instance Dialogue` creates one from `<screenId>_<npcId>_dialogue`.
+- Canvas nodes are draggable and linked with colored arrows.
+- The left panel lists graph files for the active chapter and also lists nodes for navigation.
+- Clicking a node on the canvas or in the node navigator selects it, scrolls the canvas toward it, and resets the inspector to the node editor.
+- The inspector edits node type, speaker/text, target nodes, choice rows, conditions, and action rows.
+- Target fields use node pickers instead of raw text entry.
+- `Validate` reports duplicate/missing IDs, broken links, unreachable nodes, empty choice sets, and missing state/item definitions.
+- `Simulate` walks the graph using project default state and first available choices, logging dialogue and action flow.
+
+### Runtime behavior
+
+- `Engine::loadNpcEntities` loads a graph from `assets/game/dialogue/<chapterId>/<graphId>.addialogue`, falling back to the old project-level dialogue path for compatibility.
+- If an NPC has a graph, interaction starts at the graph's start node. Otherwise the runtime uses the legacy `DialogueLine` list.
+- Up/Down or W/S selects player responses. E confirms a choice or advances graph dialogue.
+- Conditions evaluate against `GameState` and money stored as integer variable `Money`.
+- Action nodes mutate `GameState`, player health, and runtime NPC state.
 
 ## Chapter System
 
@@ -321,10 +422,10 @@ struct Chapter {
 };
 ```
 
-### `.adchapter` format (v3+)
+### `.adchapter` format (v10)
 
 ```text
-ADCHAPTER 3
+ADCHAPTER 10
 id chapter_1
 start screen_1
 playable hero
@@ -339,13 +440,14 @@ enemy enemy_1 crow_1 1 0 0.0 1 0
 wp 100.0 80.0
 wp 200.0 80.0
 npcs 1
-npc npc_1 shopkeeper_1 120.0 200.0 2 64.0 24.0 1
-wp 120.0 200.0 0.0 2.0
-dialogue Merchant Hello there traveler!
+npc npc_1 shopkeeper_1 120.0 200.0 2 64.0 24.0 1 1 32.0 shop_graph 1 1 1
+wp 120.0 200.0 0.0 2.0 -1 -
+dl "Merchant" "Hello there traveler!"
+shop_item potion 10 5 3 0
 end
 ```
 
-v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements.
+Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides.
 
 ### Layout Editor
 
@@ -403,7 +505,7 @@ end
 ```
 
 Obstacle fields: `type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`.
-Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`.
+Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
 Backward compat: v1–v4 files still load; missing sections default to empty.
 
 ### Map Editor
@@ -416,7 +518,8 @@ Backward compat: v1–v4 files still load; missing sections default to empty.
 Implemented in `src/editor/panels/item_placement_panel.*`.
 
 - Opened from the selected screen inspector via `Edit Items`.
-- Places weapon, ammo, and health pickups into the selected screen's `.admap` items section.
+- Places weapon, ammo, health, and project item pickups into the selected screen's `.admap` items section.
+- Project item pickups reference project-wide `ItemDef` assets by `targetId`, copying the item sprite ID and default value into the placement.
 - Left column: item list and selected-item properties. Right: top-aligned canvas.
 - Canvas shows floor/wall graphics, wall guide, tile grid, and diamond item markers.
 
@@ -463,6 +566,11 @@ struct RuntimeNpcEntity {
     NpcPlacement placement;
     std::string spriteId;
     std::vector<DialogueLine> dialogue;
+    std::string graphId;
+    DialogueGraph graph;
+    bool hasGraph;
+    bool hidden;
+    bool followingPlayer;
     float x, y;
     float animSeconds;
     std::string actionType;     // "idle" or "walk"
@@ -502,6 +610,16 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - **Melee:** fires when player is within `atk.range` and cooldown is zero; deals `atk.damage` and resets the per-attack cooldown.
 - **Ranged:** fires when player is within `atk.range`; spawns a `RuntimeProjectile` headed toward the player at `atk.projectileSpeed`.
 - If `atk.animState` is set and the attack fires, transitions `entity.animState` and resets `entity.animSeconds`.
+- Enemies in hitstun (`hitstunSeconds > 0`) skip all attacks until the stagger expires.
+
+### Hit reactions, hitstun, knockback, and aggro
+
+- **Active-frames melee:** `updateAttack` carves `kMeleeAttackSeconds` into windup → active → recovery (`kMeleeWindupSeconds`, `kMeleeActiveWindowSeconds`). `checkMeleeHits` runs every frame inside the active window and dedupes via `meleeHitEnemies_` so each enemy is hit once per swing.
+- **`applyEnemyHit(entity, damage, dirX, dirY)`** is the single hit-reaction path for melee and projectiles: subtracts HP, sets `hitFlashSeconds` (white render overlay) and `hitstunSeconds` (from the type), sets a decaying `knockbackVx/Vy = dir * kEnemyKnockbackBasePxPerSecond * (1 - knockbackResistance)`, and switches `animState` to `"hurt"` (or `"dead"` on a lethal hit).
+- **Knockback decay** is exponential and collision-checked in `updatePaths` (enemies) and `updatePlayer` (player); applied per-axis so a wall stops only the blocked component.
+- **Projectiles (`updateProjectiles`)** carry a `fromEnemy` team flag: player shots damage enemies, enemy shots damage the player (both apply knockback in the projectile's travel direction). Wall impact follows the projectile's `ProjectileWallBehavior`: `Break` despawns on contact (arrow, bullet); `Rebound` reflects per-axis with `kProjectileReboundRestitution`, counts down `bouncesRemaining`, and once spent (or below `kProjectileMinReboundSpeed`, or past max range) "settles" — `settleSeconds` runs an inert grounded rest/fade before despawn (slingshot stone). Player weapon projectiles take their behavior from `WeaponDef::wallBehavior`; enemy projectiles default to `Break`.
+- **Player knockback:** `damagePlayer(amount, sourceX, sourceY)` pushes the player away from the damage source; the no-source overload `damagePlayer(amount)` deals damage without knockback (hazards, scripted).
+- **Aggro/chase:** when `aggroRange > 0` and the player is within it, `updatePaths` steers the enemy directly toward the player at `path.speed` (overriding waypoints), tracked by `entity.aggroActive`, releasing once the player passes `aggroRange * 1.3` (hysteresis). On release the enemy enters a `returningToPath` phase: it walks from wherever it chased to toward the **nearest point on its path** (`nearestPathDistance`), and on arrival syncs `pathDistance`/`waypointIndex` (`waypointIndexForDistance`) and resumes patrol from there — no snapping back to a stale spline position.
 
 ### Other runtime behavior
 
@@ -511,15 +629,20 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - Collision against nonzero cells in `.admap` layer 1.
 - Screen-boundary crossings with 30% threshold trigger sliding transition to linked screen.
 - Obstacle hazards (spikes, pits, timed spikes) respawn the player at the map spawn.
-- Melee attack (Z): hitbox sweep in facing direction, brief yellow flash. Ranged (X): projectile from `WeaponDef` data.
-- Item pickups equip weapons, add ammo, or restore HP. All item ownership writes to `GameState`.
-- NPC dialogue: E key triggers interaction, subsequent E advances lines; speech bubble / dialogue box rendered above NPC.
+- Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged, and north face button/Select/Start for inventory.
+- Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile from `WeaponDef` data.
+- Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable and ammo items can fill ammo pools.
+- Shop NPCs open a two-panel buy/sell overlay. The shop panel spends `Money` and transfers stock into the player inventory; the player panel sells one selected inventory item and adds `Money`. Limited shop rows decrement on buy and increment when sold back. NPC placements can override the reusable NPC type stock, and the runtime scrolls both shop and player inventory lists.
+- Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay and pauses player/world updates while it is open. Inventory rows use each item definition's sprite as a pictogram and render stack/value counts as a pictogram/number pair. Up/Down, W/S, D-pad, or left stick changes selection; E, Space, Enter, or controller south face button uses usable item types.
+- NPC dialogue: E key or controller south face button triggers interaction. Legacy dialogue advances line-by-line; graph dialogue follows nodes, conditions, choices, and actions. Up/Down, W/S, D-pad, or left stick selects graph responses. Speech bubble / dialogue box renders above NPC and dialogue text is bounded, wrapped, and scrollable.
+- **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults, then merges any saved `assets/game/save.adstate` over them (so newly-added variables still get defaults). State is written on every screen transition and on quit. Defeated enemies (not flagged to respawn) are stored in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"` and filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
+- **Test launches:** the runtime accepts `--fresh` (don't load or overwrite `save.adstate`, so all authored enemies appear and the player starts at full state), `--screen <id>` (start on a specific screen), and `--pos <x> <y>` (start at a position). On each screen entry it writes a lightweight `assets/game/test_checkpoint` (`screen <id>` / `pos <x> <y>`) recording where the player last entered a screen; the editor reads this for "Play From Last Entry". A `--fresh` run never writes `save.adstate` but still updates the checkpoint.
 
 Current limitations:
 
 - Rendering uses fixed-pipeline OpenGL; a shader/core-profile renderer is planned.
-- Enemy defeat persistence not yet implemented.
 - Collision is binary: nonzero mid-layer tile means solid.
+- Rebounded/settled projectiles fade out rather than becoming re-collectible ammo (recovery is a possible extension).
 
 ---
 
@@ -584,10 +707,12 @@ public:
     bool hasItem(const std::string& id) const;
     void giveItem(const std::string& id);
     void takeItem(const std::string& id);
+    bool isEnemyDefeated(const std::string& key) const;   // key: "<screenId>/<enemyId>"
+    void markEnemyDefeated(const std::string& key);
 };
 ```
 
-`.adstate` stores runtime values. Variable names are designer-authored content, not hard-coded engine behavior.
+`.adstate` (current version **2**) stores runtime values: named ints, named bools, owned items, and a defeated-enemy key set. v1 files (no `defeated` block) still load. Variable names are designer-authored content, not hard-coded engine behavior. The runtime save file lives at `assets/game/save.adstate`.
 
 ---
 
@@ -651,6 +776,7 @@ Two-column layout using `BeginGroup`/`EndGroup`:
 
 - **Left column:** `Dummy` reserves space for the sprite preview panel (drawn via `ImDrawList`). Shows the first idle frame of the type's sprite sheet at pixel scale, backed by raw RGBA pixels loaded with `stbi_load`. Below the preview: `Checkbox("Show hitbox")` toggles a red overlay rectangle scaled to `hitboxWidth/Height` relative to the frame.
 - **Right column:** Type ID, Sprite ID (with Edit Sprite button), Max HP, Speed, Hitbox W/H, Contact Damage, Contact Cooldown.
+- **Hit Reaction & AI** (below Contact Damage): Knockback resist (0–1), Hitstun (s), Aggro range (px; 0 = waypoints only), and a kill-counter variable name + amount. These write the ADGAME v12 `EnemyType` fields.
 - **Attack editor** (below both columns): one `CollapsingHeader` per `EnemyAttackDef`, exposing type combo (Contact/Melee/Ranged), damage, range, cooldown, animation state, and ranged-only fields (projectile speed, ammo sprite ID). Add/Remove attack buttons.
 
 Sprite preview reload guard: reloads when `spritePreview_.loadedId != type.spriteId` OR `spritePreview_.loadedProjectRoot != context.assets.projectRoot.string()` — prevents stale preview after project switch.
@@ -693,7 +819,8 @@ Addresses spec §4.5.
 ### NPC Type Editor (`Edit NPC Types` subpanel)
 
 - Lists reusable `NpcTypeDef` records from `project.adgame`.
-- Fields: id, sprite ID, character ID, default movement mode, default interaction mode, default speed, graph ID, default dialogue lines.
+- Fields: id, project character picker, sprite ID override, default movement mode, default interaction mode, default speed, graph ID, default dialogue lines.
+- Characters are project-wide assets from `project.adgame` / `assets/game/characters/*.adcharacter`; NPC types reference character IDs rather than storing character data.
 - `saveProjectNpcTypes` writes updated types back to `project.adgame`.
 
 ### NPC Placement Editor (`Edit NPCs` subpanel)
@@ -706,6 +833,8 @@ Inspector fields:
 - Awareness radius, interaction radius
 - Movement override (Stationary / Patrol / Wander), loop, speed override
 - Per-waypoint: position, speed override, wait seconds, facing direction, animation state
+- Graph override ID for chapter-specific instance dialogue
+- `Edit Instance Dialogue`, which opens `DialogueGraphEditorPanel` for the selected NPC placement and stores graphs under `assets/game/dialogue/<chapterId>/`
 - Dialogue lines (inline override, one per entry)
 
 Canvas shows selected screen's map, floor/wall graphics, tile grid, NPC markers, and patrol path.
@@ -715,10 +844,10 @@ Runtime behavior:
 - `updateNpcs` advances NPCs along patrol waypoints; sets `npc.actionType = "walk"` while moving and `"idle"` when at waypoint or in awareness range of player.
 - `npc.facingX/Y` updates with the movement direction so `spriteFrameForNpc` can apply directional frame selection and horizontal mirroring.
 - `updateNpcAwareness` checks distance to player and sets `npc.playerInAwareness`; when true, the NPC stops patrolling.
-- `updateInteraction` (E key): `None → PromptVisible → InDialogue`. Each subsequent E press advances `dialogueLineIndex_`. Leaving interaction radius resets state.
+- `updateInteraction` (E key): `None → PromptVisible → InDialogue`. Legacy dialogue advances with E; graph dialogue advances through nodes and uses Up/Down or W/S for choice selection. Leaving interaction radius resets state.
 - `renderNpcs` calls `spriteFrameForNpc(sprite, npc, flipH)` and swaps u0/u1 when `flipH` is true.
 - `renderInteractionPrompt` shows a pulsing green square above the NPC when in prompt range.
-- `renderSpeechBubble` / `renderDialogueBox` shows wrapped dialogue text above the NPC.
+- `renderSpeechBubble` / `renderDialogueBox` shows wrapped dialogue text above the NPC. Dialogue boxes have fixed bounds and support scrolling long text.
 
 ---
 
@@ -735,6 +864,7 @@ Runtime behavior:
 | `gameCharacterSprites` | `assets/game/character_sprites` |
 | `gameCharacters` | `assets/game/characters` |
 | `gameChapters` | `assets/game/chapters` |
+| `gameDialogue` | `assets/game/dialogue` |
 | `gameMaps` | `assets/game/maps` |
 | `gameTilesets` | `assets/game/tilesets` |
 | `gameAnimations` | `assets/game/animations` |
@@ -776,24 +906,25 @@ Runtime behavior:
 | §4.5.3 NPC patrol movement + wait-at-waypoint | ✅ `updateNpcs` with waypoint queue and wait timer |
 | §4.5.3 NPC direction-aware rendering + flip | ✅ `spriteFrameForNpc` with `bool& flipH`; `facingX/Y` from movement direction |
 | §4.5.3 NPC player awareness | ✅ Awareness radius check; NPC idles when player is near |
-| §4.5.4 NPC interaction + sequential dialogue | ✅ E key, prompt, speech bubble / dialogue box, multi-line advance |
-| §4.5.5 Flow graph editor | ❌ Planned |
+| §4.5.4 NPC interaction + sequential/graph dialogue | ✅ E key, prompt, speech bubble / dialogue box, multi-line advance, graph execution, choices, conditions, actions |
+| §4.5.5 Flow graph editor | ✅ Scoped NPC placement sub-screen with node canvas, arrows, inspector, validation, simulation, and node navigation |
 | §5 Save/load (JSON, text formats) | ✅ |
 | §6 Runtime game engine (rendering, screen-flip) | ✅ Basic GLFW/OpenGL runtime shell |
 | §6 Runtime collision | ✅ Tile collision against `.admap` mid layer |
 
 ## Near-Term Priorities
 
-1. Add enemy defeat persistence: registry per chapter/screen, respawn flag respected at screen load.
-2. Add branching NPC dialogue (condition/choice nodes) and flow graph executor on top of the generic state/effect system.
-3. Add player attack animations and enemy hurt/death state transitions.
+1. ✅ Enemy defeat persistence: defeats stored in `GameState`/`save.adstate`, respawn flags respected at screen load, kill counters wired to the shared registry.
+2. ✅ Action-RPG hit feel: active-frames melee window, knockback (player + enemy), hitstun, hit flash, enemy `hurt`/`dead` state transitions, and basic aggro/chase. Player `attack_1`/`cast`/`hit_react`/`death` action states drive frame selection (animation content authored per character).
+3. ✅ Projectile combat: friend/foe targeting (enemy projectiles damage the player), and per-weapon wall behavior (break vs rebound-and-settle).
 4. Replace runtime fixed-pipeline OpenGL with a shader/core-profile renderer.
 5. Extend collision beyond binary mid-layer solid tiles only when design needs require transparent/interaction flags.
+6. Optional: make rebounded/settled projectiles re-collectible as ammo.
 
 ## Engineering Notes
 
 - Keep editor UI state out of `src/game`.
-- File format parsing belongs in runtime-facing modules when the game needs to load that format. Current shared parsers: chapter, map, path, project, sprite metadata, state, tileset.
+- File format parsing belongs in runtime-facing modules when the game needs to load that format. Current shared parsers: chapter, dialogue graph, map, path, project, sprite metadata, state, tileset.
 - Prefer readable text formats while the project is small.
 - All editor panels that load project-level data must store `lastLoadedProjectRoot_` and compare it against `context.assets.projectRoot.string()` on each draw call, reloading if it differs. This prevents stale data appearing when the user switches projects.
 - The sprite editor undo stack snapshots whole state. Command-based undo should replace it once documents become large.

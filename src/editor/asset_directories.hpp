@@ -18,6 +18,7 @@ struct AssetDirectories {
     std::filesystem::path gameAnimations{"assets/game/animations"};
     std::filesystem::path gamePalettes{"assets/game/palettes"};
     std::filesystem::path gamePaths{"assets/game/paths"};
+    std::filesystem::path gameDialogue{"assets/game/dialogue"};
     std::filesystem::path gameFonts{"assets/game/fonts"};
     std::filesystem::path gameMusic{"assets/game/music"};
 
@@ -33,6 +34,7 @@ struct AssetDirectories {
     [[nodiscard]] std::filesystem::path gameAnimationPath() const;
     [[nodiscard]] std::filesystem::path gamePalettePath() const;
     [[nodiscard]] std::filesystem::path gamePathPath() const;
+    [[nodiscard]] std::filesystem::path gameDialoguePath() const;
     [[nodiscard]] std::filesystem::path gameFontPath() const;
     [[nodiscard]] std::filesystem::path gameMusicPath() const;
 };

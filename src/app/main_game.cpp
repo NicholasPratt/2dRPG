@@ -6,6 +6,7 @@
 #include "imgui_impl_opengl2.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -241,10 +242,32 @@ int main(int argc, char** argv)
     std::filesystem::path projectRoot = workspaceRoot;
     std::filesystem::path chapterPath;
 
-    if (argc > 1) {
-        chapterPath = std::filesystem::path(argv[1]).is_absolute()
-            ? std::filesystem::path(argv[1])
-            : workspaceRoot / std::filesystem::path(argv[1]);
+    // Optional editor test-launch flags: --fresh, --screen <id>, --pos <x> <y>.
+    bool fresh = false;
+    std::string startScreen;
+    bool hasStartPos = false;
+    float startX = 0.0f;
+    float startY = 0.0f;
+    std::string firstPositional;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--fresh") {
+            fresh = true;
+        } else if (arg == "--screen" && i + 1 < argc) {
+            startScreen = argv[++i];
+        } else if (arg == "--pos" && i + 2 < argc) {
+            startX = std::strtof(argv[++i], nullptr);
+            startY = std::strtof(argv[++i], nullptr);
+            hasStartPos = true;
+        } else if (firstPositional.empty() && !arg.empty() && arg[0] != '-') {
+            firstPositional = arg;
+        }
+    }
+
+    if (!firstPositional.empty()) {
+        chapterPath = std::filesystem::path(firstPositional).is_absolute()
+            ? std::filesystem::path(firstPositional)
+            : workspaceRoot / std::filesystem::path(firstPositional);
         projectRoot = projectRootFromChapterPath(chapterPath, workspaceRoot);
     } else {
         ChapterChoice selected;
@@ -256,6 +279,13 @@ int main(int argc, char** argv)
     }
 
     adventure::game::Engine engine(projectRoot);
+    engine.setFreshStart(fresh);
+    if (!startScreen.empty()) {
+        engine.setStartScreen(startScreen);
+    }
+    if (hasStartPos) {
+        engine.setStartPosition(startX, startY);
+    }
     std::string error;
     if (!engine.initialize(chapterPath, &error)) {
         std::cerr << error << "\n";

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <vector>
 #include <system_error>
 
@@ -74,6 +75,7 @@ bool launchDetachedProcess(const std::filesystem::path& executable,
     const std::filesystem::path& chapterPath,
     const std::filesystem::path& projectRoot,
     const std::filesystem::path& logPath,
+    const std::vector<std::string>& extraArgs,
     std::string& errorMessage)
 {
     std::error_code error;
@@ -102,7 +104,15 @@ bool launchDetachedProcess(const std::filesystem::path& executable,
             close(logFd);
         }
 
-        execl(executableString.c_str(), executableString.c_str(), chapterString.c_str(), static_cast<char*>(nullptr));
+        std::vector<std::string> argStrings = {executableString, chapterString};
+        argStrings.insert(argStrings.end(), extraArgs.begin(), extraArgs.end());
+        std::vector<char*> argv;
+        argv.reserve(argStrings.size() + 1);
+        for (std::string& s : argStrings) {
+            argv.push_back(s.data());
+        }
+        argv.push_back(nullptr);
+        execv(executableString.c_str(), argv.data());
         _exit(127);
     }
 
@@ -154,6 +164,24 @@ const char* gameEffectTypeName(game::GameEffectType type)
             return "Take Item";
     }
     return "Add Integer";
+}
+
+const char* itemDefTypeName(game::ItemDefType type)
+{
+    switch (type) {
+        case game::ItemDefType::Weapon: return "Weapon";
+        case game::ItemDefType::Ammo: return "Ammo";
+        case game::ItemDefType::Health: return "Health";
+        case game::ItemDefType::Mana: return "Mana";
+        case game::ItemDefType::Currency: return "Currency";
+        case game::ItemDefType::Key: return "Key";
+        case game::ItemDefType::Quest: return "Quest";
+        case game::ItemDefType::Consumable: return "Consumable";
+        case game::ItemDefType::Material: return "Material";
+        case game::ItemDefType::Equipment: return "Equipment";
+        case game::ItemDefType::Custom: return "Custom";
+    }
+    return "Custom";
 }
 
 bool editString(const char* label, std::string& value)
@@ -284,6 +312,20 @@ void EditorApp::draw()
         hasRequestedTab_ = true;
     }
 
+    if (context_.requestEditDialogueGraph) {
+        context_.requestEditDialogueGraph = false;
+        if (screenEditMode_ == ScreenEditMode::Npcs) {
+            layoutEditor_.applyContextSelectedScreenData(context_);
+        }
+        if (!context_.requestedDialogueGraphId.empty()) {
+            dialogueGraphEditor_.openGraph(context_, context_.requestedDialogueGraphId);
+            context_.requestedDialogueGraphId.clear();
+        }
+        enterScreenMode(ScreenEditMode::DialogueGraph);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
     if (context_.requestEditSprite) {
         context_.requestEditSprite = false;
         if (!context_.requestedSpriteReference.empty()) {
@@ -307,6 +349,7 @@ void EditorApp::draw()
                 if (auto spriteToOpen = characterEditor_.draw(context_)) {
                     spriteEditor_.openCharacterSpriteReference(*spriteToOpen);
                     spriteEditorLaunchedFromCharacter_ = true;
+                    spriteEditorLaunchedFromProjectItems_ = false;
                     spriteReturnMode_ = ScreenEditMode::Layout;
                     enterScreenMode(ScreenEditMode::Sprite);
                     requestedTab_ = MainTab::Layout;
@@ -323,11 +366,21 @@ void EditorApp::draw()
                 if (auto spriteToOpen = weaponEditor_.draw(context_)) {
                     spriteEditor_.openSpriteReference(*spriteToOpen);
                     spriteEditorLaunchedFromCharacter_ = false;
+                    spriteEditorLaunchedFromProjectItems_ = false;
                     spriteReturnMode_ = ScreenEditMode::Layout;
                     enterScreenMode(ScreenEditMode::Sprite);
                     requestedTab_ = MainTab::Layout;
                     hasRequestedTab_ = true;
                 }
+                ImGui::EndTabItem();
+            }
+
+            ImGuiTabItemFlags itemsTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Items ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Items", nullptr, itemsTabFlags)) {
+                if (itemsTabFlags != 0) {
+                    hasRequestedTab_ = false;
+                }
+                drawProjectItemsTab();
                 ImGui::EndTabItem();
             }
 
@@ -471,6 +524,11 @@ void EditorApp::drawScreensTab()
             ImGui::Separator();
             npcEditor_.drawTypes(context_);
             break;
+        case ScreenEditMode::DialogueGraph:
+            drawScopedEditHeader("Editing NPC Dialogue", true, true);
+            ImGui::Separator();
+            dialogueGraphEditor_.draw(context_);
+            break;
         case ScreenEditMode::Sprite:
             drawScopedEditHeader("Editing Sprite", true, true);
             ImGui::Separator();
@@ -599,6 +657,101 @@ void EditorApp::drawProjectStateTab()
     ImGui::Text("Font folder: %s", context_.assets.gameFontPath().string().c_str());
 }
 
+void EditorApp::drawProjectItemsTab()
+{
+    const auto itemIdCount = [this](const std::string& id) {
+        return static_cast<int>(std::count_if(context_.itemDefs.begin(), context_.itemDefs.end(), [&id](const game::ItemDef& item) {
+            return item.id == id;
+        }));
+    };
+    const auto addDefaultIfMissing = [this](const game::ItemDef& item) {
+        const auto it = std::find_if(context_.itemDefs.begin(), context_.itemDefs.end(), [&item](const game::ItemDef& existing) {
+            return existing.id == item.id;
+        });
+        if (it == context_.itemDefs.end()) {
+            context_.itemDefs.push_back(item);
+            return true;
+        }
+        return false;
+    };
+
+    ImGui::TextUnformatted("Project Items");
+    ImGui::SameLine();
+    if (ImGui::Button("Add Item Def")) {
+        game::ItemDef item;
+        item.id = "item_" + std::to_string(context_.itemDefs.size() + 1);
+        item.name = "New Item";
+        context_.itemDefs.push_back(std::move(item));
+        context_.markDirty();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Add Missing Defaults")) {
+        bool changed = false;
+        changed |= addDefaultIfMissing({"gold", "Gold", game::ItemDefType::Currency, "gold", "Money", 1, true, ""});
+        changed |= addDefaultIfMissing({"small_key", "Small Key", game::ItemDefType::Key, "small_key", "", 1, true, ""});
+        changed |= addDefaultIfMissing({"quest_token", "Quest Token", game::ItemDefType::Quest, "quest_token", "", 1, true, ""});
+        changed |= addDefaultIfMissing({"potion", "Potion", game::ItemDefType::Health, "potion", "", 3, true, ""});
+        changed |= addDefaultIfMissing({"herb", "Herb", game::ItemDefType::Material, "herb", "", 1, true, ""});
+        changed |= addDefaultIfMissing({"mana_orb", "Mana Orb", game::ItemDefType::Mana, "mana_orb", "Mana", 5, true, ""});
+        changed |= addDefaultIfMissing({"iron_ore", "Iron Ore", game::ItemDefType::Material, "iron_ore", "", 1, true, ""});
+        changed |= addDefaultIfMissing({"bronze_ring", "Bronze Ring", game::ItemDefType::Equipment, "bronze_ring", "", 1, false, ""});
+        if (changed) {
+            context_.markDirty();
+        }
+    }
+
+    for (int i = 0; i < static_cast<int>(context_.itemDefs.size()); ++i) {
+        game::ItemDef& item = context_.itemDefs[static_cast<std::size_t>(i)];
+        ImGui::PushID(i);
+        ImGui::Separator();
+        if (editString("ID", item.id)) { context_.markDirty(); }
+        if (item.id.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.32f, 1.0f), "ID is required.");
+        } else if (itemIdCount(item.id) > 1) {
+            ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.32f, 1.0f), "Duplicate item ID.");
+        }
+        if (editString("Name", item.name)) { context_.markDirty(); }
+        int type = static_cast<int>(item.type);
+        if (ImGui::BeginCombo("Type", itemDefTypeName(item.type))) {
+            for (int t = 0; t <= 10; ++t) {
+                const auto candidate = static_cast<game::ItemDefType>(t);
+                if (ImGui::Selectable(itemDefTypeName(candidate), t == type)) {
+                    item.type = candidate;
+                    context_.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (editString("Sprite ID", item.spriteId)) { context_.markDirty(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Edit Sprite")) {
+            if (item.spriteId.empty()) {
+                item.spriteId = item.id.empty() ? "item_sprite" : item.id;
+                context_.markDirty();
+            }
+            context_.requestedSpriteReference = (context_.assets.gameSpritePath() / (item.spriteId + ".sprite.json")).generic_string();
+            context_.requestEditSprite = true;
+            spriteEditorLaunchedFromProjectItems_ = true;
+        }
+        const char* targetLabel = "Target";
+        if (item.type == game::ItemDefType::Currency) { targetLabel = "Money Var"; }
+        else if (item.type == game::ItemDefType::Mana) { targetLabel = "Mana Var"; }
+        else if (item.type == game::ItemDefType::Ammo) { targetLabel = "Ammo Type"; }
+        else if (item.type == game::ItemDefType::Weapon) { targetLabel = "Weapon ID"; }
+        if (editString(targetLabel, item.targetId)) { context_.markDirty(); }
+        if (item.type == game::ItemDefType::Custom && editString("Custom Type", item.customType)) { context_.markDirty(); }
+        if (ImGui::DragInt("Value", &item.value, 1.0f, 0, 999999)) { context_.markDirty(); }
+        if (ImGui::Checkbox("Stackable", &item.stackable)) { context_.markDirty(); }
+        if (ImGui::Button("Delete Item Def")) {
+            context_.itemDefs.erase(context_.itemDefs.begin() + i);
+            context_.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+}
+
 void EditorApp::drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving)
 {
     ImGui::TextUnformatted(title);
@@ -612,6 +765,16 @@ void EditorApp::drawScopedEditHeader(const char* title, bool saveAndExit, bool e
     if (saveAndExit && ImGui::Button("Save and Play", ImVec2(140.0f, 30.0f))) {
         launchGame();
     }
+    ImGui::SameLine();
+    if (saveAndExit && ImGui::Button("Play Selected Screen", ImVec2(170.0f, 30.0f))) {
+        launchGame(/*fresh=*/true, context_.selectedScreenId, /*fromCheckpoint=*/false);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Test-launch fresh on the selected screen (full HP, all placed enemies present).");
+    ImGui::SameLine();
+    if (saveAndExit && ImGui::Button("Play From Last Entry", ImVec2(170.0f, 30.0f))) {
+        launchGame(/*fresh=*/true, /*startScreen=*/{}, /*fromCheckpoint=*/true);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Test-launch fresh where you last entered a screen in play.");
     ImGui::SameLine();
     if (exitWithoutSaving && ImGui::Button("Exit without Saving", ImVec2(170.0f, 30.0f))) {
         exitScreenModeDiscarding();
@@ -651,6 +814,11 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::NpcTypes:
             npcEditor_.saveProjectNpcTypes(context_);
             break;
+        case ScreenEditMode::DialogueGraph:
+            dialogueGraphEditor_.save(context_);
+            layoutEditor_.applyContextSelectedScreenData(context_);
+            (void)layoutEditor_.saveCurrentChapter(context_);
+            break;
         case ScreenEditMode::Items:
             itemPlacementEditor_.saveForScreen(context_);
             break;
@@ -663,12 +831,18 @@ void EditorApp::exitScreenModeSaving()
                 characterEditor_.setSelectedSpriteReference(context_, spriteEditor_.spriteMetadataReference(context_));
                 spriteEditorLaunchedFromCharacter_ = false;
             }
+            if (spriteEditorLaunchedFromProjectItems_) {
+                requestedTab_ = MainTab::Items;
+                hasRequestedTab_ = true;
+                spriteEditorLaunchedFromProjectItems_ = false;
+            }
             break;
         case ScreenEditMode::Layout:
             break;
     }
     screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ :
-        (screenEditMode_ == ScreenEditMode::ItemEdit ? ScreenEditMode::Items : ScreenEditMode::Layout);
+        (screenEditMode_ == ScreenEditMode::ItemEdit ? ScreenEditMode::Items :
+        (screenEditMode_ == ScreenEditMode::DialogueGraph ? ScreenEditMode::Npcs : ScreenEditMode::Layout));
 }
 
 void EditorApp::exitScreenModeDiscarding()
@@ -697,6 +871,8 @@ void EditorApp::exitScreenModeDiscarding()
         case ScreenEditMode::NpcTypes:
             context_.npcTypes = npcTypeSnapshot_;
             break;
+        case ScreenEditMode::DialogueGraph:
+            break;
         case ScreenEditMode::Items:
             context_.selectedScreenItems = itemPlacementSnapshot_;
             itemPlacementEditor_.openForScreen(context_);
@@ -708,12 +884,18 @@ void EditorApp::exitScreenModeDiscarding()
         case ScreenEditMode::Sprite:
             spriteEditor_.resetDocumentBuffers();
             spriteEditorLaunchedFromCharacter_ = false;
+            if (spriteEditorLaunchedFromProjectItems_) {
+                requestedTab_ = MainTab::Items;
+                hasRequestedTab_ = true;
+                spriteEditorLaunchedFromProjectItems_ = false;
+            }
             break;
         case ScreenEditMode::Layout:
             break;
     }
     screenEditMode_ = screenEditMode_ == ScreenEditMode::Sprite ? spriteReturnMode_ :
-        (screenEditMode_ == ScreenEditMode::ItemEdit ? ScreenEditMode::Items : ScreenEditMode::Layout);
+        (screenEditMode_ == ScreenEditMode::ItemEdit ? ScreenEditMode::Items :
+        (screenEditMode_ == ScreenEditMode::DialogueGraph ? ScreenEditMode::Npcs : ScreenEditMode::Layout));
 }
 
 void EditorApp::requestExit()
@@ -788,6 +970,7 @@ void EditorApp::ensureProjectDirectories() const
     std::filesystem::create_directories(context_.assets.gameAnimationPath(), error);
     std::filesystem::create_directories(context_.assets.gamePalettePath(), error);
     std::filesystem::create_directories(context_.assets.gamePathPath(), error);
+    std::filesystem::create_directories(context_.assets.gameDialoguePath(), error);
     std::filesystem::create_directories(context_.assets.gameFontPath(), error);
     std::filesystem::create_directories(context_.assets.gameMusicPath(), error);
 }
@@ -810,6 +993,7 @@ void EditorApp::loadProjectMetadata()
         context_.importedCharacterIds = project.characterIds;
         context_.enemyTypes = project.enemyTypes;
         context_.weaponDefs = project.weaponDefs;
+        context_.itemDefs = project.itemDefs;
         context_.startingWeaponId = project.startingWeaponId;
         context_.stateVariables = project.stateVariables;
         context_.effectDefs = project.effectDefs;
@@ -820,6 +1004,7 @@ void EditorApp::loadProjectMetadata()
         context_.importedCharacterIds.clear();
         context_.enemyTypes.clear();
         context_.weaponDefs.clear();
+        context_.itemDefs.clear();
         context_.startingWeaponId.clear();
         context_.stateVariables.clear();
         context_.effectDefs.clear();
@@ -842,6 +1027,7 @@ void EditorApp::saveProjectMetadata()
     project.characterIds = context_.importedCharacterIds;
     project.enemyTypes = context_.enemyTypes;
     project.weaponDefs = context_.weaponDefs;
+    project.itemDefs = context_.itemDefs;
     project.startingWeaponId = context_.startingWeaponId;
     project.stateVariables = context_.stateVariables;
     project.effectDefs = context_.effectDefs;
@@ -863,6 +1049,12 @@ void EditorApp::drawChapterMenu()
             }
             if (ImGui::MenuItem("Save and Play Game")) {
                 launchGame();
+            }
+            if (ImGui::MenuItem("Test: Play From Last Entry")) {
+                launchGame(/*fresh=*/true, /*startScreen=*/{}, /*fromCheckpoint=*/true);
+            }
+            if (ImGui::MenuItem("Test: Play Selected Screen", nullptr, false, !context_.selectedScreenId.empty())) {
+                launchGame(/*fresh=*/true, context_.selectedScreenId, /*fromCheckpoint=*/false);
             }
             if (ImGui::MenuItem("Refresh list")) {
                 refreshChapterList();
@@ -1142,7 +1334,7 @@ void EditorApp::saveActiveEditingScope()
     }
 }
 
-void EditorApp::launchGame()
+void EditorApp::launchGame(bool fresh, const std::string& startScreen, bool fromCheckpoint)
 {
     saveCurrentChapterAndExports();
     if (context_.currentChapterId.empty()) {
@@ -1202,9 +1394,55 @@ void EditorApp::launchGame()
         return;
     }
 
+    // Build runtime arguments for test launches.
+    std::vector<std::string> extraArgs;
+    if (fresh) {
+        extraArgs.emplace_back("--fresh");
+    }
+
+    std::string launchScreen = startScreen;
+    std::string posDescription;
+    if (fromCheckpoint) {
+        // Read the runtime's last-entered screen + position.
+        const std::filesystem::path checkpointPath = projectRoot / "assets/game/test_checkpoint";
+        std::ifstream in(checkpointPath);
+        if (!in) {
+            playStatus_ = "No checkpoint yet — play once so the runtime records where you entered a screen.";
+            return;
+        }
+        std::string key;
+        std::string cpScreen;
+        float cpX = -1.0f;
+        float cpY = -1.0f;
+        while (in >> key) {
+            if (key == "screen") {
+                in >> cpScreen;
+            } else if (key == "pos") {
+                in >> cpX >> cpY;
+            }
+        }
+        if (cpScreen.empty()) {
+            playStatus_ = "Checkpoint file is unreadable.";
+            return;
+        }
+        launchScreen = cpScreen;
+        if (cpX >= 0.0f && cpY >= 0.0f) {
+            extraArgs.emplace_back("--pos");
+            extraArgs.emplace_back(std::to_string(cpX));
+            extraArgs.emplace_back(std::to_string(cpY));
+            posDescription = " @ (" + std::to_string(static_cast<int>(cpX)) + "," + std::to_string(static_cast<int>(cpY)) + ")";
+        }
+    }
+    if (!launchScreen.empty()) {
+        extraArgs.emplace_back("--screen");
+        extraArgs.emplace_back(launchScreen);
+    }
+
     std::string launchError;
-    if (launchDetachedProcess(executable, chapterPath, projectRoot, logPath, launchError)) {
-        playStatus_ = "Launched game: " + executable.filename().string() + " (log: " + logPath.filename().string() + ")";
+    if (launchDetachedProcess(executable, chapterPath, projectRoot, logPath, extraArgs, launchError)) {
+        std::string where = launchScreen.empty() ? "chapter start" : launchScreen;
+        playStatus_ = std::string("Launched ") + (fresh ? "test" : "game") + ": " + where + posDescription +
+            " (log: " + logPath.filename().string() + ")";
     } else {
         playStatus_ = "Failed to launch game: " + launchError;
     }

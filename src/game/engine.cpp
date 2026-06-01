@@ -37,10 +37,34 @@ constexpr float kMeleeActiveSeconds = 0.15f;
 constexpr float kMeleeAttackSeconds = 0.28f;
 constexpr float kRangedAttackSeconds = 0.22f;
 constexpr float kAttackMoveSpeedScale = 0.55f;
+// Melee swing timing: windup → active hit window → recovery (sums within kMeleeAttackSeconds).
+constexpr float kMeleeWindupSeconds = 0.06f;
+constexpr float kMeleeActiveWindowSeconds = 0.12f;
+// Hit-reaction feel.
+constexpr float kEnemyKnockbackBasePxPerSecond = 220.0f;  // scaled by (1 - knockbackResistance)
+constexpr float kEnemyKnockbackDecayPerSecond = 6.0f;     // exponential decay rate
+constexpr float kEnemyHitFlashSeconds = 0.12f;
+constexpr float kPlayerKnockbackPxPerSecond = 160.0f;
+constexpr float kPlayerKnockbackDecayPerSecond = 8.0f;
 constexpr float kItemPickupRadius = 12.0f;
 constexpr float kProjectileHalfSize = 4.0f;
+// Rebounding projectiles (e.g. slingshot stone): bounce, lose energy, then settle on the ground.
+constexpr float kProjectileReboundRestitution = 0.55f;  // velocity retained per bounce
+constexpr int kProjectileMaxBounces = 2;
+constexpr float kProjectileMinReboundSpeed = 36.0f;     // below this, the projectile settles
+constexpr float kProjectileSettleSeconds = 0.6f;        // grounded rest before despawn
 constexpr float kEnemyDeathVisualSeconds = 0.35f;
 constexpr float kSpeechTextScale = 1.5f;
+constexpr float kDialogueTextScale = 1.8f;
+constexpr int kDialogueVisibleLines = 4;
+constexpr float kGamepadDeadZone = 0.35f;
+
+std::size_t dialogueWrapChars(float screenWidth)
+{
+    constexpr float margin = 10.0f;
+    constexpr float padX = 10.0f;
+    return std::max<std::size_t>(24, static_cast<std::size_t>((screenWidth - margin * 2.0f - padX * 2.0f) / (6.0f * kDialogueTextScale)));
+}
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -225,18 +249,34 @@ std::vector<std::string> wrapText(const std::string& text, std::size_t maxCharsP
     std::vector<std::string> lines;
     std::string current;
     std::string word;
+    const auto canAddLine = [&]() {
+        return maxLines == 0 || lines.size() < maxLines;
+    };
+    const auto pushCurrent = [&]() {
+        if (!current.empty() && canAddLine()) {
+            lines.push_back(current);
+            current.clear();
+        }
+    };
     const auto flushWord = [&]() {
-        if (word.empty() || lines.size() >= maxLines) {
+        if (word.empty() || !canAddLine()) {
             word.clear();
             return;
         }
-        if (current.empty()) {
-            current = word.substr(0, maxCharsPerLine);
-        } else if (current.size() + 1 + word.size() <= maxCharsPerLine) {
-            current += " " + word;
-        } else {
-            lines.push_back(current);
-            current = word.substr(0, maxCharsPerLine);
+        while (!word.empty() && canAddLine()) {
+            const std::size_t available = current.empty()
+                ? maxCharsPerLine
+                : (maxCharsPerLine > current.size() + 1 ? maxCharsPerLine - current.size() - 1 : 0);
+            if (word.size() <= available) {
+                current += current.empty() ? word : " " + word;
+                word.clear();
+            } else if (current.empty()) {
+                current = word.substr(0, maxCharsPerLine);
+                word.erase(0, std::min(maxCharsPerLine, word.size()));
+                pushCurrent();
+            } else {
+                pushCurrent();
+            }
         }
         word.clear();
     };
@@ -249,7 +289,7 @@ std::vector<std::string> wrapText(const std::string& text, std::size_t maxCharsP
         }
     }
     flushWord();
-    if (!current.empty() && lines.size() < maxLines) {
+    if (!current.empty() && canAddLine()) {
         lines.push_back(current);
     }
     return lines;
@@ -307,6 +347,55 @@ PathWaypoint pointAtDistance(const EnemyPath& path, float targetDistance)
         walked += segLen;
     }
     return path.loop ? path.waypoints.front() : path.waypoints.back();
+}
+
+// Arc-distance along the path of the point nearest to (x, y). Used to resume patrol
+// from wherever an enemy ended up after chasing, instead of snapping to a stale distance.
+float nearestPathDistance(const EnemyPath& path, float x, float y, PathWaypoint& outPoint)
+{
+    const float length = approximatePathLength(path);
+    if (length <= 0.0f || path.waypoints.empty()) {
+        outPoint = path.waypoints.empty() ? PathWaypoint{} : path.waypoints.front();
+        return 0.0f;
+    }
+    constexpr float kSampleStepPx = 3.0f;
+    const int samples = std::max(2, static_cast<int>(length / kSampleStepPx));
+    PathWaypoint bestPoint = pointAtDistance(path, 0.0f);
+    float bestDistSq = (bestPoint.x - x) * (bestPoint.x - x) + (bestPoint.y - y) * (bestPoint.y - y);
+    float bestD = 0.0f;
+    for (int i = 1; i <= samples; ++i) {
+        const float d = length * static_cast<float>(i) / static_cast<float>(samples);
+        const PathWaypoint p = pointAtDistance(path, d);
+        const float distSq = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            bestD = d;
+            bestPoint = p;
+        }
+    }
+    outPoint = bestPoint;
+    return bestD;
+}
+
+// For linear paths: the waypoint an entity should head toward next given an arc-distance.
+std::size_t waypointIndexForDistance(const EnemyPath& path, float targetDistance)
+{
+    const int n = static_cast<int>(path.waypoints.size());
+    if (n < 2) {
+        return 0;
+    }
+    const int segments = path.loop ? n : n - 1;
+    float walked = 0.0f;
+    for (int i = 0; i < segments; ++i) {
+        const PathWaypoint& a = path.waypoints[static_cast<std::size_t>(i)];
+        const PathWaypoint& b = path.waypoints[static_cast<std::size_t>((i + 1) % n)];
+        const float segLen = distance(a, b);
+        if (walked + segLen >= targetDistance) {
+            return static_cast<std::size_t>((i + 1) % n);
+        }
+        walked += segLen;
+    }
+    return path.loop ? 0u : static_cast<std::size_t>(n - 1);
 }
 
 } // namespace
@@ -529,22 +618,60 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
         return false;
     }
 
-    if (!loadScreen(chapter_.startScreenId, &error)) {
+    // Seed runtime state from project variable defaults, then merge in any saved progress.
+    // Must happen before loadScreen so the start screen filters out already-defeated enemies.
+    {
+        GameProject project;
+        if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+            for (const StateVariableDef& def : project.stateVariables) {
+                switch (def.type) {
+                    case StateVariableType::Integer: gameState_.setInt(def.id, def.defaultInt); break;
+                    case StateVariableType::Boolean: gameState_.setBool(def.id, def.defaultBool); break;
+                    case StateVariableType::Item: if (def.defaultBool) gameState_.giveItem(def.id); break;
+                }
+            }
+        }
+        // Fresh test launches ignore saved progress so all authored content appears.
+        if (!freshStart_) {
+            const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
+            std::error_code ec;
+            GameState saved;
+            if (std::filesystem::exists(savePath, ec) && loadGameState(savePath, saved, nullptr)) {
+                for (const auto& [id, value] : saved.ints()) gameState_.setInt(id, value);
+                for (const auto& [id, value] : saved.bools()) gameState_.setBool(id, value);
+                for (const std::string& id : saved.items()) gameState_.giveItem(id);
+                for (const std::string& key : saved.defeatedEnemies()) gameState_.markEnemyDefeated(key);
+            }
+        }
+    }
+
+    // Pick the starting screen: an explicit override (editor test launch) or the chapter default.
+    std::string startScreen = chapter_.startScreenId;
+    if (!startScreenOverride_.empty() && findScreen(chapter_, startScreenOverride_) != nullptr) {
+        startScreen = startScreenOverride_;
+    }
+    if (!loadScreen(startScreen, &error)) {
         setError(errorMessage, error);
         return false;
     }
     loadPlayableCharacter();
     loadWeapons();
     loadProjectFont();
-    const float centerX = screenWidthPx() * 0.5f;
-    const float centerY = screenHeightPx() * 0.5f;
-    if (playerCanOccupy(centerX, centerY)) {
-        playerX_ = centerX;
-        playerY_ = centerY;
+    if (startPosX_ >= 0.0f && startPosY_ >= 0.0f && playerCanOccupy(startPosX_, startPosY_)) {
+        playerX_ = startPosX_;
+        playerY_ = startPosY_;
     } else {
-        playerX_ = static_cast<float>(activeMap_.spawnX * kTileSize + kTileSize / 2);
-        playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
+        const float centerX = screenWidthPx() * 0.5f;
+        const float centerY = screenHeightPx() * 0.5f;
+        if (playerCanOccupy(centerX, centerY)) {
+            playerX_ = centerX;
+            playerY_ = centerY;
+        } else {
+            playerX_ = static_cast<float>(activeMap_.spawnX * kTileSize + kTileSize / 2);
+            playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
+        }
     }
+    writeCheckpoint(startScreen, playerX_, playerY_);
     return true;
 }
 
@@ -569,6 +696,8 @@ void Engine::run()
         render();
         glfwSwapBuffers(window_);
     }
+
+    saveRuntimeState();  // persist progress on quit
 }
 
 bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
@@ -671,12 +800,15 @@ void Engine::loadWeapons()
 {
     meleeWeapon_.reset();
     rangedWeapon_.reset();
+    itemDefs_.clear();
+    inventory_.clear();
     ammo_.clear();
 
     GameProject project;
     if (!loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
         return;
     }
+    itemDefs_ = project.itemDefs;
 
     if (project.startingWeaponId.empty()) {
         return;
@@ -818,6 +950,11 @@ void Engine::loadPathEntities()
                 path.combat.hitboxHeight = type->hitboxHeight;
                 path.combat.attackCooldownSeconds = type->attackCooldownSeconds;
                 path.combat.attacks = type->attacks;
+                path.combat.knockbackResistance = type->knockbackResistance;
+                path.combat.hitstunSeconds = type->hitstunSeconds;
+                path.combat.aggroRange = type->aggroRange;
+                path.combat.killVariable = type->killVariable;
+                path.combat.killAmount = type->killAmount;
                 if (path.speed <= 0.0f) {
                     path.speed = type->speed;
                 }
@@ -830,7 +967,7 @@ void Engine::loadPathEntities()
             entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
             entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
             if (activeScreen_ != nullptr &&
-                defeatedEnemies_.count(activeScreen_->id + "/" + entity.path.id) > 0) {
+                gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id)) {
                 continue;
             }
             pathEntities_.push_back(std::move(entity));
@@ -863,7 +1000,7 @@ void Engine::loadPathEntities()
         entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
         entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
         if (activeScreen_ != nullptr &&
-            defeatedEnemies_.count(activeScreen_->id + "/" + entity.path.id) > 0) {
+            gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id)) {
             continue;
         }
         pathEntities_.push_back(std::move(entity));
@@ -917,6 +1054,9 @@ void Engine::loadAllSprites()
     if (rangedWeapon_.has_value()) {
         loadSpriteById(rangedWeapon_->spriteId);
         loadSpriteById(rangedWeapon_->ammoSpriteId);
+    }
+    for (const ItemDef& item : itemDefs_) {
+        loadSpriteById(item.spriteId);
     }
 }
 
@@ -1001,11 +1141,90 @@ void Engine::loadPlayableCharacter()
     }
 }
 
+bool Engine::gamepadButtonDown(int button) const
+{
+    GLFWgamepadstate state{};
+    if (!glfwJoystickIsGamepad(GLFW_JOYSTICK_1) ||
+        !glfwGetGamepadState(GLFW_JOYSTICK_1, &state) ||
+        button < 0 || button >= GLFW_GAMEPAD_BUTTON_LAST + 1) {
+        return false;
+    }
+    return state.buttons[button] == GLFW_PRESS;
+}
+
+float Engine::gamepadAxis(int axis) const
+{
+    GLFWgamepadstate state{};
+    if (!glfwJoystickIsGamepad(GLFW_JOYSTICK_1) ||
+        !glfwGetGamepadState(GLFW_JOYSTICK_1, &state) ||
+        axis < 0 || axis >= GLFW_GAMEPAD_AXIS_LAST + 1) {
+        return 0.0f;
+    }
+    const float value = state.axes[axis];
+    return std::abs(value) >= kGamepadDeadZone ? value : 0.0f;
+}
+
+bool Engine::inputDown(InputAction action) const
+{
+    switch (action) {
+        case InputAction::Up:
+            return glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_DPAD_UP) ||
+                gamepadAxis(GLFW_GAMEPAD_AXIS_LEFT_Y) < 0.0f;
+        case InputAction::Down:
+            return glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_DPAD_DOWN) ||
+                gamepadAxis(GLFW_GAMEPAD_AXIS_LEFT_Y) > 0.0f;
+        case InputAction::Left:
+            return glfwGetKey(window_, GLFW_KEY_LEFT) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_DPAD_LEFT) ||
+                gamepadAxis(GLFW_GAMEPAD_AXIS_LEFT_X) < 0.0f;
+        case InputAction::Right:
+            return glfwGetKey(window_, GLFW_KEY_RIGHT) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT) ||
+                gamepadAxis(GLFW_GAMEPAD_AXIS_LEFT_X) > 0.0f;
+        case InputAction::Interact:
+            return glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_ENTER) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_SPACE) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_A);
+        case InputAction::Melee:
+            return glfwGetKey(window_, GLFW_KEY_Z) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_X);
+        case InputAction::Ranged:
+            return glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_B);
+        case InputAction::Inventory:
+            return glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_Y) ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_START) ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_BACK);
+        case InputAction::Exit:
+            return glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+    }
+    return false;
+}
+
 void Engine::update(float dt)
 {
     runtimeSeconds_ += dt;
     hazardCooldownSeconds_ = std::max(0.0f, hazardCooldownSeconds_ - dt);
     playerInvulnerableSeconds_ = std::max(0.0f, playerInvulnerableSeconds_ - dt);
+
+    const bool inventoryInputDown = inputDown(InputAction::Inventory);
+    if (inventoryInputDown && !inventoryInputWasDown_ &&
+        interactionState_ != InteractionState::InDialogue &&
+        interactionState_ != InteractionState::InShop) {
+        inventoryVisible_ = !inventoryVisible_;
+        inventoryUpWasDown_ = false;
+        inventoryDownWasDown_ = false;
+        inventoryUseWasDown_ = false;
+    }
+    inventoryInputWasDown_ = inventoryInputDown;
 
     if (transitionState_ == TransitionState::Sliding) {
         transitionTime_ += dt;
@@ -1014,6 +1233,21 @@ void Engine::update(float dt)
             destroyTexture(prevFloorTexture_);
             destroyTexture(prevWallTexture_);
         }
+        return;
+    }
+
+    if (inventoryVisible_) {
+        updateInventoryInput();
+        if (playerActionType_ != "idle") {
+            playerActionType_ = "idle";
+            playerAnimSeconds_ = 0.0f;
+        }
+        playerIsMoving_ = false;
+        return;
+    }
+    if (interactionState_ == InteractionState::InShop) {
+        updateShopInput();
+        playerIsMoving_ = false;
         return;
     }
 
@@ -1029,6 +1263,149 @@ void Engine::update(float dt)
     updateItemPickups();
 }
 
+std::vector<std::string> Engine::sortedInventoryIds() const
+{
+    std::vector<std::string> ids;
+    ids.reserve(inventory_.size());
+    for (const auto& [id, count] : inventory_) {
+        if (count > 0) {
+            ids.push_back(id);
+        }
+    }
+    std::sort(ids.begin(), ids.end(), [this](const std::string& a, const std::string& b) {
+        const auto nameFor = [this](const std::string& id) -> std::string {
+            for (const ItemDef& def : itemDefs_) {
+                if (def.id == id) {
+                    return def.name.empty() ? def.id : def.name;
+                }
+            }
+            return id;
+        };
+        return nameFor(a) < nameFor(b);
+    });
+    return ids;
+}
+
+void Engine::updateInventoryInput()
+{
+    const std::vector<std::string> ids = sortedInventoryIds();
+    if (ids.empty()) {
+        inventorySelection_ = 0;
+        inventoryScroll_ = 0;
+    } else {
+        inventorySelection_ = std::clamp(inventorySelection_, 0, static_cast<int>(ids.size()) - 1);
+        constexpr int kVisibleRows = 7;
+        const bool upDown = inputDown(InputAction::Up);
+        const bool downDown = inputDown(InputAction::Down);
+        const bool useDown = inputDown(InputAction::Interact);
+
+        if (upDown && !inventoryUpWasDown_) {
+            inventorySelection_ = std::max(0, inventorySelection_ - 1);
+        }
+        if (downDown && !inventoryDownWasDown_) {
+            inventorySelection_ = std::min(static_cast<int>(ids.size()) - 1, inventorySelection_ + 1);
+        }
+        if (useDown && !inventoryUseWasDown_) {
+            useInventoryItem(ids[static_cast<std::size_t>(inventorySelection_)]);
+        }
+
+        inventoryUpWasDown_ = upDown;
+        inventoryDownWasDown_ = downDown;
+        inventoryUseWasDown_ = useDown;
+        inventoryScroll_ = std::clamp(inventoryScroll_, 0, std::max(0, static_cast<int>(ids.size()) - kVisibleRows));
+        if (inventorySelection_ < inventoryScroll_) {
+            inventoryScroll_ = inventorySelection_;
+        } else if (inventorySelection_ >= inventoryScroll_ + kVisibleRows) {
+            inventoryScroll_ = inventorySelection_ - kVisibleRows + 1;
+        }
+    }
+}
+
+void Engine::useInventoryItem(const std::string& itemId)
+{
+    auto countIt = inventory_.find(itemId);
+    if (countIt == inventory_.end() || countIt->second <= 0) {
+        return;
+    }
+
+    const auto defIt = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&itemId](const ItemDef& def) {
+        return def.id == itemId;
+    });
+    if (defIt == itemDefs_.end()) {
+        return;
+    }
+
+    const ItemDef& def = *defIt;
+    bool consumed = false;
+    const int value = std::max(1, def.value);
+    switch (def.type) {
+        case ItemDefType::Weapon: {
+            GameProject project;
+            if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+                const std::string& weaponId = def.targetId.empty() ? def.id : def.targetId;
+                for (const WeaponDef& w : project.weaponDefs) {
+                    if (w.id != weaponId) {
+                        continue;
+                    }
+                    if (w.type == WeaponType::Melee) {
+                        meleeWeapon_ = w;
+                    } else {
+                        rangedWeapon_ = w;
+                        const std::string key = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
+                        if (ammo_.find(key) == ammo_.end()) {
+                            ammo_[key] = 0;
+                        }
+                    }
+                    loadSpriteById(w.spriteId);
+                    loadSpriteById(w.ammoSpriteId);
+                    break;
+                }
+            }
+            break;
+        }
+        case ItemDefType::Health:
+            if (playerHealth_ < playerMaxHealth_) {
+                playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + value);
+                consumed = true;
+            }
+            break;
+        case ItemDefType::Mana:
+            gameState_.addInt(def.targetId.empty() ? "Mana" : def.targetId, value);
+            consumed = true;
+            break;
+        case ItemDefType::Ammo:
+            ammo_[def.targetId.empty() ? def.id : def.targetId] += value;
+            consumed = true;
+            break;
+        case ItemDefType::Consumable:
+            if (def.targetId == "Health" && playerHealth_ < playerMaxHealth_) {
+                playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + value);
+                consumed = true;
+            } else if (!def.targetId.empty()) {
+                gameState_.addInt(def.targetId, value);
+                consumed = true;
+            }
+            break;
+        case ItemDefType::Currency:
+        case ItemDefType::Key:
+        case ItemDefType::Quest:
+        case ItemDefType::Material:
+        case ItemDefType::Equipment:
+        case ItemDefType::Custom:
+            break;
+    }
+
+    if (consumed) {
+        --countIt->second;
+        if (countIt->second <= 0) {
+            inventory_.erase(countIt);
+            gameState_.takeItem(itemId);
+        }
+        const int count = static_cast<int>(sortedInventoryIds().size());
+        inventorySelection_ = std::clamp(inventorySelection_, 0, std::max(0, count - 1));
+    }
+}
+
 void Engine::updatePlayer(float dt)
 {
     if (interactionState_ == InteractionState::InDialogue) {
@@ -1042,11 +1419,11 @@ void Engine::updatePlayer(float dt)
 
     float dx = 0.0f;
     float dy = 0.0f;
-    if (glfwGetKey(window_, GLFW_KEY_LEFT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS) { dx -= 1.0f; }
-    if (glfwGetKey(window_, GLFW_KEY_RIGHT) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS) { dx += 1.0f; }
-    if (glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS) { dy -= 1.0f; }
-    if (glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS) { dy += 1.0f; }
-    if (glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+    if (inputDown(InputAction::Left)) { dx -= 1.0f; }
+    if (inputDown(InputAction::Right)) { dx += 1.0f; }
+    if (inputDown(InputAction::Up)) { dy -= 1.0f; }
+    if (inputDown(InputAction::Down)) { dy += 1.0f; }
+    if (inputDown(InputAction::Exit)) {
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
     }
 
@@ -1078,6 +1455,19 @@ void Engine::updatePlayer(float dt)
     }
     if (playerCanOccupy(playerX_, newY)) {
         playerY_ = newY;
+    }
+
+    // Apply and decay knockback from a recent hit (collision-checked per axis).
+    if (playerKnockbackVx_ != 0.0f || playerKnockbackVy_ != 0.0f) {
+        const float kx = playerX_ + playerKnockbackVx_ * dt;
+        const float ky = playerY_ + playerKnockbackVy_ * dt;
+        if (playerCanOccupy(kx, playerY_)) { playerX_ = kx; } else { playerKnockbackVx_ = 0.0f; }
+        if (playerCanOccupy(playerX_, ky)) { playerY_ = ky; } else { playerKnockbackVy_ = 0.0f; }
+        const float decay = std::exp(-kPlayerKnockbackDecayPerSecond * dt);
+        playerKnockbackVx_ *= decay;
+        playerKnockbackVy_ *= decay;
+        if (std::abs(playerKnockbackVx_) < 1.0f) playerKnockbackVx_ = 0.0f;
+        if (std::abs(playerKnockbackVy_) < 1.0f) playerKnockbackVy_ = 0.0f;
     }
 
     const float width = screenWidthPx();
@@ -1145,8 +1535,8 @@ void Engine::updateAttack(float dt)
         }
     }
 
-    const bool meleeInputDown = glfwGetKey(window_, GLFW_KEY_Z) == GLFW_PRESS;
-    const bool rangedInputDown = glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS;
+    const bool meleeInputDown = inputDown(InputAction::Melee);
+    const bool rangedInputDown = inputDown(InputAction::Ranged);
     const bool meleePressed = meleeInputDown && !meleeInputWasDown_;
     const bool rangedPressed = rangedInputDown && !rangedInputWasDown_;
     meleeInputWasDown_ = meleeInputDown;
@@ -1157,12 +1547,18 @@ void Engine::updateAttack(float dt)
         setPlayerActionState(PlayerActionState::MeleeAttack, kMeleeAttackSeconds);
         meleeCooldownSeconds_ = meleeWeapon_->attackCooldown;
         meleeActiveSeconds_ = kMeleeActiveSeconds;
-        meleeHitApplied_ = false;
+        meleeElapsedSeconds_ = 0.0f;
+        meleeHitEnemies_.clear();
     }
 
-    if (playerActionState_ == PlayerActionState::MeleeAttack && !meleeHitApplied_) {
-        checkMeleeHits();
-        meleeHitApplied_ = true;
+    // Active-frames hit window: the swing only connects between windup and recovery.
+    // Each enemy is hit at most once per swing (tracked in meleeHitEnemies_).
+    if (playerActionState_ == PlayerActionState::MeleeAttack) {
+        meleeElapsedSeconds_ += dt;
+        if (meleeElapsedSeconds_ >= kMeleeWindupSeconds &&
+            meleeElapsedSeconds_ <= kMeleeWindupSeconds + kMeleeActiveWindowSeconds) {
+            checkMeleeHits();
+        }
     }
 
     if (rangedWeapon_.has_value() && rangedPressed && rangedCooldownSeconds_ <= 0.0f &&
@@ -1182,6 +1578,9 @@ void Engine::updateAttack(float dt)
             proj.maxDistance = rangedWeapon_->range;
             proj.damage = rangedWeapon_->damage;
             proj.spriteId = rangedWeapon_->ammoSpriteId.empty() ? rangedWeapon_->spriteId : rangedWeapon_->ammoSpriteId;
+            proj.fromEnemy = false;
+            proj.wallBehavior = rangedWeapon_->wallBehavior;
+            proj.bouncesRemaining = kProjectileMaxBounces;
             projectiles_.push_back(proj);
         }
     }
@@ -1236,8 +1635,11 @@ void Engine::checkMeleeHits()
     }
     const float reach = meleeWeapon_->range;
     for (RuntimePathEntity& entity : pathEntities_) {
-        if (entity.health <= 0) {
+        if (entity.health <= 0 || entity.deathSeconds >= 0.0f) {
             continue;
+        }
+        if (meleeHitEnemies_.count(entity.path.id) > 0) {
+            continue;  // already hit by this swing
         }
         const float ex = entity.x - playerX_;
         const float ey = entity.y - playerY_;
@@ -1249,36 +1651,126 @@ void Engine::checkMeleeHits()
         if (dot < 0.3f) {
             continue;
         }
-        entity.health = std::max(0, entity.health - meleeWeapon_->damage);
-        if (entity.health <= 0 && entity.deathSeconds < 0.0f) {
-            entity.deathSeconds = 0.0f;
+        meleeHitEnemies_.insert(entity.path.id);
+        // Knockback away from the player (fall back to player facing if co-located).
+        const float dirX = (dist > 0.0f) ? ex / dist : playerFacingX_;
+        const float dirY = (dist > 0.0f) ? ey / dist : playerFacingY_;
+        applyEnemyHit(entity, meleeWeapon_->damage, dirX, dirY);
+    }
+}
+
+void Engine::applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, float dirY)
+{
+    if (entity.health <= 0 || entity.deathSeconds >= 0.0f) {
+        return;
+    }
+    entity.health = std::max(0, entity.health - damage);
+    entity.hitFlashSeconds = kEnemyHitFlashSeconds;
+
+    const bool lethal = entity.health <= 0;
+    const float resist = std::clamp(entity.path.combat.knockbackResistance, 0.0f, 1.0f);
+    const float kb = kEnemyKnockbackBasePxPerSecond * (1.0f - resist);
+    entity.knockbackVx = dirX * kb;
+    entity.knockbackVy = dirY * kb;
+
+    if (lethal) {
+        entity.deathSeconds = 0.0f;
+        if (entity.animState != "dead") {
+            entity.animState = "dead";
+            entity.animSeconds = 0.0f;
+        }
+    } else {
+        entity.hitstunSeconds = std::max(0.0f, entity.path.combat.hitstunSeconds);
+        if (entity.hitstunSeconds > 0.0f && entity.animState != "hurt") {
+            entity.animState = "hurt";
+            entity.animSeconds = 0.0f;
         }
     }
 }
 
 void Engine::updateProjectiles(float dt)
 {
+    const float playerHalf = kPlayerCollisionSizePx * 0.5f;
     for (RuntimeProjectile& proj : projectiles_) {
         if (proj.dead) {
             continue;
         }
-        const float step = std::sqrt(proj.vx * proj.vx + proj.vy * proj.vy) * dt;
-        proj.x += proj.vx * dt;
-        proj.y += proj.vy * dt;
-        proj.distanceTraveled += step;
 
-        if (proj.distanceTraveled >= proj.maxDistance) {
-            proj.dead = true;
+        // Settled (grounded) projectiles are inert — rest briefly, then despawn.
+        if (proj.settleSeconds >= 0.0f) {
+            proj.settleSeconds += dt;
+            if (proj.settleSeconds >= kProjectileSettleSeconds) {
+                proj.dead = true;
+            }
             continue;
         }
 
-        if (solidAtPixel(proj.x, proj.y)) {
-            proj.dead = true;
+        const float step = std::sqrt(proj.vx * proj.vx + proj.vy * proj.vy) * dt;
+        proj.distanceTraveled += step;
+
+        // Move with per-axis wall collision so we know which face was struck.
+        bool hitWall = false;
+        const float nx = proj.x + proj.vx * dt;
+        const float ny = proj.y + proj.vy * dt;
+        if (solidAtPixel(nx, proj.y)) {
+            hitWall = true;
+            proj.vx = -proj.vx * kProjectileReboundRestitution;
+        } else {
+            proj.x = nx;
+        }
+        if (solidAtPixel(proj.x, ny)) {
+            hitWall = true;
+            proj.vy = -proj.vy * kProjectileReboundRestitution;
+        } else {
+            proj.y = ny;
+        }
+
+        if (hitWall) {
+            if (proj.wallBehavior != ProjectileWallBehavior::Rebound) {
+                proj.dead = true;  // arrow/bullet: vanish on impact
+                continue;
+            }
+            // Rebounding stone: count the bounce, settle once it's spent or too slow.
+            --proj.bouncesRemaining;
+            const float speed = std::sqrt(proj.vx * proj.vx + proj.vy * proj.vy);
+            if (proj.bouncesRemaining < 0 || speed < kProjectileMinReboundSpeed) {
+                proj.vx = 0.0f;
+                proj.vy = 0.0f;
+                proj.settleSeconds = 0.0f;  // fall to the ground and rest
+                continue;
+            }
+        }
+
+        // Spent flight distance: rebounders settle, others expire.
+        if (proj.distanceTraveled >= proj.maxDistance) {
+            if (proj.wallBehavior == ProjectileWallBehavior::Rebound) {
+                proj.vx = 0.0f;
+                proj.vy = 0.0f;
+                proj.settleSeconds = 0.0f;
+            } else {
+                proj.dead = true;
+            }
+            continue;
+        }
+
+        // Damage resolution depends on which team fired the projectile.
+        const float vlen = std::sqrt(proj.vx * proj.vx + proj.vy * proj.vy);
+        const float dirX = (vlen > 0.0f) ? proj.vx / vlen : 0.0f;
+        const float dirY = (vlen > 0.0f) ? proj.vy / vlen : 0.0f;
+
+        if (proj.fromEnemy) {
+            if (proj.x + kProjectileHalfSize > playerX_ - playerHalf &&
+                proj.x - kProjectileHalfSize < playerX_ + playerHalf &&
+                proj.y + kProjectileHalfSize > playerY_ - playerHalf &&
+                proj.y - kProjectileHalfSize < playerY_ + playerHalf) {
+                damagePlayer(proj.damage, proj.x, proj.y);
+                proj.dead = true;
+            }
             continue;
         }
 
         for (RuntimePathEntity& entity : pathEntities_) {
-            if (entity.health <= 0) {
+            if (entity.health <= 0 || entity.deathSeconds >= 0.0f) {
                 continue;
             }
             const float halfW = entity.path.combat.hitboxWidth * 0.5f;
@@ -1287,10 +1779,7 @@ void Engine::updateProjectiles(float dt)
                 proj.x - kProjectileHalfSize < entity.x + halfW &&
                 proj.y + kProjectileHalfSize > entity.y - halfH &&
                 proj.y - kProjectileHalfSize < entity.y + halfH) {
-                entity.health = std::max(0, entity.health - proj.damage);
-                if (entity.health <= 0 && entity.deathSeconds < 0.0f) {
-                    entity.deathSeconds = 0.0f;
-                }
+                applyEnemyHit(entity, proj.damage, dirX, dirY);
                 proj.dead = true;
                 break;
             }
@@ -1358,6 +1847,67 @@ void Engine::collectItem(RuntimeItemEntity& item)
         case ItemPickupType::Health:
             playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + item.placement.quantity);
             break;
+        case ItemPickupType::ProjectItem: {
+            const auto defIt = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&item](const ItemDef& def) {
+                return def.id == item.placement.targetId;
+            });
+            const int amount = std::max(1, item.placement.quantity);
+            if (defIt == itemDefs_.end()) {
+                if (!item.placement.targetId.empty()) {
+                    inventory_[item.placement.targetId] += amount;
+                    gameState_.giveItem(item.placement.targetId);
+                }
+                break;
+            }
+
+            const ItemDef& def = *defIt;
+            inventory_[def.id] += def.stackable ? amount : 1;
+            gameState_.giveItem(def.id);
+            switch (def.type) {
+                case ItemDefType::Weapon: {
+                    GameProject project;
+                    if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+                        const std::string& weaponId = def.targetId.empty() ? def.id : def.targetId;
+                        for (const WeaponDef& w : project.weaponDefs) {
+                            if (w.id != weaponId) {
+                                continue;
+                            }
+                            if (w.type == WeaponType::Melee) {
+                                meleeWeapon_ = w;
+                            } else {
+                                rangedWeapon_ = w;
+                                const std::string key = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
+                                if (ammo_.find(key) == ammo_.end()) {
+                                    ammo_[key] = 0;
+                                }
+                            }
+                            loadSpriteById(w.spriteId);
+                            loadSpriteById(w.ammoSpriteId);
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case ItemDefType::Ammo:
+                    ammo_[def.targetId.empty() ? def.id : def.targetId] += amount;
+                    break;
+                case ItemDefType::Health:
+                    break;
+                case ItemDefType::Currency:
+                    gameState_.addInt(def.targetId.empty() ? "Money" : def.targetId, amount);
+                    break;
+                case ItemDefType::Mana:
+                case ItemDefType::Key:
+                case ItemDefType::Quest:
+                case ItemDefType::Consumable:
+                case ItemDefType::Material:
+                case ItemDefType::Equipment:
+                case ItemDefType::Custom:
+                    break;
+            }
+            loadSpriteById(def.spriteId);
+            break;
+        }
     }
 }
 
@@ -1385,8 +1935,17 @@ void Engine::loadNpcEntities()
         entity.placement = placement;
         entity.x = placement.x;
         entity.y = placement.y;
+        entity.graphId = placement.graphOverride;
         if (const NpcTypeDef* type = typeForId(placement.typeId)) {
+            entity.interactionMode = type->defaultInteraction;
+            entity.shopInventory = type->shopInventory;
+            if (!placement.shopInventoryOverride.empty()) {
+                entity.shopInventory = placement.shopInventoryOverride;
+            }
             entity.spriteId = type->spriteId;
+            if (entity.graphId.empty()) {
+                entity.graphId = type->defaultGraphId;
+            }
             if (entity.spriteId.empty()) {
                 entity.spriteId = characterSpriteId(projectRoot_, type->characterId);
             }
@@ -1410,6 +1969,13 @@ void Engine::loadNpcEntities()
             entity.y = placement.waypoints.front().y;
             entity.waypointIndex = placement.waypoints.size() > 1 ? 1u : 0u;
         }
+        if (!entity.graphId.empty()) {
+            std::filesystem::path graphPath = assetPath(projectRoot_, "assets/game/dialogue") / chapter_.id / (entity.graphId + ".addialogue");
+            if (!std::filesystem::exists(graphPath)) {
+                graphPath = assetPath(projectRoot_, "assets/game/dialogue") / (entity.graphId + ".addialogue");
+            }
+            entity.hasGraph = loadDialogueGraph(graphPath, entity.graph, nullptr);
+        }
         npcEntities_.push_back(std::move(entity));
     }
 }
@@ -1418,7 +1984,25 @@ void Engine::updateNpcs(float dt)
 {
     updateNpcAwareness();
     for (RuntimeNpcEntity& npc : npcEntities_) {
+        if (npc.hidden) {
+            continue;
+        }
         npc.animSeconds += dt;
+        if (npc.followingPlayer && interactionState_ != InteractionState::InDialogue) {
+            const float dx = playerX_ - npc.x;
+            const float dy = playerY_ - npc.y;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist > 28.0f) {
+                npc.facingX = dx / dist;
+                npc.facingY = dy / dist;
+                npc.x += npc.facingX * 56.0f * dt;
+                npc.y += npc.facingY * 56.0f * dt;
+                npc.actionType = "walk";
+            } else {
+                npc.actionType = "idle";
+            }
+            continue;
+        }
         if (npc.playerInAwareness) {
             npc.actionType = "idle";
             continue;
@@ -1470,6 +2054,10 @@ void Engine::updateNpcs(float dt)
 void Engine::updateNpcAwareness()
 {
     for (RuntimeNpcEntity& npc : npcEntities_) {
+        if (npc.hidden) {
+            npc.playerInAwareness = false;
+            continue;
+        }
         const float dx = playerX_ - npc.x;
         const float dy = playerY_ - npc.y;
         const float dist = std::sqrt(dx * dx + dy * dy);
@@ -1477,11 +2065,325 @@ void Engine::updateNpcAwareness()
     }
 }
 
+const DialogueNode* Engine::dialogueNodeById(const RuntimeNpcEntity& npc, const std::string& nodeId) const
+{
+    for (const DialogueNode& node : npc.graph.nodes) {
+        if (node.id == nodeId) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+bool Engine::dialogueConditionPasses(const DialogueCondition& condition) const
+{
+    switch (condition.type) {
+        case DialogueConditionType::Always:
+            return true;
+        case DialogueConditionType::IntCompare: {
+            const int value = gameState_.getInt(condition.variableId, 0);
+            switch (condition.op) {
+                case DialogueCompareOp::Equal: return value == condition.intValue;
+                case DialogueCompareOp::NotEqual: return value != condition.intValue;
+                case DialogueCompareOp::Less: return value < condition.intValue;
+                case DialogueCompareOp::LessOrEqual: return value <= condition.intValue;
+                case DialogueCompareOp::Greater: return value > condition.intValue;
+                case DialogueCompareOp::GreaterOrEqual: return value >= condition.intValue;
+            }
+            return false;
+        }
+        case DialogueConditionType::BoolEquals:
+            return gameState_.getBool(condition.variableId, false) == condition.boolValue;
+        case DialogueConditionType::HasItem:
+            return gameState_.hasItem(condition.variableId) == condition.boolValue;
+        case DialogueConditionType::HasMoney:
+            return gameState_.getInt("Money", 0) >= condition.intValue;
+    }
+    return false;
+}
+
+void Engine::executeDialogueActions(const std::vector<DialogueAction>& actions, RuntimeNpcEntity& npc)
+{
+    for (const DialogueAction& action : actions) {
+        switch (action.type) {
+            case DialogueActionType::SetInt:
+                gameState_.setInt(action.targetId, action.intValue);
+                break;
+            case DialogueActionType::AddInt:
+                gameState_.addInt(action.targetId, action.intValue);
+                break;
+            case DialogueActionType::SetBool:
+                gameState_.setBool(action.targetId, action.boolValue);
+                break;
+            case DialogueActionType::GiveItem:
+                gameState_.giveItem(action.targetId);
+                break;
+            case DialogueActionType::TakeItem:
+                gameState_.takeItem(action.targetId);
+                break;
+            case DialogueActionType::GiveMoney:
+                gameState_.addInt("Money", action.intValue);
+                break;
+            case DialogueActionType::TakeMoney:
+                gameState_.setInt("Money", std::max(0, gameState_.getInt("Money", 0) - action.intValue));
+                break;
+            case DialogueActionType::HealPlayer:
+                playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + std::max(0, action.intValue));
+                break;
+            case DialogueActionType::DamagePlayer:
+                damagePlayer(action.intValue);
+                break;
+            case DialogueActionType::MoveNpc:
+                npc.x = action.x;
+                npc.y = action.y;
+                npc.placement.x = action.x;
+                npc.placement.y = action.y;
+                break;
+            case DialogueActionType::HideNpc:
+                npc.hidden = true;
+                break;
+            case DialogueActionType::ShowNpc:
+                npc.hidden = false;
+                break;
+            case DialogueActionType::FollowPlayer:
+                npc.followingPlayer = true;
+                break;
+            case DialogueActionType::StopFollowingPlayer:
+                npc.followingPlayer = false;
+                break;
+            case DialogueActionType::SetNpcAnimation:
+                npc.actionType = action.textValue.empty() ? "idle" : action.textValue;
+                break;
+            case DialogueActionType::StartQuest:
+                gameState_.setBool(action.targetId.empty() ? action.textValue : action.targetId, true);
+                break;
+            case DialogueActionType::CompleteQuest:
+                gameState_.setBool(action.targetId.empty() ? action.textValue : action.targetId, true);
+                break;
+        }
+    }
+}
+
+void Engine::endInteraction()
+{
+    interactionState_ = InteractionState::None;
+    interactingNpcIndex_ = -1;
+    dialogueLineIndex_ = 0;
+    dialogueScrollLine_ = 0;
+    dialogueGraphNodeId_.clear();
+    dialogueGraphLine_ = {};
+    dialogueGraphChoices_.clear();
+    dialogueChoiceIndex_ = 0;
+    shopPanel_ = 0;
+    shopSelection_ = 0;
+    shopScroll_[0] = 0;
+    shopScroll_[1] = 0;
+}
+
+void Engine::buyShopItem(RuntimeNpcEntity& npc, int index)
+{
+    if (index < 0 || index >= static_cast<int>(npc.shopInventory.size())) {
+        return;
+    }
+    ShopItemDef& item = npc.shopInventory[static_cast<std::size_t>(index)];
+    if (item.itemId.empty() || (!item.unlimited && item.quantity <= 0)) {
+        return;
+    }
+    const int price = std::max(0, item.buyPrice);
+    const int money = gameState_.getInt("Money", 0);
+    if (money < price) {
+        return;
+    }
+    gameState_.setInt("Money", money - price);
+    inventory_[item.itemId] += 1;
+    gameState_.giveItem(item.itemId);
+    if (!item.unlimited) {
+        item.quantity = std::max(0, item.quantity - 1);
+    }
+}
+
+void Engine::sellInventoryItem(const std::string& itemId)
+{
+    auto countIt = inventory_.find(itemId);
+    if (countIt == inventory_.end() || countIt->second <= 0) {
+        return;
+    }
+    int price = 1;
+    if (interactingNpcIndex_ >= 0 && interactingNpcIndex_ < static_cast<int>(npcEntities_.size())) {
+        const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+        const auto shopIt = std::find_if(npc.shopInventory.begin(), npc.shopInventory.end(), [&itemId](const ShopItemDef& item) {
+            return item.itemId == itemId;
+        });
+        if (shopIt != npc.shopInventory.end()) {
+            price = std::max(0, shopIt->sellPrice);
+            ShopItemDef& stock = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)].shopInventory[static_cast<std::size_t>(std::distance(npc.shopInventory.begin(), shopIt))];
+            if (!stock.unlimited) {
+                stock.quantity += 1;
+            }
+        } else {
+            const auto itemIt = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&itemId](const ItemDef& item) {
+                return item.id == itemId;
+            });
+            if (itemIt != itemDefs_.end()) {
+                price = std::max(1, itemIt->value / 2);
+            }
+        }
+    }
+    gameState_.addInt("Money", price);
+    --countIt->second;
+    if (countIt->second <= 0) {
+        inventory_.erase(countIt);
+        gameState_.takeItem(itemId);
+    }
+}
+
+void Engine::updateShopInput()
+{
+    if (interactingNpcIndex_ < 0 || interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        endInteraction();
+        return;
+    }
+    RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    const std::vector<std::string> playerItems = sortedInventoryIds();
+    constexpr int kVisibleRows = 16;
+    const int activeCount = shopPanel_ == 0 ? static_cast<int>(npc.shopInventory.size()) : static_cast<int>(playerItems.size());
+    shopSelection_ = activeCount <= 0 ? 0 : std::clamp(shopSelection_, 0, activeCount - 1);
+
+    const bool upDown = inputDown(InputAction::Up);
+    const bool downDown = inputDown(InputAction::Down);
+    const bool leftDown = inputDown(InputAction::Left);
+    const bool rightDown = inputDown(InputAction::Right);
+    const bool useDown = inputDown(InputAction::Interact);
+    const bool exitDown = inputDown(InputAction::Inventory);
+    if (upDown && !shopUpWasDown_ && activeCount > 0) {
+        shopSelection_ = std::max(0, shopSelection_ - 1);
+    }
+    if (downDown && !shopDownWasDown_ && activeCount > 0) {
+        shopSelection_ = std::min(activeCount - 1, shopSelection_ + 1);
+    }
+    if ((leftDown && !shopLeftWasDown_) || (rightDown && !shopRightWasDown_)) {
+        shopPanel_ = shopPanel_ == 0 ? 1 : 0;
+        shopSelection_ = 0;
+    }
+    if (useDown && !shopUseWasDown_) {
+        if (shopPanel_ == 0) {
+            buyShopItem(npc, shopSelection_);
+        } else if (shopSelection_ >= 0 && shopSelection_ < static_cast<int>(playerItems.size())) {
+            sellInventoryItem(playerItems[static_cast<std::size_t>(shopSelection_)]);
+        }
+    }
+    if (exitDown && !shopExitWasDown_) {
+        endInteraction();
+    }
+    shopUpWasDown_ = upDown;
+    shopDownWasDown_ = downDown;
+    shopLeftWasDown_ = leftDown;
+    shopRightWasDown_ = rightDown;
+    shopUseWasDown_ = useDown;
+    shopExitWasDown_ = exitDown;
+    shopScroll_[shopPanel_] = std::clamp(shopScroll_[shopPanel_], 0, std::max(0, activeCount - kVisibleRows));
+    if (shopSelection_ < shopScroll_[shopPanel_]) {
+        shopScroll_[shopPanel_] = shopSelection_;
+    } else if (shopSelection_ >= shopScroll_[shopPanel_] + kVisibleRows) {
+        shopScroll_[shopPanel_] = shopSelection_ - kVisibleRows + 1;
+    }
+}
+
+void Engine::startDialogueGraph(const RuntimeNpcEntity& npc)
+{
+    dialogueGraphNodeId_ = npc.graph.startNodeId.empty() ? "start" : npc.graph.startNodeId;
+    dialogueGraphLine_ = {};
+    dialogueGraphChoices_.clear();
+    dialogueChoiceIndex_ = 0;
+    dialogueScrollLine_ = 0;
+    advanceDialogueGraph();
+}
+
+void Engine::advanceDialogueGraph()
+{
+    if (interactingNpcIndex_ < 0 || interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        endInteraction();
+        return;
+    }
+
+    RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    for (int guard = 0; guard < 128; ++guard) {
+        const DialogueNode* node = dialogueNodeById(npc, dialogueGraphNodeId_);
+        if (node == nullptr) {
+            endInteraction();
+            return;
+        }
+
+        switch (node->type) {
+            case DialogueNodeType::Start:
+                dialogueGraphNodeId_ = node->nextNodeId;
+                break;
+            case DialogueNodeType::Condition:
+                dialogueGraphNodeId_ = dialogueConditionPasses(node->condition) ? node->nextNodeId : node->falseNodeId;
+                break;
+            case DialogueNodeType::Action:
+                executeDialogueActions(node->actions, npc);
+                dialogueGraphNodeId_ = node->nextNodeId;
+                break;
+            case DialogueNodeType::Dialogue:
+            case DialogueNodeType::Choice: {
+                dialogueGraphLine_ = {node->speaker, node->text};
+                dialogueGraphChoices_.clear();
+                for (const DialogueChoice& choice : node->choices) {
+                    if (dialogueConditionPasses(choice.condition)) {
+                        dialogueGraphChoices_.push_back(choice);
+                    }
+                }
+                dialogueChoiceIndex_ = std::clamp(dialogueChoiceIndex_, 0, std::max(0, static_cast<int>(dialogueGraphChoices_.size()) - 1));
+                dialogueScrollLine_ = 0;
+                return;
+            }
+            case DialogueNodeType::End:
+                endInteraction();
+                return;
+        }
+
+        if (dialogueGraphNodeId_.empty()) {
+            endInteraction();
+            return;
+        }
+    }
+    endInteraction();
+}
+
+void Engine::confirmDialogueGraph()
+{
+    if (interactingNpcIndex_ < 0 || interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        endInteraction();
+        return;
+    }
+    const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    const DialogueNode* node = dialogueNodeById(npc, dialogueGraphNodeId_);
+    if (node == nullptr) {
+        endInteraction();
+        return;
+    }
+
+    if (!dialogueGraphChoices_.empty()) {
+        const int choiceIndex = std::clamp(dialogueChoiceIndex_, 0, static_cast<int>(dialogueGraphChoices_.size()) - 1);
+        dialogueGraphNodeId_ = dialogueGraphChoices_[static_cast<std::size_t>(choiceIndex)].targetNodeId;
+    } else {
+        dialogueGraphNodeId_ = node->nextNodeId;
+    }
+    advanceDialogueGraph();
+}
+
 void Engine::updateInteraction()
 {
-    const bool interactDown = glfwGetKey(window_, GLFW_KEY_E) == GLFW_PRESS;
+    const bool interactDown = inputDown(InputAction::Interact);
     const bool interactPressed = interactDown && !interactInputWasDown_;
     interactInputWasDown_ = interactDown;
+    const bool scrollUpDown = inputDown(InputAction::Up);
+    const bool scrollDownDown = inputDown(InputAction::Down);
+    const bool scrollUpPressed = scrollUpDown && !dialogueScrollUpWasDown_;
+    const bool scrollDownPressed = scrollDownDown && !dialogueScrollDownWasDown_;
+    dialogueScrollUpWasDown_ = scrollUpDown;
+    dialogueScrollDownWasDown_ = scrollDownDown;
 
     switch (interactionState_) {
         case InteractionState::None: {
@@ -1489,7 +2391,7 @@ void Engine::updateInteraction()
             float nearestDist = 99999.0f;
             for (int i = 0; i < static_cast<int>(npcEntities_.size()); ++i) {
                 const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(i)];
-                if (npc.dialogue.empty()) {
+                if (npc.hidden || (npc.interactionMode != NpcInteractionMode::Shop && !npc.hasGraph && npc.dialogue.empty())) {
                     continue;
                 }
                 const float dx = playerX_ - npc.x;
@@ -1516,30 +2418,63 @@ void Engine::updateInteraction()
             const float dx = playerX_ - npc.x;
             const float dy = playerY_ - npc.y;
             if (std::sqrt(dx * dx + dy * dy) > npc.placement.interactionRadius) {
-                interactionState_ = InteractionState::None;
-                interactingNpcIndex_ = -1;
+                endInteraction();
                 break;
             }
             if (interactPressed) {
+                if (npc.interactionMode == NpcInteractionMode::Shop) {
+                    interactionState_ = InteractionState::InShop;
+                    shopPanel_ = 0;
+                    shopSelection_ = 0;
+                    shopScroll_[0] = 0;
+                    shopScroll_[1] = 0;
+                    shopUpWasDown_ = shopDownWasDown_ = shopLeftWasDown_ = shopRightWasDown_ = false;
+                    shopUseWasDown_ = shopExitWasDown_ = false;
+                    break;
+                }
                 interactionState_ = InteractionState::InDialogue;
                 dialogueLineIndex_ = 0;
+                dialogueScrollLine_ = 0;
+                if (npc.hasGraph) {
+                    startDialogueGraph(npc);
+                }
             }
             break;
         }
+        case InteractionState::InShop:
+            updateShopInput();
+            break;
         case InteractionState::InDialogue: {
             if (interactingNpcIndex_ < 0 ||
                 interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
-                interactionState_ = InteractionState::None;
+                endInteraction();
+                break;
+            }
+            RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+            if (npc.hasGraph) {
+                if (!dialogueGraphChoices_.empty() && (scrollUpPressed || scrollDownPressed)) {
+                    const int maxChoice = static_cast<int>(dialogueGraphChoices_.size()) - 1;
+                    dialogueChoiceIndex_ = std::clamp(dialogueChoiceIndex_ + (scrollDownPressed ? 1 : -1), 0, maxChoice);
+                } else if (interactPressed) {
+                    confirmDialogueGraph();
+                } else if (scrollUpPressed || scrollDownPressed) {
+                    const int wrappedLineCount = static_cast<int>(wrapText(dialogueGraphLine_.text, dialogueWrapChars(screenWidthPx()), 0).size());
+                    const int maxScroll = std::max(0, wrappedLineCount - kDialogueVisibleLines);
+                    dialogueScrollLine_ = std::clamp(dialogueScrollLine_ + (scrollDownPressed ? 1 : -1), 0, maxScroll);
+                }
                 break;
             }
             if (interactPressed) {
                 ++dialogueLineIndex_;
-                const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+                dialogueScrollLine_ = 0;
                 if (dialogueLineIndex_ >= static_cast<int>(npc.dialogue.size())) {
-                    interactionState_ = InteractionState::None;
-                    interactingNpcIndex_ = -1;
-                    dialogueLineIndex_ = 0;
+                    endInteraction();
                 }
+            } else if (scrollUpPressed || scrollDownPressed) {
+                const DialogueLine& line = npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)];
+                const int wrappedLineCount = static_cast<int>(wrapText(line.text, dialogueWrapChars(screenWidthPx()), 0).size());
+                const int maxScroll = std::max(0, wrappedLineCount - kDialogueVisibleLines);
+                dialogueScrollLine_ = std::clamp(dialogueScrollLine_ + (scrollDownPressed ? 1 : -1), 0, maxScroll);
             }
             break;
         }
@@ -1549,6 +2484,9 @@ void Engine::updateInteraction()
 void Engine::renderNpcs() const
 {
     for (const RuntimeNpcEntity& npc : npcEntities_) {
+        if (npc.hidden) {
+            continue;
+        }
         auto spriteIt = loadedSprites_.find(npc.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
             bool flipH = false;
@@ -1589,12 +2527,20 @@ void Engine::renderSpeechBubble() const
         return;
     }
     const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
-    const int lineIndex = interactionState_ == InteractionState::InDialogue ? dialogueLineIndex_ : 0;
-    if (lineIndex < 0 || lineIndex >= static_cast<int>(npc.dialogue.size())) {
+    const DialogueLine* dialogue = nullptr;
+    if (interactionState_ == InteractionState::InDialogue && npc.hasGraph) {
+        dialogue = &dialogueGraphLine_;
+    } else {
+        const int lineIndex = interactionState_ == InteractionState::InDialogue ? dialogueLineIndex_ : 0;
+        if (lineIndex >= 0 && lineIndex < static_cast<int>(npc.dialogue.size())) {
+            dialogue = &npc.dialogue[static_cast<std::size_t>(lineIndex)];
+        }
+    }
+    if (dialogue == nullptr || dialogue->text.empty()) {
         return;
     }
 
-    std::vector<std::string> lines = wrapText(npc.dialogue[static_cast<std::size_t>(lineIndex)].text, 24, 3);
+    std::vector<std::string> lines = wrapText(dialogue->text, 24, 3);
     if (lines.empty()) {
         return;
     }
@@ -1628,27 +2574,79 @@ void Engine::renderDialogueBox() const
         return;
     }
     const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
-    if (dialogueLineIndex_ < 0 || dialogueLineIndex_ >= static_cast<int>(npc.dialogue.size())) {
+    const bool graphDialogue = npc.hasGraph;
+    if (!graphDialogue && (dialogueLineIndex_ < 0 || dialogueLineIndex_ >= static_cast<int>(npc.dialogue.size()))) {
         return;
     }
+    const DialogueLine& dialogue = graphDialogue ? dialogueGraphLine_ : npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)];
 
     const float sw = screenWidthPx();
     const float sh = screenHeightPx();
-    const float boxH = 56.0f;
+    const float boxH = graphDialogue && !dialogueGraphChoices_.empty() ? 124.0f : 96.0f;
     const float margin = 10.0f;
     const float boxY = sh - boxH - margin;
+    const float padX = 10.0f;
+    const float padY = 8.0f;
+    const float lineH = 11.0f * kDialogueTextScale;
+    const std::size_t maxChars = dialogueWrapChars(sw);
+    const std::vector<std::string> lines = wrapText(dialogue.text, maxChars, 0);
+    const int visibleTextLines = graphDialogue && !dialogueGraphChoices_.empty() ? 2 : kDialogueVisibleLines;
+    const int maxScroll = std::max(0, static_cast<int>(lines.size()) - visibleTextLines);
+    const int firstLine = std::clamp(dialogueScrollLine_, 0, maxScroll);
 
     renderFilledRect(margin, boxY, sw - margin * 2.0f, boxH, 0.04f, 0.05f, 0.07f, 0.92f);
     renderFilledRect(margin, boxY, sw - margin * 2.0f, 2.0f, 0.30f, 0.70f, 0.90f, 0.80f);
 
-    if (!npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)].speaker.empty()) {
-        renderFilledRect(margin + 6.0f, boxY + 6.0f, 48.0f, 6.0f, 0.30f, 0.70f, 0.90f, 0.85f);
+    float textY = boxY + padY;
+    if (!dialogue.speaker.empty()) {
+        renderText(dialogue.speaker, margin + padX, textY, kDialogueTextScale, 0.30f, 0.78f, 0.95f, 1.0f);
+        textY += lineH;
     }
 
-    const float textY = boxY + 18.0f;
-    const int textLen = static_cast<int>(npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)].text.size());
-    const float barW = std::min(static_cast<float>(textLen) * 3.0f, sw - margin * 4.0f);
-    renderFilledRect(margin + 6.0f, textY, barW, 4.0f, 0.75f, 0.78f, 0.82f, 0.65f);
+    for (int i = 0; i < visibleTextLines; ++i) {
+        const int lineIndex = firstLine + i;
+        if (lineIndex >= static_cast<int>(lines.size())) {
+            break;
+        }
+        renderText(lines[static_cast<std::size_t>(lineIndex)], margin + padX, textY + static_cast<float>(i) * lineH,
+            kDialogueTextScale, 0.86f, 0.88f, 0.90f, 1.0f);
+    }
+
+    if (graphDialogue && !dialogueGraphChoices_.empty()) {
+        const float choiceY = boxY + boxH - 46.0f;
+        const int firstChoice = std::clamp(dialogueChoiceIndex_ - 1, 0, std::max(0, static_cast<int>(dialogueGraphChoices_.size()) - 3));
+        const int lastChoice = std::min(static_cast<int>(dialogueGraphChoices_.size()), firstChoice + 3);
+        for (int i = firstChoice; i < lastChoice; ++i) {
+            const float y = choiceY + static_cast<float>(i - firstChoice) * 14.0f;
+            const bool selected = i == dialogueChoiceIndex_;
+            if (selected) {
+                renderFilledRect(margin + 6.0f, y - 1.0f, sw - margin * 2.0f - 20.0f, 12.0f, 0.18f, 0.32f, 0.42f, 0.88f);
+            }
+            renderText(selected ? "> " + dialogueGraphChoices_[static_cast<std::size_t>(i)].text
+                                : "  " + dialogueGraphChoices_[static_cast<std::size_t>(i)].text,
+                margin + padX, y, 1.25f, 0.92f, 0.94f, 0.96f, 1.0f);
+        }
+    }
+
+    if (maxScroll > 0) {
+        const float trackX = sw - margin - 9.0f;
+        const float trackY = boxY + 10.0f;
+        const float trackH = boxH - 26.0f;
+        const float thumbH = std::max(10.0f, trackH * (static_cast<float>(visibleTextLines) / static_cast<float>(lines.size())));
+        const float thumbY = trackY + (trackH - thumbH) * (static_cast<float>(firstLine) / static_cast<float>(maxScroll));
+        renderFilledRect(trackX, trackY, 3.0f, trackH, 0.25f, 0.28f, 0.32f, 0.75f);
+        renderFilledRect(trackX - 1.0f, thumbY, 5.0f, thumbH, 0.70f, 0.76f, 0.84f, 0.90f);
+        if (firstLine > 0) {
+            renderText("^", trackX - 4.0f, boxY + 1.0f, 1.0f, 0.80f, 0.84f, 0.88f, 0.95f);
+        }
+        if (firstLine < maxScroll) {
+            renderText("v", trackX - 4.0f, boxY + boxH - 14.0f, 1.0f, 0.80f, 0.84f, 0.88f, 0.95f);
+        }
+    }
+
+    if (graphDialogue) {
+        return;
+    }
 
     const int total = static_cast<int>(npc.dialogue.size());
     for (int i = 0; i < total; ++i) {
@@ -1664,13 +2662,108 @@ void Engine::renderDialogueBox() const
 void Engine::updatePaths(float dt)
 {
     for (RuntimePathEntity& entity : pathEntities_) {
-        if (entity.deathSeconds >= 0.0f || entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
-            // Still update animState for idle-behavior entities
-            if (entity.deathSeconds < 0.0f) {
-                if (entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
-                    entity.animState = "idle";
+        if (entity.deathSeconds >= 0.0f) {
+            continue;  // dying entities are frozen; updateEnemyDeaths handles removal
+        }
+
+        // Decay hit-reaction timers for all living entities.
+        entity.hitFlashSeconds = std::max(0.0f, entity.hitFlashSeconds - dt);
+        entity.hitstunSeconds = std::max(0.0f, entity.hitstunSeconds - dt);
+
+        // Apply and decay knockback displacement (collision-checked), even while stationary.
+        if (entity.knockbackVx != 0.0f || entity.knockbackVy != 0.0f) {
+            const float nx = entity.x + entity.knockbackVx * dt;
+            const float ny = entity.y + entity.knockbackVy * dt;
+            if (!solidAtPixel(nx, entity.y)) { entity.x = nx; } else { entity.knockbackVx = 0.0f; }
+            if (!solidAtPixel(entity.x, ny)) { entity.y = ny; } else { entity.knockbackVy = 0.0f; }
+            const float decay = std::exp(-kEnemyKnockbackDecayPerSecond * dt);
+            entity.knockbackVx *= decay;
+            entity.knockbackVy *= decay;
+            if (std::abs(entity.knockbackVx) < 1.0f) entity.knockbackVx = 0.0f;
+            if (std::abs(entity.knockbackVy) < 1.0f) entity.knockbackVy = 0.0f;
+        }
+
+        // Staggered enemies don't move or chase while in hitstun.
+        if (entity.hitstunSeconds > 0.0f) {
+            continue;
+        }
+
+        // Aggro: chase the player directly when within range (overrides waypoint following).
+        const float aggroRange = entity.path.combat.aggroRange;
+        if (aggroRange > 0.0f) {
+            const float dxp = playerX_ - entity.x;
+            const float dyp = playerY_ - entity.y;
+            const float distP = std::sqrt(dxp * dxp + dyp * dyp);
+            const bool wasAggro = entity.aggroActive;
+            if (!entity.aggroActive && distP <= aggroRange) {
+                entity.aggroActive = true;
+            } else if (entity.aggroActive && distP > aggroRange * 1.3f) {  // hysteresis
+                entity.aggroActive = false;
+            }
+            if (entity.aggroActive) {
+                if (entity.animState.find("attack") == std::string::npos && entity.animState != "walk") {
+                    entity.animState = "walk";
                     entity.animSeconds = 0.0f;
                 }
+                const float speed = entity.path.speed > 0.0f ? entity.path.speed : 64.0f;
+                if (distP > 1.0f) {
+                    const float step = std::min(distP, speed * dt);
+                    const float nx = entity.x + dxp / distP * step;
+                    const float ny = entity.y + dyp / distP * step;
+                    if (!solidAtPixel(nx, entity.y)) entity.x = nx;
+                    if (!solidAtPixel(entity.x, ny)) entity.y = ny;
+                    entity.facingX = dxp / distP;
+                    entity.facingY = dyp / distP;
+                }
+                continue;  // skip waypoint movement while chasing
+            }
+            // Lost aggro this frame: head back to the nearest point on the path, not a stale one.
+            if (wasAggro && !entity.path.waypoints.empty()) {
+                PathWaypoint nearest;
+                entity.resumePathDistance = nearestPathDistance(entity.path, entity.x, entity.y, nearest);
+                entity.returningToPath = true;
+            }
+        }
+
+        // Walk back to the nearest path point after a chase, then resume normal patrol from there.
+        if (entity.returningToPath) {
+            if (entity.path.waypoints.empty()) {
+                entity.returningToPath = false;
+            } else {
+                const PathWaypoint target = pointAtDistance(entity.path, entity.resumePathDistance);
+                const float dx = target.x - entity.x;
+                const float dy = target.y - entity.y;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                const float speed = entity.path.speed > 0.0f ? entity.path.speed : 64.0f;
+                if (entity.animState.find("attack") == std::string::npos && entity.animState != "walk") {
+                    entity.animState = "walk";
+                    entity.animSeconds = 0.0f;
+                }
+                if (dist <= std::max(1.0f, speed * dt)) {
+                    // Arrived: sync patrol bookkeeping to the nearest point and resume this frame.
+                    entity.x = target.x;
+                    entity.y = target.y;
+                    entity.pathDistance = entity.resumePathDistance;
+                    entity.waypointIndex = waypointIndexForDistance(entity.path, entity.resumePathDistance);
+                    entity.atWaypoint = false;
+                    entity.returningToPath = false;
+                } else {
+                    const float step = speed * dt;
+                    const float nx = entity.x + dx / dist * step;
+                    const float ny = entity.y + dy / dist * step;
+                    if (!solidAtPixel(nx, entity.y)) entity.x = nx;
+                    if (!solidAtPixel(entity.x, ny)) entity.y = ny;
+                    entity.facingX = dx / dist;
+                    entity.facingY = dy / dist;
+                    continue;  // still returning to the path
+                }
+            }
+        }
+
+        if (entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
+            if (entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
+                entity.animState = "idle";
+                entity.animSeconds = 0.0f;
             }
             continue;
         }
@@ -1791,7 +2884,8 @@ void Engine::updateEnemyCombat(float dt)
             cd = std::max(0.0f, cd - dt);
         }
 
-        if (entity.health <= 0 || entity.deathSeconds >= 0.0f) continue;
+        // Staggered enemies cannot attack while in hitstun.
+        if (entity.health <= 0 || entity.deathSeconds >= 0.0f || entity.hitstunSeconds > 0.0f) continue;
 
         // Compute vector from entity to player
         const float ex = playerX_ - entity.x;
@@ -1800,7 +2894,7 @@ void Engine::updateEnemyCombat(float dt)
 
         // Contact damage (overlap)
         if (entity.path.combat.contactDamage > 0 && entity.contactCooldownSeconds <= 0.0f && playerOverlapsEnemy(entity)) {
-            damagePlayer(entity.path.combat.contactDamage);
+            damagePlayer(entity.path.combat.contactDamage, entity.x, entity.y);
             entity.contactCooldownSeconds = entity.path.combat.attackCooldownSeconds;
         }
 
@@ -1811,7 +2905,7 @@ void Engine::updateEnemyCombat(float dt)
 
             if (atk.type == EnemyAttackType::Melee) {
                 if (distToPlayer <= atk.range) {
-                    damagePlayer(atk.damage);
+                    damagePlayer(atk.damage, entity.x, entity.y);
                     entity.attackCooldowns[ai] = atk.cooldown;
                     if (!atk.animState.empty() && entity.animState != atk.animState) {
                         entity.animState = atk.animState;
@@ -1828,6 +2922,8 @@ void Engine::updateEnemyCombat(float dt)
                     proj.maxDistance = atk.range;
                     proj.damage = atk.damage;
                     proj.spriteId = atk.ammoSpriteId;
+                    proj.fromEnemy = true;
+                    proj.wallBehavior = ProjectileWallBehavior::Break;
                     projectiles_.push_back(proj);
                     entity.attackCooldowns[ai] = atk.cooldown;
                     if (!atk.animState.empty() && entity.animState != atk.animState) {
@@ -1849,6 +2945,11 @@ void Engine::updateEnemyDeaths(float dt)
         }
         entity.deathSeconds += dt;
         if (entity.deathSeconds >= kEnemyDeathVisualSeconds && activeScreen_ != nullptr) {
+            // Quest hook fires on every kill, regardless of respawn/persistence.
+            if (!entity.path.combat.killVariable.empty()) {
+                gameState_.addInt(entity.path.combat.killVariable, entity.path.combat.killAmount);
+            }
+            // Persist the defeat only when the enemy is not configured to respawn.
             if (!entity.path.respawn && !activeScreen_->respawnEnemies) {
                 recordEnemyDefeated(activeScreen_->id, entity);
             }
@@ -1865,9 +2966,32 @@ void Engine::updateEnemyDeaths(float dt)
     }
 }
 
+void Engine::saveRuntimeState() const
+{
+    if (freshStart_) {
+        return;  // test launches must not clobber the player's real save
+    }
+    const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
+    (void)saveGameState(savePath, gameState_, nullptr);
+}
+
+void Engine::writeCheckpoint(const std::string& screenId, float x, float y) const
+{
+    // Lightweight "last entered screen" marker the editor reads for test launches.
+    // Written in all modes (including fresh) so the test button follows the latest play.
+    const std::filesystem::path path = assetPath(projectRoot_, "assets/game/test_checkpoint");
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream out(path);
+    if (out) {
+        out << "screen " << screenId << "\n";
+        out << "pos " << x << ' ' << y << "\n";
+    }
+}
+
 void Engine::recordEnemyDefeated(const std::string& screenId, const RuntimePathEntity& entity)
 {
-    defeatedEnemies_.insert(screenId + "/" + entity.path.id);
+    gameState_.markEnemyDefeated(screenId + "/" + entity.path.id);
 }
 
 bool Engine::beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY)
@@ -1914,6 +3038,8 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
     transitionFromY_ = fromY;
     transitionToX_ = 0.0f;
     transitionToY_ = 0.0f;
+    saveRuntimeState();  // persist progress (defeated enemies, quest state) on each screen change
+    writeCheckpoint(targetScreenId, spawnX, spawnY);  // record last-entered screen for test launches
     return true;
 }
 
@@ -1997,11 +3123,27 @@ bool Engine::playerOverlapsEnemy(const RuntimePathEntity& entity) const
 
 void Engine::damagePlayer(int amount)
 {
+    // No directional source (hazards, scripted damage): no knockback.
+    damagePlayer(amount, playerX_, playerY_);
+}
+
+void Engine::damagePlayer(int amount, float sourceX, float sourceY)
+{
     if (amount <= 0 || playerInvulnerableSeconds_ > 0.0f) {
         return;
     }
     playerHealth_ = std::max(0, playerHealth_ - amount);
     playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
+
+    // Knockback away from the damage source (skipped when source == player position).
+    const float dx = playerX_ - sourceX;
+    const float dy = playerY_ - sourceY;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (dist > 0.001f) {
+        playerKnockbackVx_ = dx / dist * kPlayerKnockbackPxPerSecond;
+        playerKnockbackVy_ = dy / dist * kPlayerKnockbackPxPerSecond;
+    }
+
     if (playerHealth_ <= 0) {
         setPlayerActionState(PlayerActionState::Dead);
         respawnPlayerAtMapSpawn();
@@ -2016,6 +3158,8 @@ void Engine::respawnPlayerAtMapSpawn()
     playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
     playerHealth_ = playerMaxHealth_;
     playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
+    playerKnockbackVx_ = 0.0f;
+    playerKnockbackVy_ = 0.0f;
     setPlayerActionState(PlayerActionState::Idle);
 }
 
@@ -2136,7 +3280,6 @@ void Engine::render()
     renderItems();
     renderNpcs();
     renderInteractionPrompt();
-    renderSpeechBubble();
 
     bool flipH = false;
     const SpriteFrameDef* pf = playerSpriteFrame(flipH);
@@ -2182,11 +3325,15 @@ void Engine::render()
         renderFilledRect(entity.x - barW * 0.5f, entity.y - entity.path.combat.hitboxHeight * 0.5f - 5.0f, barW * pct, barH, 0.95f, 0.20f, 0.16f, 0.95f);
     }
 
+    renderSpeechBubble();
+
     renderHud();
+    renderInventory();
 
     glPopMatrix();
 
     renderDialogueBox();
+    renderShopMenu();
 }
 
 void Engine::renderTexture(const Texture& texture, float x, float y, float width, float height) const
@@ -2217,6 +3364,10 @@ void Engine::renderEnemyEntity(const RuntimePathEntity& entity) const
             if (dying) {
                 renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
                     drawW, drawH, 1.0f, 1.0f, 1.0f, deathAlpha * 0.6f);
+            } else if (entity.hitFlashSeconds > 0.0f) {
+                const float flash = std::clamp(entity.hitFlashSeconds / kEnemyHitFlashSeconds, 0.0f, 1.0f);
+                renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
+                    drawW, drawH, 1.0f, 1.0f, 1.0f, flash * 0.7f);
             }
             return;
         }
@@ -2586,8 +3737,12 @@ void Engine::renderProjectiles() const
                 continue;
             }
         }
+        // Settling projectiles fade out as they rest on the ground.
+        const float alpha = proj.settleSeconds >= 0.0f
+            ? std::clamp(1.0f - proj.settleSeconds / kProjectileSettleSeconds, 0.0f, 1.0f) * 0.95f
+            : 0.95f;
         renderFilledRect(proj.x - kProjectileHalfSize, proj.y - kProjectileHalfSize,
-            kProjectileHalfSize * 2.0f, kProjectileHalfSize * 2.0f, 1.0f, 0.85f, 0.1f, 0.95f);
+            kProjectileHalfSize * 2.0f, kProjectileHalfSize * 2.0f, 1.0f, 0.85f, 0.1f, alpha);
     }
 }
 
@@ -2634,6 +3789,226 @@ void Engine::renderHud() const
         const float barW = std::min(static_cast<float>(ammoCount), barMax) * 2.0f;
         renderFilledRect(8.0f, hudY, 40.0f, 4.0f, 0.08f, 0.08f, 0.08f, 0.6f);
         renderFilledRect(8.0f, hudY, barW, 4.0f, 0.2f, 0.8f, 1.0f, 0.9f);
+    }
+}
+
+void Engine::renderInventory() const
+{
+    if (!inventoryVisible_) {
+        return;
+    }
+
+    struct InventoryEntry {
+        std::string id;
+        std::string name;
+        std::string spriteId;
+        int count = 0;
+        bool stackable = true;
+    };
+
+    std::vector<InventoryEntry> entries;
+    entries.reserve(inventory_.size());
+    for (const std::string& id : sortedInventoryIds()) {
+        const auto countIt = inventory_.find(id);
+        if (countIt == inventory_.end()) {
+            continue;
+        }
+        const int count = countIt->second;
+        if (count <= 0) {
+            continue;
+        }
+        InventoryEntry entry;
+        entry.id = id;
+        entry.name = id;
+        entry.count = count;
+        for (const ItemDef& def : itemDefs_) {
+            if (def.id == id) {
+                entry.name = def.name.empty() ? def.id : def.name;
+                entry.spriteId = def.spriteId;
+                entry.stackable = def.stackable;
+                break;
+            }
+        }
+        entries.push_back(std::move(entry));
+    }
+
+    constexpr float panelW = 168.0f;
+    constexpr float pad = 8.0f;
+    constexpr float icon = 18.0f;
+    constexpr float rowH = 24.0f;
+    const float panelX = screenWidthPx() - panelW - 8.0f;
+    const float panelY = 8.0f;
+    const std::size_t visibleRowCount = std::min<std::size_t>(entries.size(), 7);
+    const float visibleRows = static_cast<float>(visibleRowCount);
+    const float panelH = 28.0f + std::max(1.0f, visibleRows) * rowH + pad;
+
+    renderFilledRect(panelX, panelY, panelW, panelH, 0.03f, 0.04f, 0.06f, 0.88f);
+    renderFilledRect(panelX, panelY, panelW, 1.0f, 0.55f, 0.72f, 0.92f, 0.90f);
+    renderText("INVENTORY", panelX + pad, panelY + 4.0f, 1.0f, 0.92f, 0.95f, 0.98f, 1.0f);
+
+    if (entries.empty()) {
+        renderText("Empty", panelX + pad, panelY + 30.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
+        return;
+    }
+
+    for (std::size_t i = 0; i < visibleRowCount; ++i) {
+        const std::size_t entryIndex = static_cast<std::size_t>(inventoryScroll_) + i;
+        if (entryIndex >= entries.size()) {
+            break;
+        }
+        const InventoryEntry& entry = entries[entryIndex];
+        const float y = panelY + 28.0f + static_cast<float>(i) * rowH;
+        const float iconX = panelX + pad;
+        const float iconY = y + 2.0f;
+        const bool selected = static_cast<int>(entryIndex) == inventorySelection_;
+
+        if (selected) {
+            renderFilledRect(panelX + 4.0f, y, panelW - 8.0f, rowH - 2.0f, 0.18f, 0.32f, 0.42f, 0.88f);
+        }
+
+        bool renderedIcon = false;
+        const auto spriteIt = loadedSprites_.find(entry.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                renderTextureRegion(spriteIt->second.texture, iconX, iconY, icon, icon, u0, v0, u1, v1);
+                renderedIcon = true;
+            }
+        }
+        if (!renderedIcon) {
+            renderFilledRect(iconX, iconY, icon, icon, 0.40f, 0.48f, 0.58f, 0.95f);
+        }
+
+        std::string label = entry.name;
+        constexpr float labelScale = 0.85f;
+        const float labelMaxW = 82.0f;
+        while (!label.empty() && textWidth(label, labelScale) > labelMaxW) {
+            label.pop_back();
+        }
+        if (label.empty()) {
+            label = entry.id.substr(0, std::min<std::size_t>(entry.id.size(), 8));
+        }
+        renderText(label, panelX + pad + icon + 6.0f, y + 4.0f, labelScale,
+            selected ? 0.98f : 0.86f, selected ? 1.0f : 0.89f, selected ? 1.0f : 0.94f, 1.0f);
+
+        if (entry.stackable || entry.count != 1) {
+            const std::string count = std::to_string(entry.count);
+            renderText(count, panelX + panelW - pad - textWidth(count, 1.0f), y + 4.0f, 1.0f,
+                1.0f, 0.90f, 0.42f, 1.0f);
+        }
+    }
+
+    if (entries.size() > visibleRowCount) {
+        if (inventoryScroll_ > 0) {
+            renderText("^", panelX + panelW - pad - 8.0f, panelY + 13.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+        }
+        if (inventoryScroll_ + static_cast<int>(visibleRowCount) < static_cast<int>(entries.size())) {
+            renderText("v", panelX + panelW - pad - 8.0f, panelY + panelH - 16.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+        }
+    }
+}
+
+void Engine::renderShopMenu() const
+{
+    if (interactionState_ != InteractionState::InShop ||
+        interactingNpcIndex_ < 0 ||
+        interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+        return;
+    }
+    const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+    const std::vector<std::string> playerItems = sortedInventoryIds();
+
+    const float sw = screenWidthPx();
+    const float sh = screenHeightPx();
+    const float margin = 18.0f;
+    const float panelW = (sw - margin * 3.0f) * 0.5f;
+    const float panelH = sh - margin * 2.0f;
+    const float y = margin;
+    const float shopX = margin;
+    const float playerX = margin * 2.0f + panelW;
+    constexpr float rowH = 20.0f;
+    constexpr int visibleRows = 16;
+
+    renderFilledRect(0.0f, 0.0f, sw, sh, 0.0f, 0.0f, 0.0f, 0.48f);
+    renderFilledRect(shopX, y, panelW, panelH, 0.04f, 0.05f, 0.07f, 0.94f);
+    renderFilledRect(playerX, y, panelW, panelH, 0.04f, 0.05f, 0.07f, 0.94f);
+    renderFilledRect(shopPanel_ == 0 ? shopX : playerX, y, panelW, 2.0f, 0.30f, 0.70f, 0.90f, 0.95f);
+
+    const std::string money = "Money " + std::to_string(gameState_.getInt("Money", 0));
+    renderText("SHOP", shopX + 8.0f, y + 7.0f, 1.2f, 0.92f, 0.95f, 0.98f, 1.0f);
+    renderText(money, shopX + panelW - 8.0f - textWidth(money, 1.0f), y + 9.0f, 1.0f, 1.0f, 0.90f, 0.42f, 1.0f);
+    renderText("PLAYER", playerX + 8.0f, y + 7.0f, 1.2f, 0.92f, 0.95f, 0.98f, 1.0f);
+
+    auto itemName = [this](const std::string& id) {
+        for (const ItemDef& item : itemDefs_) {
+            if (item.id == id) {
+                return item.name.empty() ? item.id : item.name;
+            }
+        }
+        return id;
+    };
+
+    const int shopFirst = std::clamp(shopScroll_[0], 0, std::max(0, static_cast<int>(npc.shopInventory.size()) - visibleRows));
+    for (int i = 0; i < std::min<int>(visibleRows, static_cast<int>(npc.shopInventory.size()) - shopFirst); ++i) {
+        const int itemIndex = shopFirst + i;
+        const ShopItemDef& item = npc.shopInventory[static_cast<std::size_t>(itemIndex)];
+        const float rowY = y + 34.0f + static_cast<float>(i) * rowH;
+        const bool selected = shopPanel_ == 0 && itemIndex == shopSelection_;
+        if (selected) {
+            renderFilledRect(shopX + 5.0f, rowY - 2.0f, panelW - 10.0f, rowH - 2.0f, 0.18f, 0.32f, 0.42f, 0.88f);
+        }
+        std::string label = itemName(item.itemId);
+        if (!item.unlimited) {
+            label += " x" + std::to_string(item.quantity);
+        }
+        renderText(label, shopX + 9.0f, rowY, 0.95f, 0.88f, 0.91f, 0.95f, 1.0f);
+        const std::string price = std::to_string(item.buyPrice);
+        renderText(price, shopX + panelW - 9.0f - textWidth(price, 0.95f), rowY, 0.95f, 1.0f, 0.90f, 0.42f, 1.0f);
+    }
+    if (npc.shopInventory.empty()) {
+        renderText("No stock", shopX + 9.0f, y + 36.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
+    }
+
+    const int playerFirst = std::clamp(shopScroll_[1], 0, std::max(0, static_cast<int>(playerItems.size()) - visibleRows));
+    for (int i = 0; i < std::min<int>(visibleRows, static_cast<int>(playerItems.size()) - playerFirst); ++i) {
+        const int itemIndex = playerFirst + i;
+        const std::string& itemId = playerItems[static_cast<std::size_t>(itemIndex)];
+        const auto countIt = inventory_.find(itemId);
+        const int count = countIt == inventory_.end() ? 0 : countIt->second;
+        const float rowY = y + 34.0f + static_cast<float>(i) * rowH;
+        const bool selected = shopPanel_ == 1 && itemIndex == shopSelection_;
+        if (selected) {
+            renderFilledRect(playerX + 5.0f, rowY - 2.0f, panelW - 10.0f, rowH - 2.0f, 0.18f, 0.32f, 0.42f, 0.88f);
+        }
+        renderText(itemName(itemId) + " x" + std::to_string(count), playerX + 9.0f, rowY, 0.95f, 0.88f, 0.91f, 0.95f, 1.0f);
+        int sellPrice = 1;
+        const auto shopIt = std::find_if(npc.shopInventory.begin(), npc.shopInventory.end(), [&itemId](const ShopItemDef& item) {
+            return item.itemId == itemId;
+        });
+        if (shopIt != npc.shopInventory.end()) {
+            sellPrice = shopIt->sellPrice;
+        }
+        const std::string price = std::to_string(sellPrice);
+        renderText(price, playerX + panelW - 9.0f - textWidth(price, 0.95f), rowY, 0.95f, 1.0f, 0.90f, 0.42f, 1.0f);
+    }
+    if (playerItems.empty()) {
+        renderText("Inventory empty", playerX + 9.0f, y + 36.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
+    }
+    if (shopFirst > 0) {
+        renderText("^", shopX + panelW - 16.0f, y + 22.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+    }
+    if (shopFirst + visibleRows < static_cast<int>(npc.shopInventory.size())) {
+        renderText("v", shopX + panelW - 16.0f, y + panelH - 18.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+    }
+    if (playerFirst > 0) {
+        renderText("^", playerX + panelW - 16.0f, y + 22.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+    }
+    if (playerFirst + visibleRows < static_cast<int>(playerItems.size())) {
+        renderText("v", playerX + panelW - 16.0f, y + panelH - 18.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
     }
 }
 

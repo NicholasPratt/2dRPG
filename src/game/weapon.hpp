@@ -6,6 +6,12 @@ namespace adventure::game {
 
 enum class WeaponType { Melee = 0, Ranged = 1 };
 
+// What a ranged projectile does when it strikes a solid wall.
+enum class ProjectileWallBehavior {
+    Break = 0,    // vanish on impact (arrow, bullet)
+    Rebound = 1,  // bounce off the wall, lose energy, then settle on the ground (slingshot stone)
+};
+
 struct WeaponDef {
     std::string id = "sword_1";
     WeaponType type = WeaponType::Melee;
@@ -17,6 +23,7 @@ struct WeaponDef {
     std::string ammoTypeId;         // ranged only: key into ammo pool (defaults to id if empty)
     std::string ammoSpriteId;       // ranged only: projectile/ammo sprite (defaults to spriteId if empty)
     int ammoPerShot = 1;
+    ProjectileWallBehavior wallBehavior = ProjectileWallBehavior::Break;  // ranged only (ADGAME v13+)
 };
 
 } // namespace adventure::game

@@ -37,6 +37,7 @@ const char* pickupTypeLabel(int t)
         case 0: return "Weapon";
         case 1: return "Ammo";
         case 2: return "Health";
+        case 3: return "Item";
         default: return "Unknown";
     }
 }
@@ -173,8 +174,8 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
 {
     ImGui::TextUnformatted("Place Item");
 
-    const char* typeItems[] = { "Weapon Pickup", "Ammo Pickup", "Health Pickup" };
-    if (ImGui::Combo("New item type##place_type", &pickupType_, typeItems, 3)) {
+    const char* typeItems[] = { "Weapon Pickup", "Ammo Pickup", "Health Pickup", "Project Item" };
+    if (ImGui::Combo("New item type##place_type", &pickupType_, typeItems, 4)) {
         if (pickupType_ == 0 && !context.weaponDefs.empty()) {
             const game::WeaponDef& weapon = context.weaponDefs.front();
             copyToBuffer(targetId_, weapon.id);
@@ -208,8 +209,22 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
     } else if (pickupType_ == 1) {
         ImGui::InputText("Ammo type ID##place_ammo", targetId_.data(), targetId_.size());
         ImGui::DragInt("Quantity##place_qty", &quantity_, 1.0f, 1, 999);
-    } else {
+    } else if (pickupType_ == 2) {
         ImGui::DragInt("HP restore##place_hp", &quantity_, 1.0f, 1, 99);
+    } else {
+        const std::string selectedTarget(targetId_.data());
+        const char* preview = selectedTarget.empty() ? "(choose item)" : selectedTarget.c_str();
+        if (ImGui::BeginCombo("Item##place_item", preview)) {
+            for (const game::ItemDef& item : context.itemDefs) {
+                if (ImGui::Selectable(item.id.c_str(), item.id == selectedTarget)) {
+                    copyToBuffer(targetId_, item.id);
+                    copyToBuffer(spriteId_, item.spriteId);
+                    quantity_ = std::max(1, item.value);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::DragInt("Quantity##place_item_qty", &quantity_, 1.0f, 1, 999);
     }
 
     ImGui::InputText("Pickup sprite ID##place_sprite", spriteId_.data(), spriteId_.size());
@@ -289,8 +304,8 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
     ImGui::TextUnformatted("Item Properties");
     if (ImGui::InputText("ID##iid", itemId_.data(), itemId_.size())) { context.markDirty(); }
 
-    const char* typeItems[] = { "Weapon", "Ammo", "Health" };
-    if (ImGui::Combo("Type##itype", &pickupType_, typeItems, 3)) { context.markDirty(); }
+    const char* typeItems[] = { "Weapon", "Ammo", "Health", "Project Item" };
+    if (ImGui::Combo("Type##itype", &pickupType_, typeItems, 4)) { context.markDirty(); }
 
     if (pickupType_ == 0) {
         const std::string selectedTarget(targetId_.data());
@@ -317,8 +332,26 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
     } else if (pickupType_ == 1) {
         if (ImGui::InputText("Ammo type ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
         if (ImGui::DragInt("Quantity##iqty", &quantity_, 1.0f, 1, 999)) { context.markDirty(); }
-    } else {
+    } else if (pickupType_ == 2) {
         if (ImGui::DragInt("HP restore##iqty", &quantity_, 1.0f, 1, 99)) { context.markDirty(); }
+    } else {
+        const std::string selectedTarget(targetId_.data());
+        const char* preview = selectedTarget.empty() ? "(choose item)" : selectedTarget.c_str();
+        if (ImGui::BeginCombo("Item ID##itarget_item_combo", preview)) {
+            for (const game::ItemDef& item : context.itemDefs) {
+                if (ImGui::Selectable(item.id.c_str(), item.id == selectedTarget)) {
+                    copyToBuffer(targetId_, item.id);
+                    copyToBuffer(spriteId_, item.spriteId);
+                    quantity_ = std::max(1, item.value);
+                    context.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (context.itemDefs.empty()) {
+            if (ImGui::InputText("Item ID##itarget_item", targetId_.data(), targetId_.size())) { context.markDirty(); }
+        }
+        if (ImGui::DragInt("Quantity##iqty_item", &quantity_, 1.0f, 1, 999)) { context.markDirty(); }
     }
 
     if (ImGui::Checkbox("Respawn##iresp", &respawn_)) { context.markDirty(); }
@@ -416,6 +449,7 @@ void ItemPlacementPanel::drawCanvas(EditorContext& context)
         ImU32 col = IM_COL32(240, 210, 30, 220);
         if (item.pickupType == game::ItemPickupType::Ammo) { col = IM_COL32(30, 190, 255, 220); }
         else if (item.pickupType == game::ItemPickupType::Health) { col = IM_COL32(40, 220, 60, 220); }
+        else if (item.pickupType == game::ItemPickupType::ProjectItem) { col = IM_COL32(190, 120, 255, 220); }
 
         dl->AddQuadFilled(
             ImVec2(cp.x, cp.y - r), ImVec2(cp.x + r, cp.y),

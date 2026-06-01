@@ -56,7 +56,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 9\n";
+    output << "ADGAME 13\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -73,6 +73,10 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << type.maxHealth << ' ' << type.contactDamage << ' '
                << type.hitboxWidth << ' ' << type.hitboxHeight << ' '
                << type.attackCooldownSeconds << ' ' << type.speed
+               << ' ' << type.knockbackResistance << ' ' << type.hitstunSeconds
+               << ' ' << type.aggroRange
+               << ' ' << (type.killVariable.empty() ? "-" : type.killVariable)
+               << ' ' << type.killAmount
                << ' ' << type.attacks.size() << "\n";
         for (const EnemyAttackDef& atk : type.attacks) {
             output << "enemy_attack"
@@ -97,7 +101,20 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << (w.spriteId.empty() ? "-" : w.spriteId)
                << ' ' << (w.ammoTypeId.empty() ? "-" : w.ammoTypeId)
                << ' ' << (w.ammoSpriteId.empty() ? "-" : w.ammoSpriteId)
-               << ' ' << w.ammoPerShot << "\n";
+               << ' ' << w.ammoPerShot
+               << ' ' << static_cast<int>(w.wallBehavior) << "\n";
+    }
+    output << "item_defs " << project.itemDefs.size() << "\n";
+    for (const ItemDef& item : project.itemDefs) {
+        output << "item_def " << item.id
+               << ' ' << std::quoted(item.name)
+               << ' ' << static_cast<int>(item.type)
+               << ' ' << (item.spriteId.empty() ? "-" : item.spriteId)
+               << ' ' << (item.targetId.empty() ? "-" : item.targetId)
+               << ' ' << item.value
+               << ' ' << (item.stackable ? 1 : 0)
+               << ' ' << (item.customType.empty() ? "-" : item.customType)
+               << "\n";
     }
     output << "starting_weapon " << (project.startingWeaponId.empty() ? "-" : project.startingWeaponId) << "\n";
     output << "font " << std::quoted(project.fontPath.empty() ? std::string{"-"} : project.fontPath) << "\n";
@@ -125,9 +142,18 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << static_cast<int>(npc.defaultInteraction)
                << ' ' << npc.defaultSpeed
                << ' ' << (npc.defaultGraphId.empty() ? "-" : npc.defaultGraphId)
-               << ' ' << npc.defaultDialogue.size() << "\n";
+               << ' ' << npc.defaultDialogue.size()
+               << ' ' << npc.shopInventory.size() << "\n";
         for (const DialogueLine& dl : npc.defaultDialogue) {
             output << "dl " << std::quoted(dl.speaker) << ' ' << std::quoted(dl.text) << "\n";
+        }
+        for (const ShopItemDef& item : npc.shopInventory) {
+            output << "shop_item " << (item.itemId.empty() ? "-" : item.itemId)
+                   << ' ' << item.buyPrice
+                   << ' ' << item.sellPrice
+                   << ' ' << item.quantity
+                   << ' ' << (item.unlimited ? 1 : 0)
+                   << "\n";
         }
     }
     output << "end\n";
@@ -145,7 +171,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 9) {
+    if (magic != "ADGAME" || version < 1 || version > 13) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -191,6 +217,12 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             if (type.spriteId == "-") {
                 type.spriteId.clear();
             }
+            if (version >= 12) {
+                std::string killVar;
+                input >> type.knockbackResistance >> type.hitstunSeconds >> type.aggroRange
+                      >> killVar >> type.killAmount;
+                type.killVariable = (killVar == "-") ? "" : killVar;
+            }
             int numAttacks = 0;
             if (version >= 8) {
                 input >> numAttacks;
@@ -229,6 +261,11 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                 input >> ammoSpriteId;
             }
             input >> w.ammoPerShot;
+            if (version >= 13) {
+                int wallBehavior = 0;
+                input >> wallBehavior;
+                w.wallBehavior = static_cast<ProjectileWallBehavior>(std::clamp(wallBehavior, 0, 1));
+            }
             w.type = (weaponType == 1) ? WeaponType::Ranged : WeaponType::Melee;
             w.spriteId = (spriteId == "-") ? std::string{} : spriteId;
             w.ammoTypeId = (ammoTypeId == "-") ? std::string{} : ammoTypeId;
@@ -240,6 +277,26 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             input >> loaded.startingWeaponId;
             if (loaded.startingWeaponId == "-") {
                 loaded.startingWeaponId.clear();
+            }
+        } else if (version >= 10 && key == "item_defs") {
+            std::size_t count = 0;
+            input >> count;
+            loaded.itemDefs.reserve(count);
+        } else if (version >= 10 && key == "item_def") {
+            ItemDef item;
+            int type = 0;
+            std::string spriteId;
+            std::string targetId;
+            std::string customType;
+            int stackable = 1;
+            input >> item.id >> std::quoted(item.name) >> type >> spriteId >> targetId >> item.value >> stackable >> customType;
+            item.type = static_cast<ItemDefType>(std::clamp(type, 0, 10));
+            item.spriteId = (spriteId == "-") ? std::string{} : spriteId;
+            item.targetId = (targetId == "-") ? std::string{} : targetId;
+            item.stackable = stackable != 0;
+            item.customType = (customType == "-") ? std::string{} : customType;
+            if (!item.id.empty()) {
+                loaded.itemDefs.push_back(std::move(item));
             }
         } else if (version >= 7 && key == "font") {
             input >> std::quoted(loaded.fontPath);
@@ -294,12 +351,31 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             if (version >= 6) {
                 int dlCount = 0;
                 input >> dlCount;
+                int shopCount = 0;
+                if (version >= 11) {
+                    input >> shopCount;
+                }
                 for (int di = 0; di < dlCount && input; ++di) {
                     std::string dlKey;
                     DialogueLine dl;
                     input >> dlKey >> std::quoted(dl.speaker) >> std::quoted(dl.text);
                     if (dlKey == "dl") {
                         npc.defaultDialogue.push_back(std::move(dl));
+                    }
+                }
+                for (int si = 0; si < shopCount && input; ++si) {
+                    std::string shopKey;
+                    std::string itemId;
+                    ShopItemDef shopItem;
+                    int unlimited = 1;
+                    input >> shopKey >> itemId >> shopItem.buyPrice >> shopItem.sellPrice >> shopItem.quantity >> unlimited;
+                    if (shopKey == "shop_item") {
+                        shopItem.itemId = (itemId == "-") ? std::string{} : itemId;
+                        shopItem.unlimited = unlimited != 0;
+                        shopItem.quantity = std::max(0, shopItem.quantity);
+                        shopItem.buyPrice = std::max(0, shopItem.buyPrice);
+                        shopItem.sellPrice = std::max(0, shopItem.sellPrice);
+                        npc.shopInventory.push_back(std::move(shopItem));
                     }
                 }
             }

@@ -1,0 +1,46 @@
+# Adventure RPG Engine — Editor Manual (LLM index)
+
+> Authoritative guide for answering user questions about how to achieve effects in the
+> Adventure RPG Engine editor (a 2D action-RPG maker, SNES/GBA style). When this index is
+> not enough, read docs/manual/index.html in full. When the codebase contradicts the
+> manual, the code wins (RPG_Engine_Specification.md and code_base.md at the repo root).
+
+## How to use this
+The full manual is `index.html` (same folder). It is plain semantic HTML — read it directly.
+The most useful section for "how do I…" questions is the numbered recipes (R1–R16).
+
+## Quick recipe map (effect → where in the editor)
+- Enemy chases the player → Edit Enemy Types → Hit Reaction & AI → Aggro range > 0  (R1)
+- Enemy flies back / immovable when hit → Knockback resist 0..1  (R2)
+- Hits stagger an enemy → Hitstun seconds > 0  (R3)
+- Projectile bounces off walls (stone) vs breaks (arrow/bullet) → Weapons → On wall hit = Rebound/Break  (R4)
+- Enemy shoots projectiles → Edit Enemy Types → add Ranged attack  (R5)
+- "Kill N enemies" quest → Quest State variable + enemy Kill counter var + NPC dialogue Condition/Action  (R6)
+- Enemies stay dead / respawn → default persists; placement respawn flag to bring back  (R7)
+- Placed enemies don't appear → stale save.adstate hides reused ids; use fresh test launch / unique ids / delete save  (R8)
+- Shop NPC → interaction mode is TYPE-level only (no per-placement override). Edit NPC Types → default interaction = Shop + inventory rows; place an instance (stock can be overridden per instance). Setting a shop stock override on a Talk-type placement does NOT make it a shop.  (R9)
+- Branching dialogue / choices → NPC → Edit Instance Dialogue (Start/Dialogue/Choice/Condition/Action/End)  (R10)
+- Place a pickup → Items tab to define, then Screens → Edit Items  (R11)
+- Choose playable character / edit sprite → Characters tab → Playable + Edit Sprite  (R12)
+- Attack/hurt/death animations → add sprite frames labelled attack_1/cast/hit_react/death/hurt/dead  (R13)
+- Add & link a screen → Screens tab directional N/S/E/W controls  (R14)
+- Quickly test current screen → Play Selected Screen (fresh launch)  (R15)
+- Tune combat feel globally → constants in src/game/engine.cpp (rebuild)  (R16)
+- Placed NPC/enemy doesn't appear or react → (1) placement not saved (creating a TYPE places nothing; place an instance + save); (2) sprite id case/name mismatch vs assets/game/sprites/<id>.sprite.json (case-sensitive); (3) NPC interaction is manual (green prompt + press E) and the 24px default radius is small — raise it; shop needs type interaction=Shop; (4) enemy hidden by defeated save (R8); (5) walled off  (R17)
+
+## Key concepts
+- Tiles 16x16, screens 48x32 tiles. Chapters = grids of linked screens.
+- Reusable assets live in project.adgame; dialogue trees are chapter-scoped.
+- Game state registry: named ints/bools/items; quests, kills, money, dialogue all route through it.
+  Variable names are designer-authored, never hard-coded. Money = integer var "Money".
+- Persistence: defeated enemies + state saved to save.adstate; fresh test launches ignore it.
+- Combat: melee has windup→active→recovery; hits cause knockback + hitstun + flash; lethal → dead/fade.
+  Projectiles are team-tagged (enemy shots hit the player). Aggro enemies chase then return to nearest path point.
+
+## Runtime controls
+Move WASD/arrows; Z melee; X ranged; E interact/confirm/use; I inventory; Esc quit.
+
+## Files in this folder
+- index.html — full human + LLM readable manual
+- llms.txt — this index
+- README.md — what this folder is and how to keep it current

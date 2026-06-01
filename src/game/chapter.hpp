@@ -54,6 +54,7 @@ struct NpcPlacement {
     float speedOverride = 0.0f;
     std::string graphOverride;
     std::vector<DialogueLine> dialogueOverride;
+    std::vector<ShopItemDef> shopInventoryOverride;
 };
 
 struct ScreenLink {
