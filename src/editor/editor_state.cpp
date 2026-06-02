@@ -30,12 +30,13 @@ bool saveEditorState(const std::filesystem::path& path, const EditorState& state
         output << '\n';
     };
 
-    output << "ADEDITOR 2\n";
+    output << "ADEDITOR 3\n";
     output << "selectedScreen " << (state.selectedScreenId.empty() ? "-" : state.selectedScreenId) << "\n";
     output << "tilePalette " << state.tilePalette.size() << "\n";
     for (const TilePaletteEntry& e : state.tilePalette) {
         output << "entry " << (e.name.empty() ? "-" : e.name) << " " << e.widthPx << " " << e.heightPx
-               << " " << e.frameDurationMs << " " << e.frames.size() << "\n";
+               << " " << e.frameDurationMs << " " << e.frames.size()
+               << " " << (e.spriteId.empty() ? "-" : e.spriteId) << "\n";
         for (const TilePaletteFrame& frame : e.frames) {
             output << "frame\n";
             output << "floor ";
@@ -67,7 +68,7 @@ bool loadEditorState(const std::filesystem::path& path, EditorState& state, std:
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADEDITOR" || version < 1 || version > 2) {
+    if (magic != "ADEDITOR" || version < 1 || version > 3) {
         setError(errorMessage, "Unsupported editor state file type or version.");
         return false;
     }
@@ -131,6 +132,13 @@ bool loadEditorState(const std::filesystem::path& path, EditorState& state, std:
             if (!(input >> e.frameDurationMs >> frameCount) || frameCount == 0) {
                 setError(errorMessage, "Expected animation frame data.");
                 return false;
+            }
+            if (version >= 3) {
+                if (!(input >> e.spriteId)) {
+                    setError(errorMessage, "Expected entry spriteId.");
+                    return false;
+                }
+                if (e.spriteId == "-") { e.spriteId.clear(); }
             }
             e.frames.reserve(frameCount);
             for (std::size_t frameIndex = 0; frameIndex < frameCount; ++frameIndex) {

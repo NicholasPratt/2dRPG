@@ -7,7 +7,7 @@
 
 ## How to use this
 The full manual is `index.html` (same folder). It is plain semantic HTML — read it directly.
-The most useful section for "how do I…" questions is the numbered recipes (R1–R16).
+The most useful section for "how do I…" questions is the numbered recipes (R1–R21).
 
 ## Quick recipe map (effect → where in the editor)
 - Enemy chases the player → Edit Enemy Types → Hit Reaction & AI → Aggro range > 0  (R1)
@@ -16,8 +16,8 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Projectile bounces off walls (stone) vs breaks (arrow/bullet) → Weapons → On wall hit = Rebound/Break  (R4)
 - Enemy shoots projectiles → Edit Enemy Types → add Ranged attack  (R5)
 - "Kill N enemies" quest → Quest State variable + enemy Kill counter var + NPC dialogue Condition/Action  (R6)
-- Enemies stay dead / respawn → default persists; placement respawn flag to bring back  (R7)
-- Placed enemies don't appear → stale save.adstate hides reused ids; use fresh test launch / unique ids / delete save  (R8)
+- Enemies stay dead / respawn → dead within a session; placement respawn flag to bring back; every launch is a new game so they always spawn  (R7)
+- Placed enemies don't appear → check waypoint present, typeId matches a type, not walled off (state no longer carries over between launches)  (R8)
 - Shop NPC → interaction mode is TYPE-level only (no per-placement override). Edit NPC Types → default interaction = Shop + inventory rows; place an instance (stock can be overridden per instance). Setting a shop stock override on a Talk-type placement does NOT make it a shop.  (R9)
 - Branching dialogue / choices → NPC → Edit Instance Dialogue (Start/Dialogue/Choice/Condition/Action/End)  (R10)
 - Place a pickup → Items tab to define, then Screens → Edit Items  (R11)
@@ -26,14 +26,20 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Add & link a screen → Screens tab directional N/S/E/W controls  (R14)
 - Quickly test current screen → Play Selected Screen (fresh launch)  (R15)
 - Tune combat feel globally → constants in src/game/engine.cpp (rebuild)  (R16)
-- Placed NPC/enemy doesn't appear or react → (1) placement not saved (creating a TYPE places nothing; place an instance + save); (2) sprite id case/name mismatch vs assets/game/sprites/<id>.sprite.json (case-sensitive); (3) NPC interaction is manual (green prompt + press E) and the 24px default radius is small — raise it; shop needs type interaction=Shop; (4) enemy hidden by defeated save (R8); (5) walled off  (R17)
+- Placed NPC/enemy doesn't appear or react → (1) placement not saved (creating a TYPE places nothing; place an instance + save); (2) sprite id case/name mismatch vs assets/game/sprites/<id>.sprite.json (case-sensitive); (3) NPC interaction is manual (green prompt + press E) and the 24px default radius is small — raise it; shop needs type interaction=Shop; (4) walled off  (R17)
+- Animated scenery tile (water/fire/torch) → add region to Tile Palette → "Edit Sprite" on the row → add frames in Sprite editor → Refresh → tile shows "● anim (N)" → Stamp it (active layer = Wall in front / Floor behind). Single-frame tiles stamp static pixels.  (R18)
+- Weapon pickup shows wrong/no sprite on map → pick the weapon in Edit Items; it auto-fills the on-map pickup sprite from the weapon sprite (separate from the weapon's own sprite).  (R19)
+- Slingshot/bow won't use ammo → ammo lives in the INVENTORY (shown in an "AMMO" section), fired directly; weapon ammoTypeId must match an Ammo item id/targetId. No separate ammo pool.  (R20)
+- Editor opens last project automatically (projects/.editor_session); Project menu → Project Manager to open/create/delete projects.  (R21)
 
 ## Key concepts
 - Tiles 16x16, screens 48x32 tiles. Chapters = grids of linked screens.
 - Reusable assets live in project.adgame; dialogue trees are chapter-scoped.
 - Game state registry: named ints/bools/items; quests, kills, money, dialogue all route through it.
   Variable names are designer-authored, never hard-coded. Money = integer var "Money".
-- Persistence: defeated enemies + state saved to save.adstate; fresh test launches ignore it.
+- Persistence: defeated enemies + state tracked in-memory within a session and written to save.adstate, but every launch starts a NEW game (state initialized from project defaults); save.adstate is only re-loaded with the --continue launch flag. --fresh test launches also ignore it and don't write.
+- Ammo: stored in the inventory (not a separate pool); ranged weapons consume the matching Ammo item directly. Inventory has an AMMO section (sprite + count).
+- Tiles: Tile Palette entries can be linked to a sprite (Edit Sprite); a tile whose sprite has >=2 frames is "animated" and stamps as a runtime AnimatedTilePlacement instead of baking pixels.
 - Combat: melee has windup→active→recovery; hits cause knockback + hitstun + flash; lethal → dead/fade.
   Projectiles are team-tagged (enemy shots hit the player). Aggro enemies chase then return to nearest path point.
 

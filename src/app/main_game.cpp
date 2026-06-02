@@ -242,8 +242,11 @@ int main(int argc, char** argv)
     std::filesystem::path projectRoot = workspaceRoot;
     std::filesystem::path chapterPath;
 
-    // Optional editor test-launch flags: --fresh, --screen <id>, --pos <x> <y>.
+    // Optional launch flags: --fresh, --continue, --screen <id>, --pos <x> <y>.
+    // Default (no flag) starts a NEW game with state initialized from defaults;
+    // --continue resumes the saved playthrough (save.adstate).
     bool fresh = false;
+    bool continueSave = false;
     std::string startScreen;
     bool hasStartPos = false;
     float startX = 0.0f;
@@ -253,6 +256,8 @@ int main(int argc, char** argv)
         const std::string arg = argv[i];
         if (arg == "--fresh") {
             fresh = true;
+        } else if (arg == "--continue") {
+            continueSave = true;
         } else if (arg == "--screen" && i + 1 < argc) {
             startScreen = argv[++i];
         } else if (arg == "--pos" && i + 2 < argc) {
@@ -280,6 +285,7 @@ int main(int argc, char** argv)
 
     adventure::game::Engine engine(projectRoot);
     engine.setFreshStart(fresh);
+    engine.setContinueSave(continueSave);
     if (!startScreen.empty()) {
         engine.setStartScreen(startScreen);
     }

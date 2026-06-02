@@ -902,6 +902,14 @@ void LayoutEditorPanel::applyContextSelectedScreenData(EditorContext& context)
             screen->npcs = context.selectedScreenNpcs;
         }
     }
+    const std::string animTileOwnerId = context.selectedScreenAnimatedTilesOwnerId.empty()
+        ? context.selectedScreenId
+        : context.selectedScreenAnimatedTilesOwnerId;
+    if (!animTileOwnerId.empty()) {
+        if (game::ChapterScreen* screen = screenById(animTileOwnerId)) {
+            screen->animatedTiles = context.selectedScreenAnimatedTiles;
+        }
+    }
 }
 
 bool LayoutEditorPanel::selectScreenById(EditorContext& context, const std::string& screenId)
@@ -941,6 +949,8 @@ bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::strin
         context.selectedScreenEnemiesOwnerId = chapter_.screens.front().id;
         context.selectedScreenNpcs = chapter_.screens.front().npcs;
         context.selectedScreenNpcsOwnerId = chapter_.screens.front().id;
+        context.selectedScreenAnimatedTiles = chapter_.screens.front().animatedTiles;
+        context.selectedScreenAnimatedTilesOwnerId = chapter_.screens.front().id;
     }
     syncContextScreens(context);
     context.dirty = false;
@@ -968,6 +978,8 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
     context.selectedScreenEnemiesOwnerId = chapter_.screens.front().id;
     context.selectedScreenNpcs = chapter_.screens.front().npcs;
     context.selectedScreenNpcsOwnerId = chapter_.screens.front().id;
+    context.selectedScreenAnimatedTiles = chapter_.screens.front().animatedTiles;
+    context.selectedScreenAnimatedTilesOwnerId = chapter_.screens.front().id;
     syncContextScreens(context);
     context.markDirty();
     status_ = "Created new chapter: " + chapter_.id;
@@ -989,6 +1001,8 @@ void LayoutEditorPanel::syncSelectedScreenToContext(EditorContext& context) cons
         context.selectedScreenMapId.clear();
         context.selectedScreenEnemies.clear();
         context.selectedScreenEnemiesOwnerId.clear();
+        context.selectedScreenAnimatedTiles.clear();
+        context.selectedScreenAnimatedTilesOwnerId.clear();
         return;
     }
     const game::ChapterScreen& screen = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
@@ -999,6 +1013,8 @@ void LayoutEditorPanel::syncSelectedScreenToContext(EditorContext& context) cons
     context.selectedScreenEnemiesOwnerId = screen.id;
     context.selectedScreenNpcs = screen.npcs;
     context.selectedScreenNpcsOwnerId = screen.id;
+    context.selectedScreenAnimatedTiles = screen.animatedTiles;
+    context.selectedScreenAnimatedTilesOwnerId = screen.id;
 }
 
 void LayoutEditorPanel::syncChapterIdBuffer()

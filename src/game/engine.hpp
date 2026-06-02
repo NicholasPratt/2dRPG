@@ -31,6 +31,9 @@ public:
 
     // Editor test-launch options (set before initialize()).
     void setFreshStart(bool fresh) { freshStart_ = fresh; }          // ignore + don't overwrite save.adstate
+    // Continue a previous playthrough by loading save.adstate at boot. Off by
+    // default: a normal launch starts a new game (state initialized from defaults).
+    void setContinueSave(bool cont) { continueSave_ = cont; }
     void setStartScreen(const std::string& screenId) { startScreenOverride_ = screenId; }
     void setStartPosition(float x, float y) { startPosX_ = x; startPosY_ = y; }
 
@@ -187,6 +190,7 @@ private:
     std::vector<RuntimeItemEntity> itemEntities_;
     GameState gameState_;
     bool freshStart_ = false;            // test launch: ignore + preserve save.adstate
+    bool continueSave_ = false;          // load save.adstate at boot (explicit continue only)
     std::string startScreenOverride_;    // empty = chapter start screen
     float startPosX_ = -1.0f;            // <0 = use screen default spawn/center
     float startPosY_ = -1.0f;
@@ -194,7 +198,6 @@ private:
     std::optional<WeaponDef> rangedWeapon_;
     std::vector<ItemDef> itemDefs_;
     std::unordered_map<std::string, int> inventory_;
-    std::unordered_map<std::string, int> ammo_;
     bool inventoryVisible_ = false;
     bool inventoryInputWasDown_ = false;
     int inventorySelection_ = 0;
@@ -271,6 +274,8 @@ private:
     void update(float dt);
     void updateInventoryInput();
     [[nodiscard]] std::vector<std::string> sortedInventoryIds() const;
+    [[nodiscard]] std::vector<std::string> ammoInventoryIds() const;
+    [[nodiscard]] bool isAmmoItemId(const std::string& id) const;
     void useInventoryItem(const std::string& itemId);
     void updatePlayer(float dt);
     void updateAttack(float dt);
@@ -320,6 +325,12 @@ private:
     void renderTexture(const Texture& texture, float x, float y, float width, float height) const;
     void renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const;
     void renderEnemyEntity(const RuntimePathEntity& entity) const;
+    void renderAnimatedTiles(int layer) const;
+    // Ammo for ranged weapons is drawn from the inventory. These resolve the
+    // inventory item that backs a weapon's ammo, count it, and consume it.
+    [[nodiscard]] std::string ammoItemIdForWeapon(const WeaponDef& weapon) const;
+    [[nodiscard]] int ammoCountForWeapon(const WeaponDef& weapon) const;
+    void consumeAmmoForWeapon(const WeaponDef& weapon, int amount);
     [[nodiscard]] const SpriteFrameDef* spriteFrame(const RuntimeSprite& sprite) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrameForEntity(const RuntimeSprite& sprite, const RuntimePathEntity& entity, bool& flipHorizontal) const;
     [[nodiscard]] const SpriteFrameDef* spriteFrameForNpc(const RuntimeSprite& sprite, const RuntimeNpcEntity& npc, bool& flipHorizontal) const;

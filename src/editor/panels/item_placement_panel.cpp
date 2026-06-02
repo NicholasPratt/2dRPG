@@ -179,9 +179,7 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
         if (pickupType_ == 0 && !context.weaponDefs.empty()) {
             const game::WeaponDef& weapon = context.weaponDefs.front();
             copyToBuffer(targetId_, weapon.id);
-            if (spriteId_[0] == '\0') {
-                copyToBuffer(spriteId_, weapon.spriteId);
-            }
+            copyToBuffer(spriteId_, weapon.spriteId);
         }
     }
 
@@ -193,9 +191,7 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
                 const bool selected = weapon.id == selectedTarget;
                 if (ImGui::Selectable(weapon.id.c_str(), selected)) {
                     copyToBuffer(targetId_, weapon.id);
-                    if (spriteId_[0] == '\0') {
-                        copyToBuffer(spriteId_, weapon.spriteId);
-                    }
+                    copyToBuffer(spriteId_, weapon.spriteId);
                 }
                 if (selected) {
                     ImGui::SetItemDefaultFocus();
@@ -315,9 +311,7 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
                 const bool selected = weapon.id == selectedTarget;
                 if (ImGui::Selectable(weapon.id.c_str(), selected)) {
                     copyToBuffer(targetId_, weapon.id);
-                    if (spriteId_[0] == '\0') {
-                        copyToBuffer(spriteId_, weapon.spriteId);
-                    }
+                    copyToBuffer(spriteId_, weapon.spriteId);
                     context.markDirty();
                 }
                 if (selected) {

@@ -81,9 +81,12 @@ chapter-specific. Every project is isolated under <code>projects/&lt;project&gt;
 <!-- ============================================================ -->
 <h2 id="start">2. Getting started &amp; launching the game</h2>
 <h3>Opening a project</h3>
-<p>On startup the editor shows an <strong>Open Project</strong> modal. Pick an existing project + chapter, or type a
-new project/chapter name to create <code>projects/&lt;project&gt;/</code> with its asset folders. Closing the editor
-or switching chapters prompts you to save or discard unsaved work.</p>
+<p>On startup the editor <strong>re-opens the last project &amp; chapter you worked on</strong> (remembered in
+<code>projects/.editor_session</code>); if that no longer exists it shows the <strong>Open Project</strong> modal.
+Pick an existing project + chapter, or type a new project/chapter name to create <code>projects/&lt;project&gt;/</code>
+with its asset folders. The <strong>Project</strong> menu → <strong>Project Manager…</strong> lets you open, create,
+or delete projects at any time (deleting asks for confirmation and is permanent). Closing the editor or switching
+chapters/projects prompts you to save or discard unsaved work.</p>
 
 <h3>Saving</h3>
 <p>Saving a chapter does a lot at once: it writes the chapter file, flushes all edited sprites (metadata + sheet
@@ -96,15 +99,16 @@ only written on save.</p>
 buttons (next to each scoped editor’s toolbar and under the <strong>Chapter</strong> menu):</p>
 <table>
   <tr><th>Button</th><th>Starts at</th><th>State</th><th>Use when</th></tr>
-  <tr><td><code>Save and Play</code></td><td>Chapter start screen</td><td>Loads your saved progress (<code>save.adstate</code>)</td><td>Playing the game as a player would</td></tr>
+  <tr><td><code>Save and Play</code></td><td>Chapter start screen</td><td><strong>New game</strong>: state initialized from defaults; all placed enemies present</td><td>Playing the game from the start</td></tr>
   <tr><td><code>Play Selected Screen</code></td><td>The screen selected in the Screens tab</td><td><strong>Fresh</strong>: full HP, all placed enemies present, save untouched</td><td>Iterating on the screen you’re editing</td></tr>
   <tr><td><code>Play From Last Entry</code></td><td>The screen you last entered while playing</td><td><strong>Fresh</strong></td><td>Resuming a test where you last were</td></tr>
 </table>
-<div class="note"><strong>Why a “fresh” test matters:</strong> the runtime permanently remembers defeated enemies
-in <code>save.adstate</code>. If you re-use enemy ids and load that save, freshly-placed enemies can appear
-pre-killed. The fresh test launches ignore the save so all authored enemies always spawn, and never overwrite your
-real progress. The runtime records the last-entered screen + position in <code>assets/game/test_checkpoint</code>,
-which the “Play From Last Entry” button reads.</div>
+<div class="note"><strong>Every launch starts a new game.</strong> A normal launch initializes state from the
+project defaults — previously-defeated enemies and quest progress do <em>not</em> carry over from an earlier
+session, so all authored enemies always spawn. Progress is still written to <code>save.adstate</code> during play
+(and tracked in-memory across screen transitions within a session), but it is only re-loaded with an explicit
+<code>--continue</code> launch flag. The runtime records the last-entered screen + position in
+<code>assets/game/test_checkpoint</code>, which the “Play From Last Entry” button reads.</div>
 
 <!-- ============================================================ -->
 <h2 id="tabs">3. Editor tabs &amp; sub-editors reference</h2>
@@ -164,10 +168,12 @@ State</strong>) — there are no hard-coded quest names in the engine. Money is 
 <code>Money</code> by convention. Runtime progress is saved to <code>save.adstate</code>.</p>
 
 <h3 id="persistence">Persistence &amp; respawn</h3>
-<p>By default a defeated enemy stays dead — its id is recorded (<code>"&lt;screenId&gt;/&lt;enemyId&gt;"</code>) and
-filtered out when that screen reloads, persisting across screens and across play sessions. Set a placement’s
-<code>respawn</code> flag (or a screen’s <em>respawn enemies</em> flag) to make it come back. Quest counters and
-items persist the same way. Fresh test launches ignore this save so authored content always appears.</p>
+<p>Within a play session a defeated enemy stays dead — its id is recorded
+(<code>"&lt;screenId&gt;/&lt;enemyId&gt;"</code>) and filtered out when that screen reloads, so it persists across
+screen transitions and respawns. Set a placement’s <code>respawn</code> flag (or a screen’s <em>respawn enemies</em>
+flag) to make it come back; quest counters and items behave the same way. <strong>Each launch is a new game</strong>:
+state initializes from defaults and the previous session’s <code>save.adstate</code> is not re-loaded (unless the
+runtime is launched with <code>--continue</code>), so authored content always appears.</p>
 
 <!-- ============================================================ -->
 <h2 id="combat">5. Combat model reference</h2>
@@ -273,17 +279,18 @@ questions.</p>
 
 <div class="recipe" id="recipe-respawn">
   <h4>R7. Make defeated enemies stay dead — or respawn</h4>
-  <p>Staying dead is the default (persisted in <code>save.adstate</code>). To make an enemy respawn, enable the
-  placement’s <code>respawn</code> flag in <code>Edit Enemies</code>, or the screen’s <em>respawn enemies</em> flag.
-  While iterating in the editor, use <code>Play Selected Screen</code> / <code>Play From Last Entry</code> (fresh
-  launches) so your placed enemies always appear regardless of past kills.</p>
+  <p>Within a play session, staying dead is the default. To make an enemy respawn, enable the placement’s
+  <code>respawn</code> flag in <code>Edit Enemies</code>, or the screen’s <em>respawn enemies</em> flag. Across launches
+  nothing carries over — every launch is a new game (state initialized from defaults), so placed enemies always appear
+  regardless of past kills.</p>
 </div>
 
 <div class="recipe" id="recipe-enemies-not-appearing">
   <h4>R8. My newly-placed enemies don’t appear in game</h4>
-  <p>Most likely they share ids with enemies already recorded as defeated in <code>save.adstate</code>, so the
-  persistence filter hides them. Launch with <code>Play Selected Screen</code> (fresh — ignores the save), give
-  placements unique ids, or delete <code>projects/&lt;project&gt;/assets/game/save.adstate</code> to clear progress.</p>
+  <p>Every launch now starts a new game (state initialized from defaults), so stale kills no longer hide placed
+  enemies. If an enemy still doesn’t spawn, check: it has at least one path waypoint; its <code>typeId</code> matches a
+  defined enemy type; and it isn’t walled off. (A leftover <code>save.adstate</code> is ignored unless you launch with
+  <code>--continue</code>.)</p>
 </div>
 
 <div class="recipe" id="recipe-shop">
@@ -321,8 +328,30 @@ questions.</p>
 <div class="recipe" id="recipe-pickup">
   <h4>R11. Place an item / weapon / health pickup on a screen</h4>
   <p>Define the item in the <strong>Items</strong> tab (or use a built-in pickup type). Screens → select screen →
-  <code>Edit Items</code> → place the pickup on the canvas. Walking over it collects it: weapons equip, ammo fills the
-  pool, health restores HP, and project items go to the inventory + write ownership to the state registry.</p>
+  <code>Edit Items</code> → place the pickup on the canvas. Selecting a weapon auto-fills the pickup’s on-map sprite
+  from the weapon’s sprite. Walking over it collects it: weapons equip, health restores HP, and items/ammo go to the
+  inventory + write ownership to the state registry.</p>
+  <div class="note"><strong>Ammo lives in the inventory.</strong> A ranged weapon fires directly from the matching
+  ammo item in your inventory (matched by the weapon’s <code>ammo type</code>); the inventory shows an <strong>AMMO</strong>
+  section with each ammo’s sprite and count. There is no separate ammo pool — buying ammo from a shop or picking it up
+  makes it immediately usable.</p></div>
+</div>
+
+<div class="recipe" id="recipe-animated-tile">
+  <h4>R18. Make an animated scenery tile (e.g. water, fire, a torch)</h4>
+  <p>Animated tiles are ordinary palette tiles backed by a multi-frame sprite:</p>
+  <ul>
+    <li>In <strong>screen graphics</strong>, select a region and <code>Add Palette</code> to add it to the Tile Palette
+    (as you would any tile).</li>
+    <li>Click <strong>Edit Sprite</strong> on that palette row — the Sprite editor opens seeded with the tile’s image.
+    Add frames (each frame becomes part of the loop) and save.</li>
+    <li>Back in screen graphics, hit the palette’s <strong>Refresh</strong>; the tile now shows
+    “● anim (N)”. Select it and use the <strong>Stamp</strong> tool to place it on cells. An animated tile stamps as a
+    runtime placement drawn on top of the screen at that cell (active layer decides order: <em>Wall</em> = in front of
+    the player, <em>Floor</em> = behind). Right-click or <strong>Tile Erase</strong> removes a placement.</li>
+  </ul>
+  <p>A single-frame tile stamps static pixels as before; it only animates once its sprite has ≥2 frames. Placements are
+  saved into the chapter and animate in-game.</p>
 </div>
 
 <div class="recipe" id="recipe-playable">

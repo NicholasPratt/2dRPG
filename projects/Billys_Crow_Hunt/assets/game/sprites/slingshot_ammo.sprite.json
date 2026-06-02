@@ -1,0 +1,11 @@
+{
+  "id": "slingshot_ammo",
+  "source": "assets/raw/sprites/slingshot_ammo_sheet.png",
+  "canvasSize": [32, 32],
+  "gridSize": [32, 32],
+  "pivot": [16, 16],
+  "frames": [
+    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

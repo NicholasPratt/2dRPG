@@ -201,6 +201,10 @@ EditorApp::EditorApp()
 {
     workspaceRoot_ = findProjectRoot();
     context_.assets.projectRoot = workspaceRoot_;
+
+    // Reopen the project and chapter from the last session, if still valid.
+    refreshProjectList();
+    loadSession();
 }
 
 void EditorApp::draw()
@@ -230,9 +234,11 @@ void EditorApp::draw()
         return;
     }
 
-    if (pendingExit_ || pendingChapterSwitch_) {
+    if (pendingExit_ || pendingChapterSwitch_ || pendingProjectSwitch_) {
         drawUnsavedChangesModal();
     }
+
+    drawProjectManagerWindow();
 
     if (context_.requestChapterSwitch) {
         context_.requestChapterSwitch = false;
@@ -328,10 +334,18 @@ void EditorApp::draw()
 
     if (context_.requestEditSprite) {
         context_.requestEditSprite = false;
-        if (!context_.requestedSpriteReference.empty()) {
+        // A seed turns a screen-graphics selection into a new animated-tile sprite,
+        // but only when the sprite asset does not already exist (re-edit reopens it).
+        const std::filesystem::path seedMetadata = context_.pendingSpriteSeed.valid()
+            ? context_.assets.gameSpritePath() / (context_.pendingSpriteSeed.id + ".sprite.json")
+            : std::filesystem::path{};
+        if (context_.pendingSpriteSeed.valid() && !std::filesystem::exists(seedMetadata)) {
+            spriteEditor_.createSpriteFromPixels(context_, context_.pendingSpriteSeed);
+        } else if (!context_.requestedSpriteReference.empty()) {
             spriteEditor_.openSpriteReference(context_.requestedSpriteReference);
-            context_.requestedSpriteReference.clear();
         }
+        context_.requestedSpriteReference.clear();
+        context_.pendingSpriteSeed.clear();
         spriteEditorLaunchedFromCharacter_ = false;
         spriteReturnMode_ = screenEditMode_ == ScreenEditMode::Sprite ? ScreenEditMode::Layout : screenEditMode_;
         enterScreenMode(ScreenEditMode::Sprite);
@@ -486,6 +500,12 @@ void EditorApp::drawScreensTab()
             if (screenMapLogicMode_) {
                 mapEditor_.draw(context_);
             } else {
+                if (context_.requestScreenPlacementSync) {
+                    context_.requestScreenPlacementSync = false;
+                    if (!context_.selectedScreenId.empty()) {
+                        layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
+                    }
+                }
                 wallFloorPaint_.draw(context_);
             }
             break;
@@ -936,6 +956,111 @@ std::filesystem::path EditorApp::projectsRoot() const
     return workspaceRoot_ / "projects";
 }
 
+std::filesystem::path EditorApp::sessionFilePath() const
+{
+    return projectsRoot() / ".editor_session";
+}
+
+void EditorApp::saveSession() const
+{
+    if (currentProjectId_.empty()) {
+        return;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(projectsRoot(), error);
+    std::ofstream out(sessionFilePath(), std::ios::trunc);
+    if (!out) {
+        return;
+    }
+    out << "project " << currentProjectId_ << "\n";
+    out << "chapter " << context_.currentChapterId << "\n";
+}
+
+void EditorApp::loadSession()
+{
+    std::ifstream in(sessionFilePath());
+    if (!in) {
+        return;
+    }
+    std::string projectId;
+    std::string chapterId;
+    std::string key;
+    while (in >> key) {
+        if (key == "project") {
+            in >> std::ws;
+            std::getline(in, projectId);
+        } else if (key == "chapter") {
+            in >> std::ws;
+            std::getline(in, chapterId);
+        }
+    }
+    // Trim trailing carriage returns / whitespace.
+    const auto trim = [](std::string& s) {
+        while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '\t')) {
+            s.pop_back();
+        }
+    };
+    trim(projectId);
+    trim(chapterId);
+
+    if (projectId.empty() ||
+        std::find(projectIds_.begin(), projectIds_.end(), projectId) == projectIds_.end()) {
+        return;
+    }
+    selectProject(projectId);
+    if (chapterId.empty() ||
+        std::find(chapterIds_.begin(), chapterIds_.end(), chapterId) == chapterIds_.end()) {
+        return;
+    }
+    chooseChapter(chapterId);  // sets startupChapterChosen_ on success
+}
+
+void EditorApp::openProject(const std::string& projectId, const std::string& chapterId)
+{
+    selectProject(projectId);
+    std::string target = chapterId;
+    if (target.empty() ||
+        std::find(chapterIds_.begin(), chapterIds_.end(), target) == chapterIds_.end()) {
+        target = chapterIds_.empty() ? std::string{} : chapterIds_.front();
+    }
+    if (!target.empty()) {
+        chooseChapter(target);
+    }
+    refreshProjectList();
+}
+
+void EditorApp::requestProjectOpen(const std::string& projectId, const std::string& chapterId)
+{
+    if (projectId == currentProjectId_ && chapterId == context_.currentChapterId &&
+        startupChapterChosen_) {
+        return;
+    }
+    if (startupChapterChosen_ && context_.dirty) {
+        pendingProjectSwitch_ = true;
+        pendingProjectId_ = projectId;
+        pendingProjectChapterId_ = chapterId;
+        ImGui::OpenPopup("Unsaved Changes");
+    } else {
+        openProject(projectId, chapterId);
+    }
+}
+
+void EditorApp::deleteProject(const std::string& projectId)
+{
+    if (projectId.empty()) {
+        return;
+    }
+    std::error_code error;
+    std::filesystem::remove_all(projectsRoot() / projectId, error);
+    if (projectId == currentProjectId_) {
+        currentProjectId_.clear();
+        context_.currentChapterId.clear();
+        chapterIds_.clear();
+        startupChapterChosen_ = false;  // fall back to the chooser
+    }
+    refreshProjectList();
+}
+
 void EditorApp::refreshProjectList()
 {
     projectIds_.clear();
@@ -1039,6 +1164,19 @@ void EditorApp::saveProjectMetadata()
 void EditorApp::drawChapterMenu()
 {
     if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("Project")) {
+            ImGui::TextDisabled("Current: %s", currentProjectId_.empty() ? "none" : currentProjectId_.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Project Manager...")) {
+                refreshProjectList();
+                showProjectManager_ = true;
+            }
+            if (ImGui::MenuItem("Save Project", nullptr, false, !currentProjectId_.empty())) {
+                saveCurrentChapterAndExports();
+                saveSession();
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Chapter")) {
             ImGui::TextDisabled("Current: %s%s",
                 context_.currentChapterId.empty() ? "none" : context_.currentChapterId.c_str(),
@@ -1090,9 +1228,15 @@ void EditorApp::drawStartupChapterModal()
         for (const std::string& projectId : projectIds_) {
             ImGui::PushID(projectId.c_str());
             const bool selected = projectId == currentProjectId_;
-            if (ImGui::Selectable(projectId.c_str(), selected, 0, ImVec2(360.0f, 30.0f))) {
+            if (ImGui::Selectable(projectId.c_str(), selected, 0, ImVec2(300.0f, 30.0f))) {
                 selectProject(projectId);
             }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) {
+                projectPendingDelete_ = projectId;
+                ImGui::OpenPopup("Delete Project");
+            }
+            drawDeleteProjectConfirm();
             ImGui::PopID();
         }
 
@@ -1124,13 +1268,110 @@ void EditorApp::drawStartupChapterModal()
     }
 }
 
+void EditorApp::drawProjectManagerWindow()
+{
+    if (!showProjectManager_) {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f},
+        ImGuiCond_Appearing, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({420.0f, 460.0f}, ImGuiCond_Appearing);
+    if (ImGui::Begin("Project Manager", &showProjectManager_)) {
+        ImGui::Text("Current: %s%s", currentProjectId_.empty() ? "(none)" : currentProjectId_.c_str(),
+            context_.dirty ? " *" : "");
+        if (ImGui::Button("Save Project")) {
+            saveCurrentChapterAndExports();
+            saveSession();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh")) {
+            refreshProjectList();
+        }
+        ImGui::Separator();
+
+        ImGui::TextUnformatted("Projects");
+        ImGui::BeginChild("ProjectManagerList", ImVec2(0.0f, 240.0f), true);
+        if (projectIds_.empty()) {
+            ImGui::TextDisabled("No projects found.");
+        }
+        for (const std::string& projectId : projectIds_) {
+            ImGui::PushID(projectId.c_str());
+            const bool isCurrent = projectId == currentProjectId_;
+            ImGui::Text("%s%s", projectId.c_str(), isCurrent ? "  (open)" : "");
+            ImGui::SameLine(240.0f);
+            if (ImGui::SmallButton("Open")) {
+                requestProjectOpen(projectId, {});
+                showProjectManager_ = false;
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(isCurrent);
+            if (ImGui::SmallButton("Delete")) {
+                projectPendingDelete_ = projectId;
+                ImGui::OpenPopup("Delete Project");
+            }
+            ImGui::EndDisabled();
+            drawDeleteProjectConfirm();
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("New project");
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::InputText("Project name##pm", newProjectId_.data(), newProjectId_.size());
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::InputText("First chapter##pm", newChapterId_.data(), newChapterId_.size());
+        if (ImGui::Button("Create Project##pm")) {
+            if (context_.dirty) {
+                saveCurrentChapterAndExports();
+            }
+            createProjectAndChapter();
+            saveSession();
+            showProjectManager_ = false;
+        }
+    }
+    ImGui::End();
+}
+
+void EditorApp::drawDeleteProjectConfirm()
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f},
+        ImGuiCond_Always, {0.5f, 0.5f});
+    if (ImGui::BeginPopupModal("Delete Project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Delete project '%s'?", projectPendingDelete_.c_str());
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.4f, 1.0f), "This permanently removes its folder and cannot be undone.");
+        ImGui::Spacing();
+        if (ImGui::Button("Delete", ImVec2(120.0f, 0.0f))) {
+            deleteProject(projectPendingDelete_);
+            projectPendingDelete_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+            projectPendingDelete_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void EditorApp::drawUnsavedChangesModal()
 {
     ImGui::OpenPopup("Unsaved Changes");
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Save changes before continuing?");
         if (ImGui::Button("Save", ImVec2(110.0f, 0.0f))) {
-            if (pendingChapterSwitch_) {
+            if (pendingProjectSwitch_) {
+                saveCurrentChapterAndExports();
+                const std::string proj = pendingProjectId_;
+                const std::string chap = pendingProjectChapterId_;
+                pendingProjectSwitch_ = false;
+                pendingProjectId_.clear();
+                pendingProjectChapterId_.clear();
+                openProject(proj, chap);
+            } else if (pendingChapterSwitch_) {
                 completeChapterSwitch(true);
             } else {
                 saveCurrentChapterAndExports();
@@ -1142,7 +1383,14 @@ void EditorApp::drawUnsavedChangesModal()
         ImGui::SameLine();
         if (ImGui::Button("Discard", ImVec2(110.0f, 0.0f))) {
             context_.dirty = false;
-            if (pendingChapterSwitch_) {
+            if (pendingProjectSwitch_) {
+                const std::string proj = pendingProjectId_;
+                const std::string chap = pendingProjectChapterId_;
+                pendingProjectSwitch_ = false;
+                pendingProjectId_.clear();
+                pendingProjectChapterId_.clear();
+                openProject(proj, chap);
+            } else if (pendingChapterSwitch_) {
                 completeChapterSwitch(false);
             } else {
                 pendingExit_ = false;
@@ -1155,6 +1403,9 @@ void EditorApp::drawUnsavedChangesModal()
             pendingExit_ = false;
             pendingChapterSwitch_ = false;
             pendingChapterId_.clear();
+            pendingProjectSwitch_ = false;
+            pendingProjectId_.clear();
+            pendingProjectChapterId_.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1188,6 +1439,7 @@ void EditorApp::chooseChapter(const std::string& chapterId)
                 wallFloorPaint_.setPalette(std::move(editorState.paintPalette));
             }
         }
+        saveSession();
     }
 }
 
@@ -1223,6 +1475,7 @@ void EditorApp::createChapter()
     requestedTab_ = MainTab::Layout;
     hasRequestedTab_ = true;
     refreshChapterList();
+    saveSession();
 }
 
 void EditorApp::createProjectAndChapter()

@@ -1,0 +1,13 @@
+{
+  "id": "anim_tile_screen_1_map",
+  "source": "assets/raw/sprites/anim_tile_screen_1_map_sheet.png",
+  "canvasSize": [16, 16],
+  "gridSize": [16, 16],
+  "pivot": [8, 8],
+  "frames": [
+    {"rect": [0, 0, 16, 16], "durationMs": 100, "type": "idle"},
+    {"rect": [16, 0, 16, 16], "durationMs": 100, "type": "idle"},
+    {"rect": [32, 0, 16, 16], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

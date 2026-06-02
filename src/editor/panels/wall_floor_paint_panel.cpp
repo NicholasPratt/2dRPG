@@ -1,11 +1,13 @@
 #include "editor/panels/wall_floor_paint_panel.hpp"
 
 #include "editor/imgui_widgets.hpp"
+#include "game/sprite.hpp"
 #include "stb_image.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <system_error>
@@ -322,6 +324,9 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
             break;
         }
     }
+    // Ask the host to re-sync per-screen placements (animated tiles) for this screen.
+    context.requestScreenPlacementSync = true;
+    refreshTileSpriteInfo(context);
     selectionActive_ = false;
     selectionDragging_ = false;
     pasteMode_ = false;
@@ -724,6 +729,10 @@ void WallFloorPaintPanel::addToTilePalette(EditorContext& context)
     TilePaletteFrame& frame = entry.frames.front();
     frame.floor.resize(static_cast<std::size_t>(w * h), 0u);
     frame.wall.resize(static_cast<std::size_t>(w * h), 0u);
+    // Capture only the active layer; the other layer stays fully transparent so
+    // the active layer's own transparency is preserved in the stamp.
+    const PaintLayer& sourceLayer = (activeLayer_ == ActiveLayer::Wall) ? wall_ : floor_;
+    std::vector<std::uint32_t>& destPixels = (activeLayer_ == ActiveLayer::Wall) ? frame.wall : frame.floor;
     for (int py = 0; py < h; ++py) {
         for (int px = 0; px < w; ++px) {
             const int sx = sx0 + px;
@@ -731,8 +740,7 @@ void WallFloorPaintPanel::addToTilePalette(EditorContext& context)
             if (sx < width_ && sy < height_) {
                 const auto src = static_cast<std::size_t>(sy * width_ + sx);
                 const auto dst = static_cast<std::size_t>(py * w + px);
-                frame.floor[dst] = floor_.pixels[src];
-                frame.wall[dst] = wall_.pixels[src];
+                destPixels[dst] = sourceLayer.pixels[src];
             }
         }
     }
@@ -755,7 +763,7 @@ void WallFloorPaintPanel::addTileSelectionToPalette(EditorContext& context)
     selX1_ = std::min(tx + ts - 1, width_ - 1);
     selY1_ = std::min(ty + ts - 1, height_ - 1);
     addToTilePalette(context);
-    status_ += " Animate exported tile sprites in the Sprite editor.";
+    status_ += " Use 'Edit Sprite' on the tile to add animation frames.";
 }
 
 void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
@@ -763,6 +771,13 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Text("Tile Palette (%d/%d)", static_cast<int>(context.tilePalette.size()), kMaxChapterTiles);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Refresh##tilesprites")) {
+        refreshTileSpriteInfo(context);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Re-check each tile's sprite for added frames (after editing in the Sprite editor).");
+    }
     if (context.tilePalette.empty()) {
         ImGui::TextDisabled("Select a region, then\nclick \"-> Tile Palette\".");
         return;
@@ -850,21 +865,129 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
             ImGui::PopID();
             break;
         }
-        ImGui::Text("Frames: %d", static_cast<int>(tile.frames.size()));
-        if (selected) {
-            stampFrameIndex_ = std::clamp(stampFrameIndex_, 0, static_cast<int>(tile.frames.size()) - 1);
-            int frameNumber = stampFrameIndex_ + 1;
-            ImGui::SetNextItemWidth(90.0f);
-            if (ImGui::InputInt("Stamp frame", &frameNumber)) {
-                stampFrameIndex_ = std::clamp(frameNumber - 1, 0, static_cast<int>(tile.frames.size()) - 1);
-            }
-            ImGui::TextDisabled("Animate tile assets in the Sprite editor.");
+
+        // Edit Sprite: author animation frames for this tile in the Sprite editor.
+        if (ImGui::SmallButton("Edit Sprite")) {
+            editTileSprite(context, i);
+        }
+        ImGui::SameLine();
+        if (tileIsAnimated(tile)) {
+            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "\xE2\x97\x8F anim (%d)",
+                spriteFrameCount_.count(tile.spriteId) ? spriteFrameCount_.at(tile.spriteId) : 0);
+        } else if (!tile.spriteId.empty()) {
+            ImGui::TextDisabled("sprite: 1 frame (static)");
+        } else {
+            ImGui::TextDisabled("static tile");
         }
 
         ImGui::PopID();
     }
 
     ImGui::EndChild();
+}
+
+void WallFloorPaintPanel::refreshTileSpriteInfo(const EditorContext& context)
+{
+    spriteFrameCount_.clear();
+    animTileFootprints_.clear();
+    const int ts = game::kTileSize;
+    for (const TilePaletteEntry& tile : context.tilePalette) {
+        if (tile.spriteId.empty()) {
+            continue;
+        }
+        const std::filesystem::path metaPath = context.assets.gameSpritePath() / (tile.spriteId + ".sprite.json");
+        game::SpriteMetadata meta;
+        if (game::loadSpriteMetadata(metaPath, meta, nullptr)) {
+            spriteFrameCount_[tile.spriteId] = static_cast<int>(meta.frames.size());
+            animTileFootprints_[tile.spriteId] = {
+                std::max(1, (meta.canvasSize[0] + ts - 1) / ts),
+                std::max(1, (meta.canvasSize[1] + ts - 1) / ts),
+            };
+        }
+    }
+}
+
+bool WallFloorPaintPanel::tileIsAnimated(const TilePaletteEntry& tile) const
+{
+    if (tile.spriteId.empty()) {
+        return false;
+    }
+    const auto it = spriteFrameCount_.find(tile.spriteId);
+    return it != spriteFrameCount_.end() && it->second >= 2;
+}
+
+void WallFloorPaintPanel::editTileSprite(EditorContext& context, int index)
+{
+    if (index < 0 || index >= static_cast<int>(context.tilePalette.size())) {
+        return;
+    }
+    TilePaletteEntry& tile = context.tilePalette[static_cast<std::size_t>(index)];
+
+    // Assign a stable, unique sprite id for the tile on first edit.
+    if (tile.spriteId.empty()) {
+        const std::string base = "tile_" + (currentScreenId_.empty() ? std::string("screen") : currentScreenId_);
+        std::string id = base + "_" + std::to_string(index + 1);
+        int suffix = index + 1;
+        std::error_code ec;
+        while (std::filesystem::exists(context.assets.gameSpritePath() / (id + ".sprite.json"), ec)) {
+            id = base + "_" + std::to_string(++suffix);
+        }
+        tile.spriteId = id;
+        context.markDirty();
+    }
+
+    const std::filesystem::path metaPath = context.assets.gameSpritePath() / (tile.spriteId + ".sprite.json");
+    context.requestedSpriteReference = metaPath.generic_string();
+
+    std::error_code ec;
+    if (!std::filesystem::exists(metaPath, ec)) {
+        // Seed a new sprite from the tile's frame-0 pixels (composite wall over floor).
+        const TilePaletteFrame* frame = frameAt(tile, 0);
+        PendingSpriteSeed seed;
+        seed.id = tile.spriteId;
+        seed.width = tile.widthPx;
+        seed.height = tile.heightPx;
+        seed.pixels.assign(static_cast<std::size_t>(tile.widthPx * tile.heightPx), 0u);
+        if (frame != nullptr) {
+            for (std::size_t i = 0; i < seed.pixels.size(); ++i) {
+                const std::uint32_t fc = i < frame->floor.size() ? frame->floor[i] : 0u;
+                const std::uint32_t wc = i < frame->wall.size() ? frame->wall[i] : 0u;
+                seed.pixels[i] = (wc >> 24) > 0u ? wc : fc;
+            }
+        }
+        context.pendingSpriteSeed = std::move(seed);
+    }
+    context.requestEditSprite = true;
+    status_ = "Editing sprite '" + tile.spriteId + "'. Add frames to make it animate.";
+}
+
+void WallFloorPaintPanel::placeAnimatedTile(EditorContext& context, const TilePaletteEntry& tile, int cellX, int cellY)
+{
+    if (tile.spriteId.empty()) {
+        return;
+    }
+    auto& placements = context.selectedScreenAnimatedTiles;
+    // Stamping replaces whatever animated tile is already on this cell.
+    removeAnimatedTileAt(context, cellX, cellY);
+    game::AnimatedTilePlacement placement;
+    placement.spriteId = tile.spriteId;
+    placement.cellX = cellX;
+    placement.cellY = cellY;
+    placement.layer = (activeLayer_ == ActiveLayer::Wall) ? 1 : 0;
+    placements.push_back(placement);
+    context.markDirty();
+}
+
+void WallFloorPaintPanel::removeAnimatedTileAt(EditorContext& context, int cellX, int cellY)
+{
+    auto& placements = context.selectedScreenAnimatedTiles;
+    for (int i = static_cast<int>(placements.size()) - 1; i >= 0; --i) {
+        if (placements[static_cast<std::size_t>(i)].cellX == cellX &&
+            placements[static_cast<std::size_t>(i)].cellY == cellY) {
+            placements.erase(placements.begin() + i);
+            context.markDirty();
+        }
+    }
 }
 
 void WallFloorPaintPanel::stampTile(int x, int y, const TilePaletteEntry& tile)
@@ -1146,6 +1269,48 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
         }
     }
 
+    // Placed animated tiles: markers over their footprints (the selected stamp
+    // tile's placements are highlighted). Plus a footprint ghost when the selected
+    // stamp tile is animated.
+    {
+        const int ts = game::kTileSize;
+        auto footprintOf = [&](const std::string& spriteId) -> std::array<int, 2> {
+            auto it = animTileFootprints_.find(spriteId);
+            return it != animTileFootprints_.end() ? it->second : std::array<int, 2>{1, 1};
+        };
+        const TilePaletteEntry* stampTile = (stampTileIndex_ >= 0 && stampTileIndex_ < static_cast<int>(context.tilePalette.size()))
+            ? &context.tilePalette[static_cast<std::size_t>(stampTileIndex_)] : nullptr;
+        const std::string selectedSpriteId = stampTile != nullptr ? stampTile->spriteId : std::string{};
+        for (const game::AnimatedTilePlacement& tile : context.selectedScreenAnimatedTiles) {
+            const std::array<int, 2> fp = footprintOf(tile.spriteId);
+            const ImVec2 mMin{origin.x + static_cast<float>(tile.cellX * ts) * pixelSize,
+                origin.y + static_cast<float>(tile.cellY * ts) * pixelSize};
+            const ImVec2 mMax{mMin.x + static_cast<float>(fp[0] * ts) * pixelSize,
+                mMin.y + static_cast<float>(fp[1] * ts) * pixelSize};
+            const bool highlighted = !selectedSpriteId.empty() && tile.spriteId == selectedSpriteId;
+            const ImU32 fill = highlighted ? IM_COL32(255, 216, 64, 70)
+                : (tile.layer == 1 ? IM_COL32(120, 200, 255, 40) : IM_COL32(120, 255, 160, 40));
+            const ImU32 border = highlighted ? IM_COL32(255, 216, 64, 255)
+                : (tile.layer == 1 ? IM_COL32(120, 200, 255, 220) : IM_COL32(120, 255, 160, 220));
+            drawList->AddRectFilled(mMin, mMax, fill);
+            drawList->AddRect(mMin, mMax, border, 0.0f, 0, highlighted ? 2.5f : 1.5f);
+            drawList->AddText({mMin.x + 2.0f, mMin.y + 2.0f}, border, "A");
+        }
+        if (tool_ == PaintTool::TileStamp && stampTile != nullptr && tileIsAnimated(*stampTile) &&
+            ImGui::IsItemHovered()) {
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            const int cx = static_cast<int>((mouse.x - origin.x) / pixelSize) / ts;
+            const int cy = static_cast<int>((mouse.y - origin.y) / pixelSize) / ts;
+            const std::array<int, 2> fp = footprintOf(selectedSpriteId);
+            const ImVec2 gMin{origin.x + static_cast<float>(cx * ts) * pixelSize,
+                origin.y + static_cast<float>(cy * ts) * pixelSize};
+            const ImVec2 gMax{gMin.x + static_cast<float>(fp[0] * ts) * pixelSize,
+                gMin.y + static_cast<float>(fp[1] * ts) * pixelSize};
+            drawList->AddRectFilled(gMin, gMax, IM_COL32(255, 255, 255, 30));
+            drawList->AddRect(gMin, gMax, IM_COL32(120, 255, 160, 230), 0.0f, 0, 2.0f);
+        }
+    }
+
     // Selection overlay
     if ((tool_ == PaintTool::Select || tool_ == PaintTool::TileSelect) && (selectionActive_ || selectionDragging_)) {
         const int sx0 = std::min(selX0_, selX1_);
@@ -1419,6 +1584,27 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             selY1_ = std::min(ty + ts - 1, height_ - 1);
             selectionDragging_ = false;
             selectionActive_ = true;
+
+            // If an animated tile is placed on this cell, auto-select the matching
+            // palette tile (and switch to the Stamp tool) so it can be re-stamped.
+            const int ccx = tx / ts;
+            const int ccy = ty / ts;
+            for (const game::AnimatedTilePlacement& p : context.selectedScreenAnimatedTiles) {
+                const auto fpIt = animTileFootprints_.find(p.spriteId);
+                const int fpW = fpIt != animTileFootprints_.end() ? fpIt->second[0] : 1;
+                const int fpH = fpIt != animTileFootprints_.end() ? fpIt->second[1] : 1;
+                if (ccx >= p.cellX && ccx < p.cellX + fpW && ccy >= p.cellY && ccy < p.cellY + fpH) {
+                    for (int ti = 0; ti < static_cast<int>(context.tilePalette.size()); ++ti) {
+                        if (context.tilePalette[static_cast<std::size_t>(ti)].spriteId == p.spriteId) {
+                            stampTileIndex_ = ti;
+                            tool_ = PaintTool::TileStamp;
+                            status_ = "Selected animated tile '" + p.spriteId + "' for stamping.";
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
         }
         return;
     }
@@ -1493,7 +1679,7 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         return;
     }
 
-    // Tile erase tool handling
+    // Tile erase tool handling (also removes any animated tile placed on the cell)
     if (tool_ == PaintTool::TileErase) {
         const int ts = game::kTileSize;
         const int tx = (x / ts) * ts;
@@ -1504,10 +1690,12 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             strokeCaptured_ = true;
             lastPaint_ = {tx, ty};
             eraseTile(tx, ty);
+            removeAnimatedTileAt(context, tx / ts, ty / ts);
         } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && strokeCaptured_) {
             if (lastPaint_[0] != tx || lastPaint_[1] != ty) {
                 lastPaint_ = {tx, ty};
                 eraseTile(tx, ty);
+                removeAnimatedTileAt(context, tx / ts, ty / ts);
             }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -1517,23 +1705,40 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         return;
     }
 
-    // Tile stamp tool handling
+    // Tile stamp tool handling. An animated tile (its sprite has >= 2 frames) stamps
+    // a runtime animated-tile placement; a static tile bakes pixels as before.
     if (tool_ == PaintTool::TileStamp) {
         if (stampTileIndex_ >= 0 && stampTileIndex_ < static_cast<int>(context.tilePalette.size())) {
+            const TilePaletteEntry& tile = context.tilePalette[static_cast<std::size_t>(stampTileIndex_)];
+            const bool animated = tileIsAnimated(tile);
             const int ts = game::kTileSize;
             const int tx = (x / ts) * ts;
             const int ty = (y / ts) * ts;
-            ImGui::SetTooltip("Stamp tile [%d,%d]", tx / ts, ty / ts);
+            ImGui::SetTooltip(animated ? "Stamp animated tile [%d,%d]" : "Stamp tile [%d,%d]", tx / ts, ty / ts);
+
+            // Right-click removes an animated placement under the cursor.
+            if (animated && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                removeAnimatedTileAt(context, tx / ts, ty / ts);
+                status_ = "Removed animated tile at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
+            }
+
             const bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !strokeCaptured_) {
-                recordUndo();
+                if (!animated) {
+                    recordUndo();  // pixel bake is undoable; placements are not part of the pixel undo
+                }
                 strokeCaptured_ = true;
                 lastPaint_ = {-1, -1};
             }
             if (leftDown && strokeCaptured_ && (lastPaint_[0] != tx || lastPaint_[1] != ty)) {
-                stampTile(tx, ty, context.tilePalette[static_cast<std::size_t>(stampTileIndex_)]);
+                if (animated) {
+                    placeAnimatedTile(context, tile, tx / ts, ty / ts);
+                    status_ = "Stamped animated tile at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
+                } else {
+                    stampTile(tx, ty, tile);
+                    status_ = "Stamped at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
+                }
                 lastPaint_ = {tx, ty};
-                status_ = "Stamped at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
             }
             if (!leftDown) {
                 strokeCaptured_ = false;

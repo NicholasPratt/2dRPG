@@ -631,8 +631,11 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
                 }
             }
         }
-        // Fresh test launches ignore saved progress so all authored content appears.
-        if (!freshStart_) {
+        // A normal launch starts a new game: state stays at the seeded defaults so
+        // previously defeated enemies and quest progress do NOT carry over. Saved
+        // progress is only merged in when explicitly continuing (and never for
+        // fresh test launches).
+        if (continueSave_ && !freshStart_) {
             const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
             std::error_code ec;
             GameState saved;
@@ -802,7 +805,6 @@ void Engine::loadWeapons()
     rangedWeapon_.reset();
     itemDefs_.clear();
     inventory_.clear();
-    ammo_.clear();
 
     GameProject project;
     if (!loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
@@ -821,13 +823,44 @@ void Engine::loadWeapons()
                 loadSpriteById(w.spriteId);
             } else {
                 rangedWeapon_ = w;
-                const std::string ammoKey = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
-                ammo_[ammoKey] = 0;
                 loadSpriteById(w.spriteId);
                 loadSpriteById(w.ammoSpriteId);
             }
             break;
         }
+    }
+}
+
+std::string Engine::ammoItemIdForWeapon(const WeaponDef& weapon) const
+{
+    const std::string ammoType = weapon.ammoTypeId.empty() ? weapon.id : weapon.ammoTypeId;
+    // Prefer an Ammo item definition whose id or target matches the ammo type;
+    // its id is the inventory key. Otherwise fall back to the ammo type itself.
+    for (const ItemDef& def : itemDefs_) {
+        if (def.type == ItemDefType::Ammo && (def.id == ammoType || def.targetId == ammoType)) {
+            return def.id;
+        }
+    }
+    return ammoType;
+}
+
+int Engine::ammoCountForWeapon(const WeaponDef& weapon) const
+{
+    const auto it = inventory_.find(ammoItemIdForWeapon(weapon));
+    return it != inventory_.end() ? it->second : 0;
+}
+
+void Engine::consumeAmmoForWeapon(const WeaponDef& weapon, int amount)
+{
+    const std::string key = ammoItemIdForWeapon(weapon);
+    const auto it = inventory_.find(key);
+    if (it == inventory_.end()) {
+        return;
+    }
+    it->second -= amount;
+    if (it->second <= 0) {
+        inventory_.erase(it);
+        gameState_.takeItem(key);
     }
 }
 
@@ -1058,6 +1091,11 @@ void Engine::loadAllSprites()
     for (const ItemDef& item : itemDefs_) {
         loadSpriteById(item.spriteId);
     }
+    if (activeScreen_ != nullptr) {
+        for (const AnimatedTilePlacement& tile : activeScreen_->animatedTiles) {
+            loadSpriteById(tile.spriteId);
+        }
+    }
 }
 
 void Engine::loadPlayableCharacter()
@@ -1263,12 +1301,35 @@ void Engine::update(float dt)
     updateItemPickups();
 }
 
+bool Engine::isAmmoItemId(const std::string& id) const
+{
+    for (const ItemDef& def : itemDefs_) {
+        if (def.id == id) {
+            return def.type == ItemDefType::Ammo;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> Engine::ammoInventoryIds() const
+{
+    std::vector<std::string> ids;
+    for (const auto& [id, count] : inventory_) {
+        if (count > 0 && isAmmoItemId(id)) {
+            ids.push_back(id);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
 std::vector<std::string> Engine::sortedInventoryIds() const
 {
     std::vector<std::string> ids;
     ids.reserve(inventory_.size());
     for (const auto& [id, count] : inventory_) {
-        if (count > 0) {
+        // Ammo lives in its own inventory section, not the main item list.
+        if (count > 0 && !isAmmoItemId(id)) {
             ids.push_back(id);
         }
     }
@@ -1351,10 +1412,6 @@ void Engine::useInventoryItem(const std::string& itemId)
                         meleeWeapon_ = w;
                     } else {
                         rangedWeapon_ = w;
-                        const std::string key = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
-                        if (ammo_.find(key) == ammo_.end()) {
-                            ammo_[key] = 0;
-                        }
                     }
                     loadSpriteById(w.spriteId);
                     loadSpriteById(w.ammoSpriteId);
@@ -1374,8 +1431,8 @@ void Engine::useInventoryItem(const std::string& itemId)
             consumed = true;
             break;
         case ItemDefType::Ammo:
-            ammo_[def.targetId.empty() ? def.id : def.targetId] += value;
-            consumed = true;
+            // Ammo lives in the inventory and is consumed by firing the weapon,
+            // so "using" it from the menu does nothing.
             break;
         case ItemDefType::Consumable:
             if (def.targetId == "Health" && playerHealth_ < playerMaxHealth_) {
@@ -1563,11 +1620,10 @@ void Engine::updateAttack(float dt)
 
     if (rangedWeapon_.has_value() && rangedPressed && rangedCooldownSeconds_ <= 0.0f &&
         !playerActionLocksBaseMotion()) {
-        const std::string ammoKey = rangedWeapon_->ammoTypeId.empty() ? rangedWeapon_->id : rangedWeapon_->ammoTypeId;
-        const int available = ammo_.count(ammoKey) ? ammo_.at(ammoKey) : 0;
+        const int available = ammoCountForWeapon(*rangedWeapon_);
         if (available >= rangedWeapon_->ammoPerShot) {
             setPlayerActionState(PlayerActionState::RangedAttack, kRangedAttackSeconds);
-            ammo_[ammoKey] -= rangedWeapon_->ammoPerShot;
+            consumeAmmoForWeapon(*rangedWeapon_, rangedWeapon_->ammoPerShot);
             rangedCooldownSeconds_ = rangedWeapon_->attackCooldown;
             RuntimeProjectile proj;
             const float offset = kPlayerCollisionSizePx * 0.5f + 2.0f;
@@ -1823,10 +1879,6 @@ void Engine::collectItem(RuntimeItemEntity& item)
                             meleeWeapon_ = w;
                         } else {
                             rangedWeapon_ = w;
-                            const std::string key = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
-                            if (ammo_.find(key) == ammo_.end()) {
-                                ammo_[key] = 0;
-                            }
                         }
                         gameState_.giveItem(w.id);
                         loadSpriteById(w.spriteId);
@@ -1838,9 +1890,19 @@ void Engine::collectItem(RuntimeItemEntity& item)
             break;
         }
         case ItemPickupType::Ammo: {
-            const std::string& key = item.placement.targetId;
-            if (!key.empty()) {
-                ammo_[key] += item.placement.quantity;
+            const std::string& ammoType = item.placement.targetId;
+            if (!ammoType.empty()) {
+                // Store ammo in the inventory under the matching ammo item id so it
+                // appears in the Ammo section and can be fired.
+                std::string invKey = ammoType;
+                for (const ItemDef& def : itemDefs_) {
+                    if (def.type == ItemDefType::Ammo && (def.id == ammoType || def.targetId == ammoType)) {
+                        invKey = def.id;
+                        break;
+                    }
+                }
+                inventory_[invKey] += std::max(1, item.placement.quantity);
+                gameState_.giveItem(invKey);
             }
             break;
         }
@@ -1876,10 +1938,6 @@ void Engine::collectItem(RuntimeItemEntity& item)
                                 meleeWeapon_ = w;
                             } else {
                                 rangedWeapon_ = w;
-                                const std::string key = w.ammoTypeId.empty() ? w.id : w.ammoTypeId;
-                                if (ammo_.find(key) == ammo_.end()) {
-                                    ammo_[key] = 0;
-                                }
                             }
                             loadSpriteById(w.spriteId);
                             loadSpriteById(w.ammoSpriteId);
@@ -1889,7 +1947,7 @@ void Engine::collectItem(RuntimeItemEntity& item)
                     break;
                 }
                 case ItemDefType::Ammo:
-                    ammo_[def.targetId.empty() ? def.id : def.targetId] += amount;
+                    // Already added to the inventory above; firing consumes it.
                     break;
                 case ItemDefType::Health:
                     break;
@@ -3224,6 +3282,9 @@ void Engine::render()
         renderFilledRect(0.0f, 0.0f, screenWidthPx(), screenHeightPx(), 0.12f, 0.18f, 0.20f, 1.0f);
     }
 
+    // Floor-layer animated tiles sit above the floor but below entities/player.
+    renderAnimatedTiles(0);
+
     for (int y = 0; y < activeMap_.height; ++y) {
         for (int x = 0; x < activeMap_.width; ++x) {
             const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(activeMap_.width) + static_cast<std::size_t>(x);
@@ -3307,6 +3368,9 @@ void Engine::render()
     if (wallTexture_.id != 0) {
         renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
     }
+
+    // Overlay-layer animated tiles draw above the walls (player walks behind them).
+    renderAnimatedTiles(1);
 
     for (const RuntimePathEntity& entity : pathEntities_) {
         if (entity.path.renderAboveWalls) {
@@ -3682,6 +3746,34 @@ void Engine::renderText(const std::string& text, float x, float y, float scale, 
     }
 }
 
+void Engine::renderAnimatedTiles(int layer) const
+{
+    if (activeScreen_ == nullptr) {
+        return;
+    }
+    for (const AnimatedTilePlacement& tile : activeScreen_->animatedTiles) {
+        if (tile.layer != layer) {
+            continue;
+        }
+        auto spriteIt = loadedSprites_.find(tile.spriteId);
+        if (spriteIt == loadedSprites_.end() || !spriteIt->second.loaded || spriteIt->second.texture.id == 0) {
+            continue;
+        }
+        const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+        if (frame == nullptr) {
+            continue;
+        }
+        const Texture& tex = spriteIt->second.texture;
+        const float u0 = static_cast<float>(frame->x) / static_cast<float>(tex.width);
+        const float v0 = static_cast<float>(frame->y) / static_cast<float>(tex.height);
+        const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(tex.width);
+        const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(tex.height);
+        const float x = static_cast<float>(tile.cellX * kTileSize);
+        const float y = static_cast<float>(tile.cellY * kTileSize);
+        renderTextureRegion(tex, x, y, static_cast<float>(frame->width), static_cast<float>(frame->height), u0, v0, u1, v1);
+    }
+}
+
 void Engine::renderItems() const
 {
     for (const RuntimeItemEntity& item : itemEntities_) {
@@ -3783,8 +3875,7 @@ void Engine::renderHud() const
     }
 
     if (rangedWeapon_.has_value()) {
-        const std::string ammoKey = rangedWeapon_->ammoTypeId.empty() ? rangedWeapon_->id : rangedWeapon_->ammoTypeId;
-        const int ammoCount = ammo_.count(ammoKey) ? ammo_.at(ammoKey) : 0;
+        const int ammoCount = ammoCountForWeapon(*rangedWeapon_);
         const float barMax = 20.0f;
         const float barW = std::min(static_cast<float>(ammoCount), barMax) * 2.0f;
         renderFilledRect(8.0f, hudY, 40.0f, 4.0f, 0.08f, 0.08f, 0.08f, 0.6f);
@@ -3842,13 +3933,14 @@ void Engine::renderInventory() const
     const float visibleRows = static_cast<float>(visibleRowCount);
     const float panelH = 28.0f + std::max(1.0f, visibleRows) * rowH + pad;
 
+    const std::vector<std::string> ammoIds = ammoInventoryIds();
+
     renderFilledRect(panelX, panelY, panelW, panelH, 0.03f, 0.04f, 0.06f, 0.88f);
     renderFilledRect(panelX, panelY, panelW, 1.0f, 0.55f, 0.72f, 0.92f, 0.90f);
     renderText("INVENTORY", panelX + pad, panelY + 4.0f, 1.0f, 0.92f, 0.95f, 0.98f, 1.0f);
 
     if (entries.empty()) {
         renderText("Empty", panelX + pad, panelY + 30.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
-        return;
     }
 
     for (std::size_t i = 0; i < visibleRowCount; ++i) {
@@ -3908,6 +4000,65 @@ void Engine::renderInventory() const
         }
         if (inventoryScroll_ + static_cast<int>(visibleRowCount) < static_cast<int>(entries.size())) {
             renderText("v", panelX + panelW - pad - 8.0f, panelY + panelH - 16.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+        }
+    }
+
+    // AMMO section: ammo lives in the inventory but is shown separately and is
+    // consumed by firing ranged weapons (not "used" from the menu).
+    if (!ammoIds.empty()) {
+        const float ammoY = panelY + panelH + 6.0f;
+        const float ammoH = 28.0f + static_cast<float>(ammoIds.size()) * rowH + pad;
+        renderFilledRect(panelX, ammoY, panelW, ammoH, 0.03f, 0.04f, 0.06f, 0.88f);
+        renderFilledRect(panelX, ammoY, panelW, 1.0f, 0.20f, 0.80f, 1.0f, 0.90f);
+        renderText("AMMO", panelX + pad, ammoY + 4.0f, 1.0f, 0.85f, 0.94f, 1.0f, 1.0f);
+
+        for (std::size_t i = 0; i < ammoIds.size(); ++i) {
+            const std::string& id = ammoIds[i];
+            const auto countIt = inventory_.find(id);
+            const int count = countIt == inventory_.end() ? 0 : countIt->second;
+
+            std::string name = id;
+            std::string spriteId;
+            for (const ItemDef& def : itemDefs_) {
+                if (def.id == id) {
+                    name = def.name.empty() ? def.id : def.name;
+                    spriteId = def.spriteId;
+                    break;
+                }
+            }
+
+            const float y = ammoY + 28.0f + static_cast<float>(i) * rowH;
+            const float iconX = panelX + pad;
+            const float iconY = y + 2.0f;
+
+            bool renderedIcon = false;
+            const auto spriteIt = loadedSprites_.find(spriteId);
+            if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+                const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+                if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+                    const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                    const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                    const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                    const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                    renderTextureRegion(spriteIt->second.texture, iconX, iconY, icon, icon, u0, v0, u1, v1);
+                    renderedIcon = true;
+                }
+            }
+            if (!renderedIcon) {
+                renderFilledRect(iconX, iconY, icon, icon, 0.20f, 0.55f, 0.70f, 0.95f);
+            }
+
+            std::string label = name;
+            constexpr float labelScale = 0.85f;
+            const float labelMaxW = 82.0f;
+            while (!label.empty() && textWidth(label, labelScale) > labelMaxW) {
+                label.pop_back();
+            }
+            renderText(label, panelX + pad + icon + 6.0f, y + 4.0f, labelScale, 0.86f, 0.89f, 0.94f, 1.0f);
+
+            const std::string countStr = std::to_string(count);
+            renderText(countStr, panelX + panelW - pad - textWidth(countStr, 1.0f), y + 4.0f, 1.0f,
+                0.2f, 0.8f, 1.0f, 1.0f);
         }
     }
 }

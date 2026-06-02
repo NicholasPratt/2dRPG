@@ -90,10 +90,23 @@ private:
     std::array<char, 64> newChapterId_{'c', 'h', 'a', 'p', 't', 'e', 'r', '_', '1', '\0'};
     std::vector<std::string> projectIds_;
     std::vector<std::string> chapterIds_;
+    bool showProjectManager_ = false;
+    std::string projectPendingDelete_;
+    bool pendingProjectSwitch_ = false;
+    std::string pendingProjectId_;
+    std::string pendingProjectChapterId_;
 
     void drawStartupChapterModal();
+    void drawProjectManagerWindow();
+    void drawDeleteProjectConfirm();
     void drawUnsavedChangesModal();
     void drawChapterMenu();
+    void openProject(const std::string& projectId, const std::string& chapterId);
+    void requestProjectOpen(const std::string& projectId, const std::string& chapterId);
+    void deleteProject(const std::string& projectId);
+    void loadSession();
+    void saveSession() const;
+    [[nodiscard]] std::filesystem::path sessionFilePath() const;
     void refreshProjectList();
     void refreshChapterList();
     void selectProject(const std::string& projectId);

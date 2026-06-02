@@ -22,6 +22,9 @@ struct TilePaletteEntry {
     int heightPx = 0;
     int frameDurationMs = 250;
     std::vector<TilePaletteFrame> frames;
+    // Sprite asset backing this tile's animation. When the sprite has >= 2 frames
+    // the tile is "animated" and stamping it places a runtime animated tile.
+    std::string spriteId;
 };
 
 struct ChapterScreenEntry {
@@ -31,6 +34,24 @@ struct ChapterScreenEntry {
     int gridY = 0;
 };
 
+// Seed pixels handed from the screen-graphics editor to the sprite editor so a
+// selected region can be turned into an animated tile sprite. Pixels are
+// 0xAABBGGRR, row-major (same encoding as the paint panel and sprite cels).
+struct PendingSpriteSeed {
+    std::string id;
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint32_t> pixels;
+
+    void clear() {
+        id.clear();
+        width = 0;
+        height = 0;
+        pixels.clear();
+    }
+    [[nodiscard]] bool valid() const { return !id.empty() && width > 0 && height > 0; }
+};
+
 struct EditorContext {
     AssetDirectories assets;
     std::string currentChapterId;
@@ -38,9 +59,13 @@ struct EditorContext {
     std::string selectedScreenMapId;
     std::string requestedChapterSwitchId;
     std::string requestedSpriteReference;
+    PendingSpriteSeed pendingSpriteSeed;
     std::string requestedDialogueGraphId;
     bool dirty = false;
     bool requestEditScreenGraphics = false;
+    // Set when the screen-graphics panel switches screens so the host can re-sync
+    // per-screen placement lists (animated tiles, etc.) from the chapter.
+    bool requestScreenPlacementSync = false;
     bool requestEditScreenMusic = false;
     bool requestEditEnemies = false;
     bool requestEditEnemyTypes = false;
@@ -62,6 +87,8 @@ struct EditorContext {
     std::string selectedScreenItemsMapId;
     std::vector<game::NpcPlacement> selectedScreenNpcs;
     std::string selectedScreenNpcsOwnerId;
+    std::vector<game::AnimatedTilePlacement> selectedScreenAnimatedTiles;
+    std::string selectedScreenAnimatedTilesOwnerId;
     std::vector<game::NpcTypeDef> npcTypes;
     std::vector<std::string> importedCharacterIds;
     std::string playableCharacterId;

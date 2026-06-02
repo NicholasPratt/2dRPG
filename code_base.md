@@ -111,7 +111,9 @@ cmake --build build --parallel
 
 From the editor, `Chapter > Save and Play Game` and scoped `Save and Play` buttons save the current project/chapter data and launch `adventure_game_window` as a separate runtime process with an explicit chapter path. The game executable derives its runtime asset root from that chapter path, so editor launches use the selected project folder. Escape closes the game window.
 
-Two **test launches** sit beside Save and Play (and in the Chapter menu): **Play Selected Screen** (`launchGame(fresh=true, startScreen=selectedScreen)`) and **Play From Last Entry** (`launchGame(fresh=true, fromCheckpoint=true)`, which reads `assets/game/test_checkpoint`). Both pass `--fresh` so authored enemies always appear and the player's real `save.adstate` is left untouched. `launchDetachedProcess` forwards the chapter path plus these extra args via `execv`.
+Two **test launches** sit beside Save and Play (and in the Chapter menu): **Play Selected Screen** (`launchGame(fresh=true, startScreen=selectedScreen)`) and **Play From Last Entry** (`launchGame(fresh=true, fromCheckpoint=true)`, which reads `assets/game/test_checkpoint`). Both pass `--fresh` so authored enemies always appear and the player's real `save.adstate` is left untouched. `launchDetachedProcess` forwards the chapter path plus these extra args via `execv`. **Save and Play itself also starts a new game** (no `--continue`), so prior progress never carries over; the engine only loads `save.adstate` when launched with `--continue`.
+
+The editor reopens the last project+chapter from `projects/.editor_session` on startup (falling back to the Open Project modal), and a **Project** menu → **Project Manager** opens/creates/deletes projects (delete is confirmed and permanent); switching projects respects the unsaved-changes prompt. See `EditorApp::{loadSession,saveSession,drawProjectManagerWindow,deleteProject,requestProjectOpen}`.
 
 When `adventure_game_window` is launched without arguments it scans `projects/<project>/assets/game/chapters/*.adchapter` and the repo-root fallback assets, then shows a small ImGui picker asking which project/chapter to load.
 
@@ -422,10 +424,10 @@ struct Chapter {
 };
 ```
 
-### `.adchapter` format (v10)
+### `.adchapter` format (v11)
 
 ```text
-ADCHAPTER 10
+ADCHAPTER 11
 id chapter_1
 start screen_1
 playable hero
@@ -444,10 +446,12 @@ npc npc_1 shopkeeper_1 120.0 200.0 2 64.0 24.0 1 1 32.0 shop_graph 1 1 1
 wp 120.0 200.0 0.0 2.0 -1 -
 dl "Merchant" "Hello there traveler!"
 shop_item potion 10 5 3 0
+animtiles 1
+animtile water_tile 11 14 0
 end
 ```
 
-Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides.
+Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block of `AnimatedTilePlacement` records (`animtile <spriteId> <cellX> <cellY> <layer>`), only parsed for v≥11.
 
 ### Layout Editor
 
@@ -631,12 +635,13 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - Obstacle hazards (spikes, pits, timed spikes) respawn the player at the map spawn.
 - Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged, and north face button/Select/Start for inventory.
 - Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile from `WeaponDef` data.
-- Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable and ammo items can fill ammo pools.
+- Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.
 - Shop NPCs open a two-panel buy/sell overlay. The shop panel spends `Money` and transfers stock into the player inventory; the player panel sells one selected inventory item and adds `Money`. Limited shop rows decrement on buy and increment when sold back. NPC placements can override the reusable NPC type stock, and the runtime scrolls both shop and player inventory lists.
 - Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay and pauses player/world updates while it is open. Inventory rows use each item definition's sprite as a pictogram and render stack/value counts as a pictogram/number pair. Up/Down, W/S, D-pad, or left stick changes selection; E, Space, Enter, or controller south face button uses usable item types.
 - NPC dialogue: E key or controller south face button triggers interaction. Legacy dialogue advances line-by-line; graph dialogue follows nodes, conditions, choices, and actions. Up/Down, W/S, D-pad, or left stick selects graph responses. Speech bubble / dialogue box renders above NPC and dialogue text is bounded, wrapped, and scrollable.
-- **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults, then merges any saved `assets/game/save.adstate` over them (so newly-added variables still get defaults). State is written on every screen transition and on quit. Defeated enemies (not flagged to respawn) are stored in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"` and filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
-- **Test launches:** the runtime accepts `--fresh` (don't load or overwrite `save.adstate`, so all authored enemies appear and the player starts at full state), `--screen <id>` (start on a specific screen), and `--pos <x> <y>` (start at a position). On each screen entry it writes a lightweight `assets/game/test_checkpoint` (`screen <id>` / `pos <x> <y>`) recording where the player last entered a screen; the editor reads this for "Play From Last Entry". A `--fresh` run never writes `save.adstate` but still updates the checkpoint.
+- **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults. **By default that is the whole story — every launch is a new game.** Saved progress in `assets/game/save.adstate` is merged over the defaults only when the runtime is started with `--continue` (gated by `continueSave_`, default false). State is still written on every screen transition and on quit (so a future continue works), and within a session defeated enemies persist in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"`, filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
+- **Launch flags:** the runtime accepts `--continue` (load `save.adstate` to resume), `--fresh` (test launch: ignore *and* don't overwrite `save.adstate`), `--screen <id>` (start on a specific screen), and `--pos <x> <y>` (start at a position). On each screen entry it writes a lightweight `assets/game/test_checkpoint` (`screen <id>` / `pos <x> <y>`) recording where the player last entered a screen; the editor reads this for "Play From Last Entry". A `--fresh` run never writes `save.adstate` but still updates the checkpoint.
+- **Animated tiles:** `Engine::loadAllSprites` also loads sprites referenced by the active screen's `animatedTiles`; `Engine::renderAnimatedTiles(layer)` draws each placement's current frame (via `spriteFrame()` + `renderTextureRegion()` at `cell*kTileSize`) — layer 0 after the floor texture (below the player), layer 1 after the wall texture (player walks behind).
 
 Current limitations:
 
@@ -724,6 +729,7 @@ Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 - Tools: Pencil, Eraser, Fill, Line, Rect, Select, Tile Draw, Tile Select, Tile Paste, Stamp, Tile Fill, Tile Erase.
 - Brush shapes: Square, Circle, Spray, Dither. Zoom 1–16.
 - Tile palette: `Tile Select` → Add to palette → Stamp / Tile Fill across all screens.
+- **Animated tiles (palette-driven):** each `TilePaletteEntry` carries an optional `spriteId`. An **Edit Sprite** button per palette row (`editTileSprite`) seeds a sprite from the tile's pixels (composite wall-over-floor → `PendingSpriteSeed` → `SpriteEditorPanel::createSpriteFromPixels`) and opens the Sprite editor; reopening an existing sprite skips the seed. A tile whose sprite has **≥2 frames** is *animated* (`tileIsAnimated`, cached in `spriteFrameCount_` via `refreshTileSpriteInfo`). Stamping a static tile bakes pixels (`stampTile`); stamping an animated tile calls `placeAnimatedTile`, which upserts a `game::AnimatedTilePlacement` into `context.selectedScreenAnimatedTiles` at the cell (active layer → 0 floor / 1 overlay, replacing any placement there, painted pixels left intact). `Tile Erase`/right-click → `removeAnimatedTileAt`. Placements sync to/from the chapter via `LayoutEditorPanel::applyContextSelectedScreenData` (re-synced on screen switch through `context.requestScreenPlacementSync`). The tile↔sprite link is persisted in `.adeditor` v3.
 - Undo stack (up to 50 steps).
 
 ### Per-screen dirty buffer system

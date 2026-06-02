@@ -105,6 +105,11 @@ private:
     int stampTileIndex_ = -1;
     int stampFrameIndex_ = 0;
 
+    // Per-tile sprite info: a palette tile whose linked sprite has >= 2 frames is
+    // "animated" and stamps as a runtime animated tile instead of static pixels.
+    std::unordered_map<std::string, int> spriteFrameCount_;                    // sprite id -> frame count
+    std::unordered_map<std::string, std::array<int, 2>> animTileFootprints_;   // sprite id -> {tilesW, tilesH}
+
     // Per-screen graphics buffers
     std::string currentScreenId_;
     std::unordered_map<std::string, ScreenGraphicsBuffer> screenBuffers_;
@@ -119,9 +124,14 @@ private:
     void drawLayerControls(EditorContext& context);
     void drawPalette();
     void drawTilePalette(EditorContext& context);
+    void refreshTileSpriteInfo(const EditorContext& context);
+    void editTileSprite(EditorContext& context, int index);
+    [[nodiscard]] bool tileIsAnimated(const TilePaletteEntry& tile) const;
     void addToTilePalette(EditorContext& context);
     void addTileSelectionToPalette(EditorContext& context);
     void stampTile(int x, int y, const TilePaletteEntry& tile);
+    void placeAnimatedTile(EditorContext& context, const TilePaletteEntry& tile, int cellX, int cellY);
+    void removeAnimatedTileAt(EditorContext& context, int cellX, int cellY);
     void floodFillTile(int x, int y, const TilePaletteEntry& tile);
     void fillTile(int x, int y, std::uint32_t color);
     void eraseTile(int x, int y);

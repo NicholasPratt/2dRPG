@@ -64,6 +64,17 @@ struct ScreenLink {
     std::string west;
 };
 
+// An animated tile is a sprite asset placed on a map cell. The runtime cycles the
+// sprite's frames over the static screen graphics. `layer` controls draw order
+// relative to the wall texture: 0 = above floor (player walks over it),
+// 1 = above walls / overlay (player walks behind it).
+struct AnimatedTilePlacement {
+    std::string spriteId;
+    int cellX = 0;
+    int cellY = 0;
+    int layer = 0;
+};
+
 struct ChapterScreen {
     std::string id = "screen_1";
     std::string mapId = "new_map";
@@ -75,6 +86,7 @@ struct ChapterScreen {
     bool musicLoop = true;
     std::vector<EnemyPlacement> enemies;
     std::vector<NpcPlacement> npcs;
+    std::vector<AnimatedTilePlacement> animatedTiles;
 };
 
 struct Chapter {

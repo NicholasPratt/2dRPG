@@ -13,6 +13,7 @@ namespace {
 constexpr int kMaxScreens = 1024;
 constexpr int kMaxScreenEnemies = 2048;
 constexpr int kMaxScreenNpcs = 1024;
+constexpr int kMaxScreenAnimatedTiles = 4096;
 constexpr int kMaxEnemyWaypoints = 4096;
 constexpr int kMaxNpcWaypoints = 4096;
 constexpr int kMinGridCoord = -512;
@@ -111,7 +112,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 10\n";
+    output << "ADCHAPTER 11\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -172,6 +173,11 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                        << "\n";
             }
         }
+        output << "animtiles " << screen.animatedTiles.size() << "\n";
+        for (const AnimatedTilePlacement& tile : screen.animatedTiles) {
+            output << "animtile " << (tile.spriteId.empty() ? "-" : tile.spriteId)
+                   << ' ' << tile.cellX << ' ' << tile.cellY << ' ' << tile.layer << "\n";
+        }
     }
     output << "end\n";
 
@@ -194,7 +200,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 10) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 11) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -437,6 +443,28 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                     }
                 }
                 screen.npcs.push_back(std::move(npc));
+            }
+        }
+
+        if (version >= 11) {
+            int animCount = 0;
+            input >> key >> animCount;
+            if (key != "animtiles" || !input || animCount < 0 || animCount > kMaxScreenAnimatedTiles) {
+                setError(errorMessage, "Expected valid animated tile count.");
+                return false;
+            }
+            screen.animatedTiles.reserve(static_cast<std::size_t>(animCount));
+            for (int animIndex = 0; animIndex < animCount; ++animIndex) {
+                AnimatedTilePlacement tile;
+                std::string spriteId;
+                input >> key >> spriteId >> tile.cellX >> tile.cellY >> tile.layer;
+                if (key != "animtile" || !input) {
+                    setError(errorMessage, "Expected animated tile entry.");
+                    return false;
+                }
+                tile.spriteId = (spriteId == "-") ? std::string{} : spriteId;
+                tile.layer = std::clamp(tile.layer, 0, 1);
+                screen.animatedTiles.push_back(std::move(tile));
             }
         }
 

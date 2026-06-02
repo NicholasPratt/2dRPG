@@ -1,11 +1,11 @@
-ADCHAPTER 10
+ADCHAPTER 11
 id Farm_House
 start screen_1
 playable billy
 characters 2
 character billy
 character grandma_spelling
-screens 4
+screens 6
 screen screen_1 screen_1_map 0 0
 links - - screen_3 screen_2
 respawn 0
@@ -46,12 +46,15 @@ dl "" "You Should Find Grandma Spelling, She'll know what to do!"
 npc Dhag1 Fred 424 344 0 64 24 0 1 15 - 1 1 0
 wp 424 344 0 0 -1 -
 dl "" "I find crows a bit scary..."
+animtiles 1
+animtile anim_tile_screen_1_map 11 14 1
 screen screen_2 screen_2_map -1 0
 links - - screen_1 -
 respawn 0
 music "-" 1
 enemies 0
 npcs 0
+animtiles 0
 screen screen_3 screen_3_map 1 0
 links - screen_4 - screen_1
 respawn 0
@@ -66,10 +69,11 @@ npc npc_2 Fred 184 104 0 64 24 0 1 15 screen_3_npc_2_dialogue 1 0 0
 wp 184 104 0 0 -1 -
 npc npc_4 Merchantile 616 168 0 64 58 0 1 32 - 1 0 0
 wp 616 168 0 0 -1 -
+animtiles 0
 screen screen_4 screen_4_map 1 1
-links screen_3 - - -
+links screen_3 - screen_5 screen_6
 respawn 0
-music "-" 1
+music "assets/game/music/merrydigging.ogg" 1
 enemies 9
 enemy enemy_1 wevfer 1 0 64 1 0 0 6
 wp 144 112 0 0 -1 -
@@ -124,4 +128,19 @@ wp 480 192 0 0 -1 -
 wp 416 112 0 0 -1 -
 wp 320 96 0 0 -1 -
 npcs 0
+animtiles 0
+screen screen_5 screen_5_map 2 1
+links - - - screen_4
+respawn 0
+music "-" 1
+enemies 0
+npcs 0
+animtiles 0
+screen screen_6 screen_6_map 0 1
+links - - screen_4 -
+respawn 0
+music "-" 1
+enemies 0
+npcs 0
+animtiles 0
 end

@@ -21,3 +21,6 @@ Makefile
 # Runtime-generated save / checkpoint state (per-playthrough, not source assets)
 *.adstate
 test_checkpoint
+
+# Editor session state (last opened project/chapter, per-user)
+projects/.editor_session

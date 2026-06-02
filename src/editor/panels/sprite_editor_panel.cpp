@@ -559,6 +559,47 @@ void SpriteEditorPanel::openCharacterSpriteReference(const std::filesystem::path
     }
 }
 
+void SpriteEditorPanel::createSpriteFromPixels(const EditorContext& context, const PendingSpriteSeed& seed)
+{
+    if (!seed.valid()) {
+        return;
+    }
+
+    // Stash the current document so we don't lose unsaved edits when switching.
+    if (!document_.id.empty() && document_.id != seed.id) {
+        auto& buf = documentBuffers_[document_.id];
+        buf.document = document_;
+        buf.dirty = buf.dirty || documentDirty_;
+    }
+
+    createBlankSprite(seed.width, seed.height);
+    document_.id = seed.id;
+    document_.frames[0].width = document_.canvasSize[0];
+    document_.frames[0].height = document_.canvasSize[1];
+
+    // Copy seed pixels into the base cel (frame 0, layer 0). Both the paint panel
+    // and sprite cels use the 0xAABBGGRR encoding, so no channel swap is needed.
+    SpriteCel& cel = celAt(0, 0);
+    const std::size_t count = std::min(cel.pixels.size(), seed.pixels.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        cel.pixels[i] = static_cast<unsigned int>(seed.pixels[i]);
+    }
+
+    // Persist as a real chapter sprite asset so it is runtime-loadable and
+    // re-openable, then register it in the buffer map.
+    exportFramePngs(context);
+    exportSpriteSheetPng(context);
+    saveSpriteMetadata(context);
+
+    documentDirty_ = false;
+    auto& buf = documentBuffers_[document_.id];
+    buf.document = document_;
+    buf.dirty = false;
+    undoStack_.clear();
+    selectedFrame_ = 0;
+    selectedLayer_ = 0;
+}
+
 std::filesystem::path SpriteEditorPanel::spriteMetadataReference(const EditorContext& context) const
 {
     return context.assets.gameSprites / (document_.id + ".sprite.json");

@@ -31,9 +31,13 @@ anim "swim" "assets/game/sprites/billy.sprite.json"
 anim "dash" "assets/game/sprites/billy.sprite.json"
 anim "block_break" "assets/game/sprites/billy.sprite.json"
 anim "revive" "assets/game/sprites/billy.sprite.json"
-frames 4
+frames 8
 frame 0 "idle" "assets/raw/sprites/billy_frame_1.png"
 frame 1 "walk" "assets/raw/sprites/billy_frame_2.png"
 frame 2 "attack_1" "assets/raw/sprites/billy_frame_3.png"
 frame 3 "walk" "assets/raw/sprites/billy_frame_4.png"
+frame 4 "walk" "assets/raw/sprites/billy_frame_5.png"
+frame 5 "walk" "assets/raw/sprites/billy_frame_6.png"
+frame 6 "walk" "assets/raw/sprites/billy_frame_7.png"
+frame 7 "walk" "assets/raw/sprites/billy_frame_8.png"
 end

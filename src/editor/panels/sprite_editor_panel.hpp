@@ -74,6 +74,9 @@ public:
     void draw(EditorContext& context);
     void openSpriteReference(const std::filesystem::path& spriteReference);
     void openCharacterSpriteReference(const std::filesystem::path& spriteReference);
+    // Seed a brand-new sprite from a block of RGBA pixels (0xAABBGGRR, row-major)
+    // and persist it as a chapter sprite asset so it can be animated and placed.
+    void createSpriteFromPixels(const EditorContext& context, const PendingSpriteSeed& seed);
     bool saveForChapter(const EditorContext& context);
     void resetDocumentBuffers();
     [[nodiscard]] std::filesystem::path spriteMetadataReference(const EditorContext& context) const;
