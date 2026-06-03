@@ -226,7 +226,7 @@ private:
     bool meleeInputWasDown_ = false;
     bool rangedInputWasDown_ = false;
     float runtimeSeconds_ = 0.0f;
-    float hazardCooldownSeconds_ = 0.0f;
+    std::unordered_map<std::string, float> hazardCooldowns_;  // per-obstacle damage-tick timer, keyed by obstacle id
     float playerInvulnerableSeconds_ = 0.0f;
     float transitionTime_ = 0.0f;
     float transitionDuration_ = 0.4f;

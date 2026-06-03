@@ -120,6 +120,8 @@ void MapEditorPanel::resizeMap(int width, int height)
     obstacles_.erase(std::remove_if(obstacles_.begin(), obstacles_.end(), [this](const game::MapObstacle& obstacle) {
         return obstacle.x < 0 || obstacle.y < 0 || obstacle.x + obstacle.width > width_ || obstacle.y + obstacle.height > height_;
     }), obstacles_.end());
+    selectedObstacle_ = -1;
+    obstacleBufFor_ = -1;
     spawnX_ = std::clamp(spawnX_, 0, width_ - 1);
     spawnY_ = std::clamp(spawnY_, 0, height_ - 1);
 }
@@ -170,46 +172,13 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
             ImGui::SameLine();
             ImGui::RadioButton(kLayerNames[l], &activeLayer_, l);
         }
-    } else {
+    } else if (obstacleMode_) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(150.0f);
-        if (ImGui::Combo("Type", &activeObstacleType_, kObstacleTypeNames, 3)) {
-            const char* defaultSprite = activeObstacleType_ == static_cast<int>(game::ObstacleType::Pit) ? "pit" :
-                (activeObstacleType_ == static_cast<int>(game::ObstacleType::TimedSpike) ? "timed_spikes" : "spikes");
-            std::memset(obstacleSpriteId_.data(), 0, obstacleSpriteId_.size());
-            std::memcpy(obstacleSpriteId_.data(), defaultSprite, std::min(std::strlen(defaultSprite), obstacleSpriteId_.size() - 1));
-        }
-        ImGui::SetNextItemWidth(150.0f);
-        ui::inputTextString("Sprite id", obstacleSpriteId_.data(), obstacleSpriteId_.size());
+        ImGui::Combo("New type", &activeObstacleType_, kObstacleTypeNames, 3);
         ImGui::SameLine();
-        if (ImGui::Button("Edit Sprite")) {
-            const std::string spriteId(obstacleSpriteId_.data());
-            if (!spriteId.empty()) {
-                context.requestedSpriteReference = (context.assets.gameSprites / (spriteId + ".sprite.json")).generic_string();
-                context.requestEditSprite = true;
-            }
-        }
-        int obstacleSize[2]{obstacleW_, obstacleH_};
-        ImGui::SetNextItemWidth(120.0f);
-        if (ImGui::InputInt2("Obstacle size", obstacleSize)) {
-            obstacleW_ = obstacleSize[0];
-            obstacleH_ = obstacleSize[1];
-        }
-        obstacleW_ = std::clamp(obstacleW_, 1, kMaxMapSize);
-        obstacleH_ = std::clamp(obstacleH_, 1, kMaxMapSize);
-        if (activeObstacleType_ == static_cast<int>(game::ObstacleType::TimedSpike)) {
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::InputFloat("Active s", &obstacleActiveSeconds_, 0.1f, 0.5f, "%.2f");
-            obstacleActiveSeconds_ = std::clamp(obstacleActiveSeconds_, 0.05f, 60.0f);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::InputFloat("Safe s", &obstacleInactiveSeconds_, 0.1f, 0.5f, "%.2f");
-            obstacleInactiveSeconds_ = std::clamp(obstacleInactiveSeconds_, 0.0f, 60.0f);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::InputFloat("Phase s", &obstaclePhaseSeconds_, 0.1f, 0.5f, "%.2f");
-            obstaclePhaseSeconds_ = std::clamp(obstaclePhaseSeconds_, 0.0f, 60.0f);
-        }
+        ImGui::TextDisabled("(click an empty cell to add)");
+        drawObstacleInspector(context);
     }
 
     if (playerPlacementMode_) {
@@ -306,7 +275,7 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
         spawnX_, spawnY_, static_cast<int>(selectedTileId_),
         playerPlacementMode_ ? "player placement" : (obstacleMode_ ? "obstacles" : kLayerNames[activeLayer_]));
     ImGui::Text("Map files: %s", context.assets.gameMapPath().string().c_str());
-    ImGui::TextDisabled("Tiles: left paint, right erase. Player place: left set spawn. Obstacles: left place, right erase. Ctrl+Z undo.");
+    ImGui::TextDisabled("Tiles: left paint, right erase. Player place: left set spawn. Obstacles: left add/select, right delete. Ctrl+Z undo.");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
@@ -488,19 +457,28 @@ void MapEditorPanel::drawGrid(EditorContext& context)
     }
 
     if (obstacleMode_) {
-        const int w = std::min(obstacleW_, width_ - x);
-        const int h = std::min(obstacleH_, height_ - y);
-        const auto type = static_cast<game::ObstacleType>(activeObstacleType_);
-        const ImVec2 oMin{origin.x + static_cast<float>(x * tileSize_), origin.y + static_cast<float>(y * tileSize_)};
-        const ImVec2 oMax{oMin.x + static_cast<float>(w * tileSize_), oMin.y + static_cast<float>(h * tileSize_)};
-        drawList->AddRectFilled(oMin, oMax, obstacleColor(type, true));
-        drawList->AddRect(oMin, oMax, IM_COL32(255, 255, 255, 230), 0.0f, 0, 2.0f);
-        ImGui::SetTooltip("%s %dx%d", obstacleTypeName(type), w, h);
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            recordUndo();
-            placeObstacle(x, y);
-            context.markDirty();
-        } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        const int hovered = obstacleIndexAt(x, y);
+        if (hovered >= 0) {
+            const game::MapObstacle& o = obstacles_[static_cast<std::size_t>(hovered)];
+            ImGui::SetTooltip("Select %s (%s)", o.id.c_str(), obstacleTypeName(o.type));
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                selectedObstacle_ = hovered;
+                obstacleBufFor_ = -1;
+            }
+        } else {
+            const auto type = static_cast<game::ObstacleType>(activeObstacleType_);
+            const ImVec2 oMin{origin.x + static_cast<float>(x * tileSize_), origin.y + static_cast<float>(y * tileSize_)};
+            const ImVec2 oMax{oMin.x + static_cast<float>(tileSize_), oMin.y + static_cast<float>(tileSize_)};
+            drawList->AddRectFilled(oMin, oMax, obstacleColor(type, true));
+            drawList->AddRect(oMin, oMax, IM_COL32(255, 255, 255, 230), 0.0f, 0, 2.0f);
+            ImGui::SetTooltip("Add %s here", obstacleTypeName(type));
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                recordUndo();
+                placeObstacle(x, y);
+                context.markDirty();
+            }
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             recordUndo();
             eraseObstacleAt(x, y);
             context.markDirty();
@@ -628,7 +606,8 @@ void MapEditorPanel::copySelection()
 
 void MapEditorPanel::drawObstacles(ImDrawList* drawList, ImVec2 origin) const
 {
-    for (const game::MapObstacle& obstacle : obstacles_) {
+    for (int i = 0; i < static_cast<int>(obstacles_.size()); ++i) {
+        const game::MapObstacle& obstacle = obstacles_[static_cast<std::size_t>(i)];
         const ImVec2 min{
             origin.x + static_cast<float>(obstacle.x * tileSize_),
             origin.y + static_cast<float>(obstacle.y * tileSize_),
@@ -641,7 +620,11 @@ void MapEditorPanel::drawObstacles(ImDrawList* drawList, ImVec2 origin) const
             std::fmod(static_cast<float>(ImGui::GetTime()) + obstacle.phaseSeconds,
                 std::max(0.05f, obstacle.activeSeconds + obstacle.inactiveSeconds)) < obstacle.activeSeconds;
         drawList->AddRectFilled(min, max, obstacleColor(obstacle.type, active));
-        drawList->AddRect(min, max, active ? IM_COL32(255, 255, 255, 220) : IM_COL32(120, 180, 230, 190), 0.0f, 0, 2.0f);
+        if (i == selectedObstacle_) {
+            drawList->AddRect(min, max, IM_COL32(255, 216, 64, 255), 0.0f, 0, 3.0f);
+        } else {
+            drawList->AddRect(min, max, active ? IM_COL32(255, 255, 255, 220) : IM_COL32(120, 180, 230, 190), 0.0f, 0, 2.0f);
+        }
         const ImVec2 center{(min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f};
         const char* label = obstacle.type == game::ObstacleType::Pit ? "P" :
             (obstacle.type == game::ObstacleType::TimedSpike ? "T" : "S");
@@ -649,33 +632,206 @@ void MapEditorPanel::drawObstacles(ImDrawList* drawList, ImVec2 origin) const
     }
 }
 
+int MapEditorPanel::obstacleIndexAt(int x, int y) const
+{
+    // Topmost (last-drawn) obstacle covering the tile.
+    for (int i = static_cast<int>(obstacles_.size()) - 1; i >= 0; --i) {
+        const game::MapObstacle& o = obstacles_[static_cast<std::size_t>(i)];
+        if (x >= o.x && y >= o.y && x < o.x + o.width && y < o.y + o.height) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+std::string MapEditorPanel::makeUniqueObstacleId() const
+{
+    for (int n = 1;; ++n) {
+        const std::string candidate = "obstacle_" + std::to_string(n);
+        const bool used = std::any_of(obstacles_.begin(), obstacles_.end(),
+            [&candidate](const game::MapObstacle& o) { return o.id == candidate; });
+        if (!used) {
+            return candidate;
+        }
+    }
+}
+
 void MapEditorPanel::placeObstacle(int x, int y)
 {
-    eraseObstacleAt(x, y);
+    const auto type = static_cast<game::ObstacleType>(activeObstacleType_);
+    const char* defaultSprite = type == game::ObstacleType::Pit ? "pit" :
+        (type == game::ObstacleType::TimedSpike ? "timed_spikes" : "spikes");
+
     game::MapObstacle obstacle;
-    obstacle.type = static_cast<game::ObstacleType>(activeObstacleType_);
-    obstacle.spriteId = obstacleSpriteId_.data();
+    obstacle.id = makeUniqueObstacleId();
+    obstacle.type = type;
+    obstacle.spriteId = defaultSprite;
     obstacle.x = std::clamp(x, 0, width_ - 1);
     obstacle.y = std::clamp(y, 0, height_ - 1);
-    obstacle.width = std::clamp(obstacleW_, 1, width_ - obstacle.x);
-    obstacle.height = std::clamp(obstacleH_, 1, height_ - obstacle.y);
-    obstacle.activeSeconds = std::clamp(obstacleActiveSeconds_, 0.05f, 60.0f);
-    obstacle.inactiveSeconds = std::clamp(obstacleInactiveSeconds_, 0.0f, 60.0f);
-    obstacle.phaseSeconds = std::clamp(obstaclePhaseSeconds_, 0.0f, 60.0f);
+    obstacle.width = 1;
+    obstacle.height = 1;
+    obstacle.activeSeconds = 1.0f;
+    obstacle.inactiveSeconds = 1.0f;
+    obstacle.phaseSeconds = 0.0f;
     obstacles_.push_back(obstacle);
-    status_ = "Placed " + std::string(obstacleTypeName(obstacle.type)) + ".";
+    selectedObstacle_ = static_cast<int>(obstacles_.size()) - 1;
+    obstacleBufFor_ = -1;
+    status_ = "Added " + std::string(obstacleTypeName(obstacle.type)) + " (" + obstacle.id + ").";
 }
 
 void MapEditorPanel::eraseObstacleAt(int x, int y)
 {
-    const auto it = std::remove_if(obstacles_.begin(), obstacles_.end(), [x, y](const game::MapObstacle& obstacle) {
-        return x >= obstacle.x && y >= obstacle.y &&
-            x < obstacle.x + obstacle.width && y < obstacle.y + obstacle.height;
-    });
-    if (it != obstacles_.end()) {
-        obstacles_.erase(it, obstacles_.end());
-        status_ = "Removed obstacle.";
+    const int idx = obstacleIndexAt(x, y);
+    if (idx < 0) {
+        return;
     }
+    status_ = "Removed obstacle " + obstacles_[static_cast<std::size_t>(idx)].id + ".";
+    obstacles_.erase(obstacles_.begin() + idx);
+    if (selectedObstacle_ == idx) {
+        selectedObstacle_ = -1;
+    } else if (selectedObstacle_ > idx) {
+        --selectedObstacle_;
+    }
+    obstacleBufFor_ = -1;
+}
+
+void MapEditorPanel::drawObstacleInspector(EditorContext& context)
+{
+    if (selectedObstacle_ >= static_cast<int>(obstacles_.size())) {
+        selectedObstacle_ = -1;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Obstacles (%d)", static_cast<int>(obstacles_.size()));
+    ImGui::SameLine();
+    if (ImGui::Button("Add obstacle")) {
+        recordUndo();
+        placeObstacle(spawnX_, spawnY_);
+        context.markDirty();
+    }
+
+    ImGui::BeginChild("ObstacleList", ImVec2(240.0f, 150.0f), true);
+    for (int i = 0; i < static_cast<int>(obstacles_.size()); ++i) {
+        const game::MapObstacle& o = obstacles_[static_cast<std::size_t>(i)];
+        const std::string label = o.id + "  (" + obstacleTypeName(o.type) + ")##obs" + std::to_string(i);
+        if (ImGui::Selectable(label.c_str(), i == selectedObstacle_)) {
+            selectedObstacle_ = i;
+            obstacleBufFor_ = -1;
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    if (selectedObstacle_ < 0) {
+        ImGui::TextDisabled("Select an obstacle to edit, or click an empty cell to add one.");
+        ImGui::EndGroup();
+        return;
+    }
+
+    game::MapObstacle& o = obstacles_[static_cast<std::size_t>(selectedObstacle_)];
+    if (obstacleBufFor_ != selectedObstacle_) {
+        std::memset(obstacleIdEdit_.data(), 0, obstacleIdEdit_.size());
+        std::memcpy(obstacleIdEdit_.data(), o.id.data(), std::min(o.id.size(), obstacleIdEdit_.size() - 1));
+        std::memset(obstacleSpriteId_.data(), 0, obstacleSpriteId_.size());
+        std::memcpy(obstacleSpriteId_.data(), o.spriteId.data(), std::min(o.spriteId.size(), obstacleSpriteId_.size() - 1));
+        obstacleBufFor_ = selectedObstacle_;
+    }
+
+    ImGui::SetNextItemWidth(180.0f);
+    if (ui::inputTextString("Id", obstacleIdEdit_.data(), obstacleIdEdit_.size())) {
+        o.id = obstacleIdEdit_.data();
+        context.markDirty();
+    }
+    const bool duplicateId = std::count_if(obstacles_.begin(), obstacles_.end(),
+        [&o](const game::MapObstacle& other) { return other.id == o.id; }) > 1;
+    if (o.id.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.3f, 1.0f), "Id must not be empty.");
+    } else if (duplicateId) {
+        ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.3f, 1.0f), "Duplicate id.");
+    }
+
+    int typeValue = static_cast<int>(o.type);
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::Combo("Type", &typeValue, kObstacleTypeNames, 3)) {
+        o.type = static_cast<game::ObstacleType>(typeValue);
+        context.markDirty();
+    }
+
+    ImGui::SetNextItemWidth(180.0f);
+    if (ui::inputTextString("Sprite id", obstacleSpriteId_.data(), obstacleSpriteId_.size())) {
+        o.spriteId = obstacleSpriteId_.data();
+        context.markDirty();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Edit Sprite")) {
+        const std::string spriteId(obstacleSpriteId_.data());
+        if (!spriteId.empty()) {
+            context.requestedSpriteReference = (context.assets.gameSprites / (spriteId + ".sprite.json")).generic_string();
+            context.requestEditSprite = true;
+        }
+    }
+
+    int pos[2]{o.x, o.y};
+    ImGui::SetNextItemWidth(120.0f);
+    if (ImGui::InputInt2("Tile pos", pos)) {
+        o.x = std::clamp(pos[0], 0, width_ - 1);
+        o.y = std::clamp(pos[1], 0, height_ - 1);
+        context.markDirty();
+    }
+    int sz[2]{o.width, o.height};
+    ImGui::SetNextItemWidth(120.0f);
+    if (ImGui::InputInt2("Size (tiles)", sz)) {
+        o.width = std::clamp(sz[0], 1, width_ - o.x);
+        o.height = std::clamp(sz[1], 1, height_ - o.y);
+        context.markDirty();
+    }
+
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputInt("Damage", &o.damage)) {
+        o.damage = std::clamp(o.damage, 0, 999);
+        context.markDirty();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110.0f);
+    if (ImGui::InputFloat("Damage rate s", &o.damageIntervalSeconds, 0.05f, 0.25f, "%.2f")) {
+        o.damageIntervalSeconds = std::clamp(o.damageIntervalSeconds, 0.1f, 60.0f);
+        context.markDirty();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(0 damage = harmless)");
+
+    if (o.type == game::ObstacleType::TimedSpike) {
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputFloat("Active s", &o.activeSeconds, 0.1f, 0.5f, "%.2f")) {
+            o.activeSeconds = std::clamp(o.activeSeconds, 0.05f, 60.0f);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputFloat("Safe s", &o.inactiveSeconds, 0.1f, 0.5f, "%.2f")) {
+            o.inactiveSeconds = std::clamp(o.inactiveSeconds, 0.0f, 60.0f);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputFloat("Phase s", &o.phaseSeconds, 0.1f, 0.5f, "%.2f")) {
+            o.phaseSeconds = std::clamp(o.phaseSeconds, 0.0f, 60.0f);
+            context.markDirty();
+        }
+    } else {
+        ImGui::TextDisabled("Timing applies to Timed Spikes only.");
+    }
+
+    if (ImGui::Button("Delete obstacle")) {
+        recordUndo();
+        obstacles_.erase(obstacles_.begin() + selectedObstacle_);
+        selectedObstacle_ = -1;
+        obstacleBufFor_ = -1;
+        context.markDirty();
+        status_ = "Deleted obstacle.";
+    }
+    ImGui::EndGroup();
 }
 
 void MapEditorPanel::drawWallOutlines(ImDrawList* drawList, ImVec2 origin) const
@@ -864,6 +1020,9 @@ void MapEditorPanel::updateTestPlayer()
     const float centerY = testPlayerY_ + kPlayerSize * 0.5f;
     const float now = static_cast<float>(ImGui::GetTime());
     for (const game::MapObstacle& obstacle : obstacles_) {
+        if (obstacle.damage <= 0) {
+            continue;
+        }
         const float minX = static_cast<float>(obstacle.x * kWorldTileSize);
         const float minY = static_cast<float>(obstacle.y * kWorldTileSize);
         const float maxX = static_cast<float>((obstacle.x + obstacle.width) * kWorldTileSize);
@@ -962,6 +1121,8 @@ void MapEditorPanel::loadMap(EditorContext& context)
     spawnY_ = map.spawnY;
     layers_ = std::move(map.layers);
     obstacles_ = std::move(map.obstacles);
+    selectedObstacle_ = -1;
+    obstacleBufFor_ = -1;
 
     const std::size_t idLen = std::min(map.id.size(), mapId_.size() - 1);
     std::memset(mapId_.data(), 0, mapId_.size());
@@ -1028,6 +1189,8 @@ void MapEditorPanel::undoMap()
     }
     layers_ = std::move(undoStack_.back().layers);
     obstacles_ = std::move(undoStack_.back().obstacles);
+    selectedObstacle_ = -1;
+    obstacleBufFor_ = -1;
     undoStack_.pop_back();
     status_ = "Undone. (" + std::to_string(undoStack_.size()) + " steps left)";
 }

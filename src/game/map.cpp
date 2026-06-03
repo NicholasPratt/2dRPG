@@ -141,7 +141,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 6\n";
+    output << "ADMAP 8\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -156,9 +156,11 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
     }
     output << "obstacles " << map.obstacles.size() << "\n";
     for (const MapObstacle& obstacle : map.obstacles) {
-        output << "obstacle " << obstacleTypeToInt(obstacle.type) << ' ' << encodedToken(obstacle.spriteId) << ' '
+        output << "obstacle " << encodedToken(obstacle.id) << ' ' << obstacleTypeToInt(obstacle.type) << ' '
+               << encodedToken(obstacle.spriteId) << ' '
                << obstacle.x << ' ' << obstacle.y << ' ' << obstacle.width << ' ' << obstacle.height << ' '
-               << obstacle.activeSeconds << ' ' << obstacle.inactiveSeconds << ' ' << obstacle.phaseSeconds << "\n";
+               << obstacle.activeSeconds << ' ' << obstacle.inactiveSeconds << ' ' << obstacle.phaseSeconds << ' '
+               << obstacle.damage << ' ' << obstacle.damageIntervalSeconds << "\n";
     }
     output << "items " << map.items.size() << "\n";
     for (const MapItemPlacement& item : map.items) {
@@ -207,7 +209,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 6) {
+    if (magic != "ADMAP" || version < 1 || version > 8) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -316,13 +318,24 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                     return false;
                 }
                 int typeValue = 0;
+                std::string idToken;
                 std::string spriteId;
                 MapObstacle obstacle;
+                if (version >= 7) {
+                    input >> idToken;
+                }
                 input >> typeValue >> spriteId >> obstacle.x >> obstacle.y >> obstacle.width >> obstacle.height
                       >> obstacle.activeSeconds >> obstacle.inactiveSeconds >> obstacle.phaseSeconds;
+                if (version >= 8) {
+                    input >> obstacle.damage >> obstacle.damageIntervalSeconds;
+                }
                 if (!input || !obstacleTypeFromInt(typeValue, obstacle.type)) {
                     setError(errorMessage, "Invalid obstacle data.");
                     return false;
+                }
+                obstacle.id = decodedToken(idToken);
+                if (obstacle.id.empty()) {
+                    obstacle.id = "obstacle_" + std::to_string(i + 1);
                 }
                 obstacle.spriteId = decodedToken(spriteId);
                 loaded.obstacles.push_back(obstacle);

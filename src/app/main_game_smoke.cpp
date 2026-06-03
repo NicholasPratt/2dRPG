@@ -36,8 +36,22 @@ int main(int argc, char** argv)
     smokeDoor.targetTileY = 7;
     smokeDoor.spriteId = "door_sprite";
     smokeDoor.openingAnimation = "open";
+    adventure::game::MapObstacle smokeObstacle;
+    smokeObstacle.id = "smoke_spike";
+    smokeObstacle.type = adventure::game::ObstacleType::TimedSpike;
+    smokeObstacle.spriteId = "timed_spikes";
+    smokeObstacle.x = 2;
+    smokeObstacle.y = 2;
+    smokeObstacle.width = 3;
+    smokeObstacle.height = 1;
+    smokeObstacle.activeSeconds = 1.5f;
+    smokeObstacle.inactiveSeconds = 0.5f;
+    smokeObstacle.phaseSeconds = 0.25f;
+    smokeObstacle.damage = 2;
+    smokeObstacle.damageIntervalSeconds = 0.5f;
     adventure::game::TileMap doorMap = map;
     doorMap.doors = {smokeDoor};
+    doorMap.obstacles = {smokeObstacle};
     const std::filesystem::path mapSmokePath = "build/smoke_map.admap";
     if (!adventure::game::saveTileMap(mapSmokePath, doorMap, &error)) {
         std::cerr << "Failed to save map smoke file: " << error << "\n";
@@ -62,7 +76,18 @@ int main(int argc, char** argv)
         std::cerr << "Map door round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped map doors (ADMAP v6)\n";
+    if (loadedDoorMap.obstacles.size() != 1 ||
+        loadedDoorMap.obstacles.front().id != "smoke_spike" ||
+        loadedDoorMap.obstacles.front().type != adventure::game::ObstacleType::TimedSpike ||
+        loadedDoorMap.obstacles.front().spriteId != "timed_spikes" ||
+        loadedDoorMap.obstacles.front().x != 2 ||
+        loadedDoorMap.obstacles.front().width != 3 ||
+        loadedDoorMap.obstacles.front().damage != 2 ||
+        loadedDoorMap.obstacles.front().damageIntervalSeconds != 0.5f) {
+        std::cerr << "Map obstacle round-trip values did not match.\n";
+        return 1;
+    }
+    std::cout << "Round-tripped map doors and obstacles (ADMAP v8)\n";
 
     const std::filesystem::path chapterPath = argc > 2 ? std::filesystem::path(argv[2]) : std::filesystem::path("assets/game/chapters/chapter_1.adchapter");
     adventure::game::Chapter chapter;

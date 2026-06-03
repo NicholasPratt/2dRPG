@@ -31,7 +31,7 @@ constexpr float kPlayerSpeedPxPerSecond = 96.0f;
 constexpr float kPlayerCollisionSizePx = 14.0f;
 constexpr float kPlayerFallbackDrawSizePx = 32.0f;
 constexpr float kScreenTransitionExitRatio = 0.30f;
-constexpr float kHazardRespawnCooldownSeconds = 0.75f;
+constexpr float kMinHazardDamageInterval = 0.1f;
 constexpr float kPlayerDamageInvulnerableSeconds = 0.65f;
 constexpr float kMeleeActiveSeconds = 0.15f;
 constexpr float kMeleeAttackSeconds = 0.28f;
@@ -732,6 +732,7 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
 
     activeScreen_ = screen;
     activeMap_ = std::move(map);
+    hazardCooldowns_.clear();
     destroyTexture(floorTexture_);
     destroyTexture(wallTexture_);
 
@@ -1267,7 +1268,6 @@ bool Engine::inputDown(InputAction action) const
 void Engine::update(float dt)
 {
     runtimeSeconds_ += dt;
-    hazardCooldownSeconds_ = std::max(0.0f, hazardCooldownSeconds_ - dt);
     playerInvulnerableSeconds_ = std::max(0.0f, playerInvulnerableSeconds_ - dt);
     noticeSeconds_ = std::max(0.0f, noticeSeconds_ - dt);
 
@@ -3241,18 +3241,23 @@ void Engine::updatePaths(float dt)
     }
 }
 
-void Engine::updateHazards(float)
+void Engine::updateHazards(float dt)
 {
-    if (hazardCooldownSeconds_ > 0.0f) {
-        return;
+    // Tick down each obstacle's independent damage-rate timer.
+    for (auto& [id, cooldown] : hazardCooldowns_) {
+        cooldown = std::max(0.0f, cooldown - dt);
     }
+
     for (const MapObstacle& obstacle : activeMap_.obstacles) {
-        if (!obstacleIsActive(obstacle) || !playerOverlapsObstacle(obstacle)) {
+        if (obstacle.damage <= 0 || !obstacleIsActive(obstacle) || !playerOverlapsObstacle(obstacle)) {
             continue;
         }
-        damagePlayer(1);
-        hazardCooldownSeconds_ = kHazardRespawnCooldownSeconds;
-        break;
+        float& cooldown = hazardCooldowns_[obstacle.id];
+        if (cooldown > 0.0f) {
+            continue;
+        }
+        damagePlayer(obstacle.damage);
+        cooldown = std::max(kMinHazardDamageInterval, obstacle.damageIntervalSeconds);
     }
 }
 

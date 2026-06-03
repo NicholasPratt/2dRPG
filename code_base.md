@@ -75,7 +75,7 @@ The current asset architecture separates reusable game-library assets from chapt
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
       dialogue_graph.hpp/.cpp       # DialogueGraph type and .addialogue load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
-      map.hpp/.cpp                  # TileMap type and .admap load/save (v6 adds door placements)
+      map.hpp/.cpp                  # TileMap type and .admap load/save (v8 adds per-obstacle id, damage, damage rate)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
       project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v13)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
@@ -486,10 +486,10 @@ struct TileMap {
 };
 ```
 
-### `.admap` format (v6)
+### `.admap` format (v8)
 
 ```text
-ADMAP 6
+ADMAP 8
 id new_map
 tileset overworld
 size 48 32
@@ -503,8 +503,8 @@ layer 1
 layer 2
 0 0 0 ...
 obstacles 2
-obstacle 0 spikes 5 5 2 1 1.0 0.0 0.0
-obstacle 2 timed_spikes 8 5 2 1 1.0 1.0 0.5
+obstacle obstacle_1 0 spikes 5 5 2 1 1.0 0.0 0.0 1 0.75
+obstacle obstacle_2 2 timed_spikes 8 5 2 1 1.0 1.0 0.5 2 0.50
 items 1
 item item_1 1 ammo_stone 5 384.0 256.0 0 ammo_pickup
 doors 1
@@ -512,16 +512,17 @@ door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open
 end
 ```
 
-Obstacle fields: `type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`.
+Obstacle fields: `id type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds damage damageIntervalSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`. `id` is present only in v7+ (v1–v6 obstacles load with a generated `obstacle_<n>` id); `damage`/`damageIntervalSeconds` are present only in v8+ (older obstacles default to `1` damage every `0.75` s).
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
 Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`.
-Backward compat: v1–v5 files still load; missing sections default to empty.
+Backward compat: v1–v7 files still load; missing sections default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
 
 ### Map Editor
 
 - Layer selector: Floor / Mid / Ceiling radio buttons.
 - Copy/paste, tileset palette, obstacle edit mode, save/load.
 - Supports multiple obstacle types and multiple instances per screen.
+- **Per-obstacle editing:** every obstacle carries its own `id`. Obstacle edit mode shows a list of all obstacles (id + type) and an inspector for the selected one that edits its id, type, sprite id (with an Edit Sprite shortcut), tile position, size, **damage** (HP per tick; `0` = harmless), **damage rate** (seconds between damage ticks), and (for Timed Spikes) active/safe/phase timing. An **Add obstacle** button creates one at the spawn tile; clicking an obstacle on the canvas selects it; clicking an empty cell adds a new obstacle (auto-assigned `obstacle_<n>` id) of the chosen "New type" and selects it; right-click deletes the topmost obstacle under the cursor.
 - **Shared `.admap` slices:** a screen's `.admap` stores tile layers **and** obstacles, items, and doors, but each is authored in a different panel. Any panel that writes the whole `TileMap` first re-reads the file and preserves the slices it does not own — `MapEditorPanel::saveMap` keeps existing items/doors; `LayoutEditorPanel::saveDirtyMaps` re-reads obstacles/items/doors before writing its tile-layer cache; the item/door panels load-then-save. This prevents one editor from wiping another's data (previously obstacles were always saved as `obstacles 0`).
 
 ### Item Placement Editor
@@ -651,7 +652,7 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - Loads `.admap`, resolves playable character, loads per-screen enemy and NPC placements from `ChapterScreen`.
 - Collision against nonzero cells in `.admap` layer 1.
 - Screen-boundary crossings with 30% threshold trigger sliding transition to linked screen.
-- Obstacle hazards (spikes, pits, timed spikes) respawn the player at the map spawn.
+- Obstacle hazards (spikes, pits, timed spikes) deal each obstacle's configured `damage` to the player while overlapping, repeating no faster than that obstacle's `damageIntervalSeconds` (tracked per-obstacle in `hazardCooldowns_`, keyed by id, and cleared on screen load). Damage routes through `damagePlayer`, so the player respawns at the map spawn only when HP reaches 0. Obstacles with `damage <= 0` are harmless.
 - Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged, and north face button/Select/Start for inventory.
 - Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile from `WeaponDef` data.
 - Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.

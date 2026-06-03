@@ -1,0 +1,13 @@
+{
+  "id": "spikesfangs",
+  "source": "assets/raw/sprites/spikesfangs_sheet.png",
+  "canvasSize": [32, 32],
+  "gridSize": [32, 32],
+  "pivot": [16, 16],
+  "bodyGuide": [0, 0, 0, 0],
+  "frames": [
+    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [32, 0, 32, 32], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

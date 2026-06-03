@@ -57,6 +57,7 @@ struct MapDoorPlacement {
 };
 
 struct MapObstacle {
+    std::string id;
     ObstacleType type = ObstacleType::Spike;
     std::string spriteId;
     int x = 0;
@@ -66,6 +67,8 @@ struct MapObstacle {
     float activeSeconds = 1.0f;
     float inactiveSeconds = 1.0f;
     float phaseSeconds = 0.0f;
+    int damage = 1;                       // HP removed per damage tick
+    float damageIntervalSeconds = 0.75f;  // seconds between damage ticks while overlapping
 };
 
 struct TileMap {

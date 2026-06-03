@@ -35,12 +35,10 @@ private:
     float playerY_ = static_cast<float>(game::kTileSize);
     uint16_t selectedTileId_ = 1;
     bool obstacleMode_ = false;
-    int activeObstacleType_ = 0;
-    int obstacleW_ = 1;
-    int obstacleH_ = 1;
-    float obstacleActiveSeconds_ = 1.0f;
-    float obstacleInactiveSeconds_ = 1.0f;
-    float obstaclePhaseSeconds_ = 0.0f;
+    int activeObstacleType_ = 0;       // type used when adding a new obstacle
+    int selectedObstacle_ = -1;        // index into obstacles_ for the inspector
+    int obstacleBufFor_ = -1;          // which obstacle the edit buffers are synced to
+    std::array<char, 64> obstacleIdEdit_{};
     std::array<char, 64> obstacleSpriteId_{'s', 'p', 'i', 'k', 'e', 's', '\0'};
     std::array<char, 64> mapId_{'n', 'e', 'w', '_', 'm', 'a', 'p', '\0'};
     std::array<char, 64> tilesetId_{'\0'};
@@ -81,8 +79,11 @@ private:
     void drawTilesetPalette();
     void drawGrid(EditorContext& context);
     void drawObstacles(ImDrawList* drawList, ImVec2 origin) const;
+    void drawObstacleInspector(EditorContext& context);
     void placeObstacle(int x, int y);
     void eraseObstacleAt(int x, int y);
+    [[nodiscard]] int obstacleIndexAt(int x, int y) const;
+    [[nodiscard]] std::string makeUniqueObstacleId() const;
     void drawWallOutlines(ImDrawList* drawList, ImVec2 origin) const;
     void drawTestGame();
     void startTestGame();
