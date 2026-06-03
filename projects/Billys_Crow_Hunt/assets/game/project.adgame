@@ -15,7 +15,7 @@ weapon_defs 2
 weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0
 weapon_def slingshot 1 9 293 0.59 200 slingshot ss_rock ss_rock 1 1
 item_defs 2
-item_def coins "Coins" 4 coin 1 1 1 -
+item_def coins "Coins" 4 coin Money 1 1 -
 item_def ss_rock "Slingshot Rock" 1 rock ss_rock 1 1 -
 starting_weapon Pocketknife
 font "Roboto.ttf"

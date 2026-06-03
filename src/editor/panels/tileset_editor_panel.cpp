@@ -52,10 +52,10 @@ void TilesetEditorPanel::draw(EditorContext& context)
 void TilesetEditorPanel::drawToolbar(EditorContext& context)
 {
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::InputText("Tileset id", tilesetId_.data(), tilesetId_.size());
+    ui::inputTextString("Tileset id", tilesetId_.data(), tilesetId_.size());
 
     ImGui::SetNextItemWidth(380.0f);
-    ImGui::InputText("Source PNG", sourcePath_.data(), sourcePath_.size());
+    ui::inputTextString("Source PNG", sourcePath_.data(), sourcePath_.size());
     ImGui::SameLine();
     ImGui::TextDisabled("(relative to project root)");
 
@@ -142,7 +142,7 @@ void TilesetEditorPanel::drawTileList()
         const std::size_t copyLen = std::min(tile.name.size(), sizeof(nameBuf) - 1);
         std::memcpy(nameBuf, tile.name.data(), copyLen);
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) {
+        if (ui::inputTextString("##name", nameBuf, sizeof(nameBuf))) {
             tile.name = nameBuf;
         }
         ImGui::SameLine();

@@ -666,11 +666,15 @@ void SpriteEditorPanel::drawTopBar()
         openNewSpritePopup_ = true;
     }
 
-    const float controlsStart = std::max(ImGui::GetCursorPosX() + 16.0f, ImGui::GetWindowWidth() - 360.0f);
+    const float controlsStart = std::max(ImGui::GetCursorPosX() + 16.0f, ImGui::GetWindowWidth() - 480.0f);
     ImGui::SameLine(controlsStart);
     ui::checkbox("Grid", "##SpriteGrid", &showGrid_, 42.0f);
     ImGui::SameLine();
     ui::checkbox("Onion", "##SpriteOnion", &onionSkin_, 50.0f);
+    ImGui::SameLine();
+    ui::checkbox("Pivot", "##SpritePivot", &showPivot_, 48.0f);
+    ImGui::SameLine();
+    ui::checkbox("Body", "##SpriteBodyGuide", &showBodyGuide_, 46.0f);
     ImGui::SameLine();
     ui::sliderInt("Zoom", "##SpriteZoom", &zoom_, 2, 32, 90.0f, 48.0f);
     ImGui::EndChild();
@@ -917,9 +921,25 @@ void SpriteEditorPanel::drawCenterWorkspace()
 
     ImGui::SameLine();
     int pivot[2]{document_.pivot[0], document_.pivot[1]};
+    ImGui::SetNextItemWidth(120.0f);
     if (ImGui::InputInt2("Pivot", pivot)) {
         document_.pivot[0] = std::clamp(pivot[0], 0, document_.canvasSize[0] - 1);
         document_.pivot[1] = std::clamp(pivot[1], 0, document_.canvasSize[1] - 1);
+    }
+
+    ImGui::SameLine();
+    int guide[4]{document_.bodyGuide[0], document_.bodyGuide[1], document_.bodyGuide[2], document_.bodyGuide[3]};
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::InputInt4("Body guide", guide)) {
+        document_.bodyGuide[0] = std::clamp(guide[0], 0, document_.canvasSize[0]);
+        document_.bodyGuide[1] = std::clamp(guide[1], 0, document_.canvasSize[1]);
+        document_.bodyGuide[2] = std::clamp(guide[2], 0, document_.canvasSize[0] - document_.bodyGuide[0]);
+        document_.bodyGuide[3] = std::clamp(guide[3], 0, document_.canvasSize[1] - document_.bodyGuide[1]);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("x, y, width, height (canvas px). Overlay guide for aligning the body across frames; never rendered in game.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("= canvas")) {
+        document_.bodyGuide = {0, 0, document_.canvasSize[0], document_.canvasSize[1]};
     }
 
     ImGui::Separator();
@@ -973,6 +993,34 @@ void SpriteEditorPanel::drawCanvas(const ImVec2& availableSize)
     }
 
     drawSelectionOverlay(drawList, canvasOrigin, pixelSize);
+
+    // Body guide: a user-defined rectangle to keep the body aligned across
+    // frames. Authoring overlay only, never rendered in the game.
+    if (showBodyGuide_ && document_.bodyGuide[2] > 0 && document_.bodyGuide[3] > 0) {
+        const ImVec2 guideMin{
+            canvasOrigin.x + static_cast<float>(document_.bodyGuide[0]) * pixelSize,
+            canvasOrigin.y + static_cast<float>(document_.bodyGuide[1]) * pixelSize,
+        };
+        const ImVec2 guideMax{
+            guideMin.x + static_cast<float>(document_.bodyGuide[2]) * pixelSize,
+            guideMin.y + static_cast<float>(document_.bodyGuide[3]) * pixelSize,
+        };
+        drawList->AddRectFilled(guideMin, guideMax, IM_COL32(80, 180, 255, 28));
+        drawList->AddRect(guideMin, guideMax, IM_COL32(96, 196, 255, 230), 0.0f, 0, 1.5f);
+    }
+
+    // Pivot crosshair: marks the sprite anchor. Overlay only, not rendered in game.
+    if (showPivot_) {
+        const ImVec2 pivotPos{
+            canvasOrigin.x + (static_cast<float>(document_.pivot[0]) + 0.5f) * pixelSize,
+            canvasOrigin.y + (static_cast<float>(document_.pivot[1]) + 0.5f) * pixelSize,
+        };
+        const ImU32 pivotColor = IM_COL32(255, 92, 92, 235);
+        const float arm = std::max(6.0f, pixelSize * 1.5f);
+        drawList->AddLine({pivotPos.x - arm, pivotPos.y}, {pivotPos.x + arm, pivotPos.y}, pivotColor, 1.5f);
+        drawList->AddLine({pivotPos.x, pivotPos.y - arm}, {pivotPos.x, pivotPos.y + arm}, pivotColor, 1.5f);
+        drawList->AddCircle(pivotPos, std::max(3.0f, pixelSize * 0.5f), pivotColor, 0, 1.5f);
+    }
 
     int hoverX = 0;
     int hoverY = 0;
@@ -1215,6 +1263,24 @@ void SpriteEditorPanel::drawFrames()
         selectedFrame_ = std::clamp(selectedFrame_, 0, static_cast<int>(document_.frames.size()) - 1);
     }
 
+    const int frameCount = static_cast<int>(document_.frames.size());
+    ImGui::SameLine();
+    if (ImGui::Button("Move up") && selectedFrame_ > 0) {
+        recordUndoState();
+        std::swap(document_.frames[selectedFrame_], document_.frames[selectedFrame_ - 1]);
+        std::swap(document_.cels[selectedFrame_], document_.cels[selectedFrame_ - 1]);
+        --selectedFrame_;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected frame earlier in the animation");
+    ImGui::SameLine();
+    if (ImGui::Button("Move down") && selectedFrame_ >= 0 && selectedFrame_ + 1 < frameCount) {
+        recordUndoState();
+        std::swap(document_.frames[selectedFrame_], document_.frames[selectedFrame_ + 1]);
+        std::swap(document_.cels[selectedFrame_], document_.cels[selectedFrame_ + 1]);
+        ++selectedFrame_;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected frame later in the animation");
+
     for (int i = 0; i < static_cast<int>(document_.frames.size()); ++i) {
         ImGui::PushID(i);
         const std::string frameLabel = "Frame " + std::to_string(i + 1) + "  [" + document_.frames[i].type + "]";
@@ -1250,7 +1316,7 @@ void SpriteEditorPanel::drawFrames()
             }
             char typeBuffer[64]{};
             std::copy_n(document_.frames[i].type.c_str(), std::min(document_.frames[i].type.size(), sizeof(typeBuffer) - 1), typeBuffer);
-            if (ImGui::InputText("Custom type", typeBuffer, sizeof(typeBuffer))) {
+            if (ui::inputTextString("Custom type", typeBuffer, sizeof(typeBuffer))) {
                 document_.frames[i].type = typeBuffer;
                 documentDirty_ = true;
             }
@@ -1326,14 +1392,14 @@ void SpriteEditorPanel::drawExport(EditorContext& context)
 {
     char idBuffer[128]{};
     std::copy_n(document_.id.c_str(), std::min(document_.id.size(), sizeof(idBuffer) - 1), idBuffer);
-    if (ImGui::InputText("Sprite id", idBuffer, sizeof(idBuffer))) {
+    if (ui::inputTextString("Sprite id", idBuffer, sizeof(idBuffer))) {
         document_.id = idBuffer;
     }
 
     char sourceBuffer[256]{};
     const std::string source = document_.sourcePng.generic_string();
     std::copy_n(source.c_str(), std::min(source.size(), sizeof(sourceBuffer) - 1), sourceBuffer);
-    if (ImGui::InputText("Source PNG", sourceBuffer, sizeof(sourceBuffer))) {
+    if (ui::inputTextString("Source PNG", sourceBuffer, sizeof(sourceBuffer))) {
         document_.sourcePng = sourceBuffer;
     }
 
@@ -1420,6 +1486,7 @@ bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& me
     document_.canvasSize = metadata.canvasSize;
     document_.gridSize = metadata.gridSize;
     document_.pivot = metadata.pivot;
+    document_.bodyGuide = metadata.bodyGuide;
     document_.frames.clear();
     document_.frames.reserve(metadata.frames.size());
     for (const game::SpriteFrameDef& frame : metadata.frames) {
@@ -1564,6 +1631,7 @@ void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
     metadata.canvasSize = document_.canvasSize;
     metadata.gridSize = document_.gridSize;
     metadata.pivot = document_.pivot;
+    metadata.bodyGuide = document_.bodyGuide;
     metadata.tags = document_.tags;
     metadata.frames.clear();
     metadata.frames.reserve(document_.frames.size());
@@ -1980,6 +2048,15 @@ void SpriteEditorPanel::resizeSprite(int newWidth, int newHeight)
     document_.gridSize[1] = std::min(document_.gridSize[1], newHeight);
     document_.pivot[0] = std::clamp(static_cast<int>(std::lround(static_cast<float>(document_.pivot[0]) * newWidth / std::max(oldWidth, 1))), 0, newWidth - 1);
     document_.pivot[1] = std::clamp(static_cast<int>(std::lround(static_cast<float>(document_.pivot[1]) * newHeight / std::max(oldHeight, 1))), 0, newHeight - 1);
+
+    if (document_.bodyGuide[2] > 0 && document_.bodyGuide[3] > 0) {
+        const auto scaleX = [&](int v) { return static_cast<int>(std::lround(static_cast<float>(v) * newWidth / std::max(oldWidth, 1))); };
+        const auto scaleY = [&](int v) { return static_cast<int>(std::lround(static_cast<float>(v) * newHeight / std::max(oldHeight, 1))); };
+        document_.bodyGuide[0] = std::clamp(scaleX(document_.bodyGuide[0]), 0, newWidth);
+        document_.bodyGuide[1] = std::clamp(scaleY(document_.bodyGuide[1]), 0, newHeight);
+        document_.bodyGuide[2] = std::clamp(scaleX(document_.bodyGuide[2]), 0, newWidth - document_.bodyGuide[0]);
+        document_.bodyGuide[3] = std::clamp(scaleY(document_.bodyGuide[3]), 0, newHeight - document_.bodyGuide[1]);
+    }
 
     document_.cels.assign(document_.frames.size(), std::vector<SpriteCel>(document_.layers.size()));
     for (int frameIndex = 0; frameIndex < static_cast<int>(document_.frames.size()); ++frameIndex) {

@@ -12,6 +12,10 @@ editor steps.
   a recipe→location map plus key concepts, so an assistant can answer common questions without
   loading the whole HTML, and knows to open `index.html` for detail.
 - **`README.md`** — this file.
+- **`../high_level_functionality_audit.md`** — engineering checklist for finding gaps between
+  editor authoring, save/load, runtime behavior, UI feedback, persistence, and docs.
+- **`../manual_high_level_test_checklist.md`** — repeatable manual test checklist for money,
+  shops, inventory, doors, hazards, animated tiles, and persistence.
 
 ## Keeping it current
 The manual describes editor behavior. The authoritative sources are

@@ -61,6 +61,7 @@ The current asset architecture separates reusable game-library assets from chapt
       panels/
         character_editor_panel.hpp/.cpp
         dialogue_graph_editor_panel.hpp/.cpp  # scoped NPC dialogue graph editor
+        door_placement_panel.hpp/.cpp    # per-screen door trigger placement/editor (ScreenEditMode::Doors)
         enemy_path_editor_panel.hpp/.cpp  # enemy type defs + per-screen enemy placements + spline editor
         item_placement_panel.hpp/.cpp     # place pickups/project items on screens (ScreenEditMode::Items)
         layout_editor_panel.hpp/.cpp
@@ -74,9 +75,9 @@ The current asset architecture separates reusable game-library assets from chapt
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
       dialogue_graph.hpp/.cpp       # DialogueGraph type and .addialogue load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
-      map.hpp/.cpp                  # TileMap type and .admap load/save (v5 adds item placements)
+      map.hpp/.cpp                  # TileMap type and .admap load/save (v6 adds door placements)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
-      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v10)
+      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v13)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       state.hpp/.cpp                # GameState runtime store and .adstate save/load
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
@@ -90,7 +91,7 @@ imgui                    Static Dear ImGui library.
 adventure_game           Runtime-facing game/data code (chapter, dialogue graph, project, map, path, sprite metadata, state, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate (v2, incl. defeated enemies), and project state/effect/enemy-type definitions (ADGAME v12) through runtime code.
+adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate (v2, incl. defeated enemies), and project state/effect/enemy-type/weapon definitions (ADGAME v13) through runtime code.
 adventure_game_window    GLFW/OpenGL runtime game window (built when OpenGL + GLFW found).
 adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
@@ -144,7 +145,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
 | Assets | *(inline)* | Asset directory listing |
 
-`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, `DialogueGraphEditorPanel`, and `ItemPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, `Edit NPCs`, `Edit NPC Types`, and `Edit Items` open scoped screen editors. `Edit Instance Dialogue` opens `DialogueGraphEditorPanel` as a sub-screen of NPC placement so the graph is tied to the selected NPC instance.
+`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, `DialogueGraphEditorPanel`, `ItemPlacementPanel`, and `DoorPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, `Edit NPCs`, `Edit NPC Types`, `Edit Items`, and `Edit Doors` open scoped screen editors. `Edit Instance Dialogue` opens `DialogueGraphEditorPanel` as a sub-screen of NPC placement so the graph is tied to the selected NPC instance.
 
 ---
 
@@ -152,7 +153,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 
 Implemented in `src/game/project.hpp/.cpp`.
 
-`assets/game/project.adgame` (current version: **10**) is the project-level game-library manifest. It stores:
+`assets/game/project.adgame` (current version: **13**) is the project-level game-library manifest. It stores:
 
 ```cpp
 enum class EnemyAttackType { Contact = 0, Melee = 1, Ranged = 2 };
@@ -481,13 +482,14 @@ struct TileMap {
     std::array<std::vector<uint16_t>, 3> layers;
     std::vector<MapObstacle> obstacles;
     std::vector<MapItemPlacement> items;
+    std::vector<MapDoorPlacement> doors;
 };
 ```
 
-### `.admap` format (v5)
+### `.admap` format (v6)
 
 ```text
-ADMAP 5
+ADMAP 6
 id new_map
 tileset overworld
 size 48 32
@@ -505,17 +507,22 @@ obstacle 0 spikes 5 5 2 1 1.0 0.0 0.0
 obstacle 2 timed_spikes 8 5 2 1 1.0 1.0 0.5
 items 1
 item item_1 1 ammo_stone 5 384.0 256.0 0 ammo_pickup
+doors 1
+door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open
 end
 ```
 
 Obstacle fields: `type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`.
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
-Backward compat: v1–v4 files still load; missing sections default to empty.
+Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`.
+Backward compat: v1–v5 files still load; missing sections default to empty.
 
 ### Map Editor
 
 - Layer selector: Floor / Mid / Ceiling radio buttons.
 - Copy/paste, tileset palette, obstacle edit mode, save/load.
+- Supports multiple obstacle types and multiple instances per screen.
+- **Shared `.admap` slices:** a screen's `.admap` stores tile layers **and** obstacles, items, and doors, but each is authored in a different panel. Any panel that writes the whole `TileMap` first re-reads the file and preserves the slices it does not own — `MapEditorPanel::saveMap` keeps existing items/doors; `LayoutEditorPanel::saveDirtyMaps` re-reads obstacles/items/doors before writing its tile-layer cache; the item/door panels load-then-save. This prevents one editor from wiping another's data (previously obstacles were always saved as `obstacles 0`).
 
 ### Item Placement Editor
 
@@ -526,6 +533,18 @@ Implemented in `src/editor/panels/item_placement_panel.*`.
 - Project item pickups reference project-wide `ItemDef` assets by `targetId`, copying the item sprite ID and default value into the placement.
 - Left column: item list and selected-item properties. Right: top-aligned canvas.
 - Canvas shows floor/wall graphics, wall guide, tile grid, and diamond item markers.
+
+### Door Placement Editor
+
+Implemented in `src/editor/panels/door_placement_panel.*`.
+
+- Opened from the selected screen inspector via `Edit Doors`.
+- Places per-screen door trigger rectangles into the selected screen's `.admap` doors section.
+- Door position and size are stored in tile units (`x`, `y`, `widthTiles`, `heightTiles`).
+- Door lock data supports free-use, locked, and specific-key-required doors, plus optional key consumption.
+- Door destination data stores target screen ID and target tile X/Y.
+- Door sprite ID is rendered at runtime when a matching sprite exists. Opening animation IDs are stored for future animation playback.
+- The inspector warns about duplicate/empty door IDs, missing required-item IDs, required items not defined in the Items tab, missing/invalid target screens, unloadable target maps, out-of-bounds target tiles, and target tiles blocked by the target map wall layer.
 
 ---
 
@@ -637,6 +656,7 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile from `WeaponDef` data.
 - Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.
 - Shop NPCs open a two-panel buy/sell overlay. The shop panel spends `Money` and transfers stock into the player inventory; the player panel sells one selected inventory item and adds `Money`. Limited shop rows decrement on buy and increment when sold back. NPC placements can override the reusable NPC type stock, and the runtime scrolls both shop and player inventory lists.
+- Door triggers from `.admap` v6 render as sprites or colored rectangles, show the interaction prompt when the player stands on or near their tile rectangle, and activate on E/controller south. Free-use doors transition to the target screen/tile. Locked doors, missing-key doors, missing destinations, and blocked target tiles show short feedback notices. Required-item doors check the inventory and optionally consume one matching item before saving state.
 - Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay and pauses player/world updates while it is open. Inventory rows use each item definition's sprite as a pictogram and render stack/value counts as a pictogram/number pair. Up/Down, W/S, D-pad, or left stick changes selection; E, Space, Enter, or controller south face button uses usable item types.
 - NPC dialogue: E key or controller south face button triggers interaction. Legacy dialogue advances line-by-line; graph dialogue follows nodes, conditions, choices, and actions. Up/Down, W/S, D-pad, or left stick selects graph responses. Speech bubble / dialogue box renders above NPC and dialogue text is bounded, wrapped, and scrollable.
 - **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults. **By default that is the whole story — every launch is a new game.** Saved progress in `assets/game/save.adstate` is merged over the defaults only when the runtime is started with `--continue` (gated by `continueSave_`, default false). State is still written on every screen transition and on quit (so a future continue works), and within a session defeated enemies persist in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"`, filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
@@ -658,6 +678,9 @@ Implemented in `src/editor/panels/sprite_editor_panel.*`.
 - Pixel editing with frames, layers, palette, preview, and animation playback.
 - Tools: pen, mirror, bucket, eraser, stroke, line, rect, circle, move, select, picker, shade.
 - **Frame metadata section** (right inspector): action type (combo: idle/walk/run/attack/etc.), facing direction (combo: any/E/W/N/S/NE/NW/SE/SW), and duration in ms. The direction system is shared by all sprites: player, enemy, NPC alike.
+- **Frame ordering:** `Add frame`, `Duplicate frame`, `Delete frame`, and `Move up`/`Move down` (swaps the selected frame with its neighbour in the parallel `frames`/`cels` arrays and follows the selection).
+- **Resize:** all frames share one canvas size; `Resize` rescales every frame and layer with nearest-neighbour and proportionally rescales `pivot` and `bodyGuide`.
+- **Authoring overlays (not rendered in game):** `Pivot` toggle (`showPivot_`) draws a crosshair at `document_.pivot`; `Body` toggle (`showBodyGuide_`) draws the user-defined `bodyGuide` rectangle (`x,y,w,h` canvas px; `= canvas` button fills the frame). Both persist in `.sprite.json`; the runtime never reads `bodyGuide` (`pivot` is also currently unused by rendering — frames draw centred on the entity position).
 - Transform actions: flip H/V, rotate CW. Clipboard: copy/paste selections.
 - Snapshot-based undo. OS-aware shortcuts (`Cmd` on macOS, `Ctrl` elsewhere).
 
@@ -678,6 +701,7 @@ struct SpriteMetadata {
     std::string id;
     std::filesystem::path source;
     std::array<int, 2> canvasSize, gridSize, pivot;
+    std::array<int, 4> bodyGuide;  // [x,y,w,h] editor authoring guide; w/h<=0 = unset; ignored by runtime
     std::vector<SpriteFrameDef> frames;
     std::vector<std::string> tags;
 };
@@ -909,12 +933,15 @@ Runtime behavior:
 | §4.5.1 Game state registry | ✅ Generic `GameState`, `.adstate`, `.adgame` v4 state/effect defs, Quest State tab |
 | §4.5.2 NPC type definitions (project library) | ✅ `NpcTypeDef` in `project.adgame` v5+ |
 | §4.5.2 NPC placements in chapter screens | ✅ `NpcPlacement` in `ChapterScreen` |
+| §4.5.2 Shop inventory and buy/sell loop | ✅ Type-level shop inventory, per-placement stock overrides, quantity buying, money transfer, inventory updates |
 | §4.5.3 NPC patrol movement + wait-at-waypoint | ✅ `updateNpcs` with waypoint queue and wait timer |
 | §4.5.3 NPC direction-aware rendering + flip | ✅ `spriteFrameForNpc` with `bool& flipH`; `facingX/Y` from movement direction |
 | §4.5.3 NPC player awareness | ✅ Awareness radius check; NPC idles when player is near |
 | §4.5.4 NPC interaction + sequential/graph dialogue | ✅ E key, prompt, speech bubble / dialogue box, multi-line advance, graph execution, choices, conditions, actions |
 | §4.5.5 Flow graph editor | ✅ Scoped NPC placement sub-screen with node canvas, arrows, inspector, validation, simulation, and node navigation |
 | §5 Save/load (JSON, text formats) | ✅ |
+| §5 Item/ammo/currency pickups | ✅ Project item pickups write inventory + `GameState`; ammo lives in inventory; currency updates configured money variable |
+| §5 Door placements | ✅ `.admap` v6 save/load, editor support, validation, runtime prompt/transition/key handling |
 | §6 Runtime game engine (rendering, screen-flip) | ✅ Basic GLFW/OpenGL runtime shell |
 | §6 Runtime collision | ✅ Tile collision against `.admap` mid layer |
 

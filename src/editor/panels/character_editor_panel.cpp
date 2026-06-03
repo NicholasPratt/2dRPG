@@ -650,7 +650,7 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
     ImGui::Separator();
 
     ImGui::SetNextItemWidth(std::min(420.0f, ImGui::GetContentRegionAvail().x));
-    if (ImGui::InputText("Name", character.name.data(), character.name.size())) {
+    if (ui::inputTextString("Name", character.name.data(), character.name.size())) {
         context.markDirty();
     }
     if (ui::checkbox("Playable character", "##PlayableCharacter", &character.playable, 128.0f)) {
@@ -677,7 +677,7 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
 
     ImGui::Spacing();
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::InputText("Sprite", character.spriteReference.data(), character.spriteReference.size())) {
+    if (ui::inputTextString("Sprite", character.spriteReference.data(), character.spriteReference.size())) {
         context.markDirty();
     }
     ImGui::Text("Sprite assets: %s", context.assets.gameSpritePath().string().c_str());
@@ -752,7 +752,7 @@ void CharacterEditorPanel::drawFrameAssignments(EditorContext& context, Characte
             ImGui::EndCombo();
         }
         ImGui::SetNextItemWidth(260.0f);
-        if (ImGui::InputText("Custom State", assignment.state.data(), assignment.state.size())) {
+        if (ui::inputTextString("Custom State", assignment.state.data(), assignment.state.size())) {
             context.markDirty();
         }
         ImGui::TextDisabled("%s", assignment.frameImage.data());

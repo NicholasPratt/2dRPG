@@ -159,6 +159,12 @@ in ms. Multiple frames sharing an action+direction loop as a clip. The runtime a
 west-facing frames it flips the east ones (same for NW↔NE, SW↔SE). This direction system is identical for the
 player, enemies, and NPCs. The runtime drives action state automatically (idle/walk, attack/hurt/dead), so to make
 an animation appear you just provide frames with the matching action-type label.</p>
+<p>All frames in a sprite share one canvas size. Use <strong>Resize</strong> to rescale every frame and layer
+together (nearest-neighbour). <strong>Move up</strong>/<strong>Move down</strong> reorder the selected frame within the
+animation. Two non-rendered authoring overlays help you keep poses aligned: the <strong>Pivot</strong> toggle marks the
+sprite anchor (a crosshair), and the <strong>Body</strong> toggle shows a user-defined <em>body guide</em> rectangle
+(x, y, width, height in canvas pixels; the <code>= canvas</code> button fills the whole frame). Both are saved per
+sprite in the <code>.sprite.json</code> and are never drawn in the running game — they are alignment guides only.</p>
 
 <h3 id="state">Game state registry (quests)</h3>
 <p>A single runtime registry holds named <strong>integers</strong>, <strong>booleans</strong>, and
@@ -337,23 +343,6 @@ questions.</p>
   makes it immediately usable.</p></div>
 </div>
 
-<div class="recipe" id="recipe-animated-tile">
-  <h4>R18. Make an animated scenery tile (e.g. water, fire, a torch)</h4>
-  <p>Animated tiles are ordinary palette tiles backed by a multi-frame sprite:</p>
-  <ul>
-    <li>In <strong>screen graphics</strong>, select a region and <code>Add Palette</code> to add it to the Tile Palette
-    (as you would any tile).</li>
-    <li>Click <strong>Edit Sprite</strong> on that palette row — the Sprite editor opens seeded with the tile’s image.
-    Add frames (each frame becomes part of the loop) and save.</li>
-    <li>Back in screen graphics, hit the palette’s <strong>Refresh</strong>; the tile now shows
-    “● anim (N)”. Select it and use the <strong>Stamp</strong> tool to place it on cells. An animated tile stamps as a
-    runtime placement drawn on top of the screen at that cell (active layer decides order: <em>Wall</em> = in front of
-    the player, <em>Floor</em> = behind). Right-click or <strong>Tile Erase</strong> removes a placement.</li>
-  </ul>
-  <p>A single-frame tile stamps static pixels as before; it only animates once its sprite has ≥2 frames. Placements are
-  saved into the chapter and animate in-game.</p>
-</div>
-
 <div class="recipe" id="recipe-playable">
   <h4>R12. Choose the playable character / edit its sprite</h4>
   <p>Characters tab → select a character → tick <em>Playable Character</em> (only one at a time). Click
@@ -416,6 +405,87 @@ questions.</p>
     <li><strong>Walled off.</strong> Make sure the player can actually reach within the interaction radius; an NPC
     boxed in by solid mid-layer tiles can’t be approached.</li>
   </ol>
+</div>
+
+<div class="recipe" id="recipe-animated-tile">
+  <h4>R18. Make an animated scenery tile (e.g. water, fire, a torch)</h4>
+  <p>Animated tiles are ordinary palette tiles backed by a multi-frame sprite:</p>
+  <ul>
+    <li>In <strong>screen graphics</strong>, select a region and <code>Add Palette</code> to add it to the Tile Palette
+    (as you would any tile).</li>
+    <li>Click <strong>Edit Sprite</strong> on that palette row — the Sprite editor opens seeded with the tile’s image.
+    Add frames (each frame becomes part of the loop) and save.</li>
+    <li>Back in screen graphics, hit the palette’s <strong>Refresh</strong>; the tile now shows
+    “● anim (N)”. Select it and use the <strong>Stamp</strong> tool to place it on cells. An animated tile stamps as a
+    runtime placement drawn on top of the screen at that cell (active layer decides order: <em>Wall</em> = in front of
+    the player, <em>Floor</em> = behind). Right-click or <strong>Tile Erase</strong> removes a placement.</li>
+  </ul>
+  <p>A single-frame tile stamps static pixels as before; it only animates once its sprite has ≥2 frames. Placements are
+  saved into the chapter and animate in-game.</p>
+</div>
+
+<div class="recipe" id="recipe-weapon-pickup-sprite">
+  <h4>R19. Fix a weapon pickup showing the wrong or no sprite</h4>
+  <p>Define the weapon first in the <strong>Weapons</strong> tab, including its weapon sprite. Then Screens → select
+  the screen → <code>Edit Items</code> → choose that weapon for the pickup. The item editor auto-fills the pickup’s
+  on-map sprite from the weapon sprite, which is separate from the weapon’s combat/projectile data.</p>
+  <div class="note"><strong>Sprite ids are case-sensitive.</strong> If the pickup still appears blank, check that the
+  sprite id matches the filename under <code>assets/game/sprites/&lt;id&gt;.sprite.json</code>.</div>
+</div>
+
+<div class="recipe" id="recipe-ammo-inventory">
+  <h4>R20. Make a slingshot or bow use ammo correctly</h4>
+  <p>Ammo is a project item in the inventory, not a separate ammo pool. In the <strong>Items</strong> tab, create an
+  item with category <code>Ammo</code>. In the <strong>Weapons</strong> tab, set the ranged weapon’s
+  <code>ammo type</code> to match that ammo item’s id or target id.</p>
+  <p>When the player buys or picks up that ammo item, it appears in the inventory’s <strong>AMMO</strong> section and
+  the ranged weapon consumes it directly when fired.</p>
+</div>
+
+<div class="recipe" id="recipe-project-manager">
+  <h4>R21. Open, create, or switch projects</h4>
+  <p>On startup, the editor reopens the last project and chapter remembered in
+  <code>projects/.editor_session</code>. To switch manually, use the <strong>Project</strong> menu →
+  <strong>Project Manager…</strong>. From there you can open an existing project, create a new isolated project folder,
+  or delete a project you no longer need.</p>
+  <div class="note"><strong>Projects are isolated.</strong> Each project owns its own
+  <code>assets/game</code> folder, project library, chapters, maps, sprites, and dialogue files.</div>
+</div>
+
+<div class="recipe" id="recipe-obstacles">
+  <h4>R22. Add obstacles / hazards to a screen</h4>
+  <p>Screens → select the screen → <code>Edit Screen Graphics</code> → switch to <strong>Map Logic</strong>. Use the
+  obstacle controls there to add and edit hazard rectangles on the same tile map as the screen art.</p>
+  <ul>
+    <li><strong>Choose the obstacle type:</strong> <code>Spike</code>, <code>Pit</code>, or <code>Timed Spike</code>.
+    Active hazards respawn the player at the map spawn point.</li>
+    <li><strong>Set tile position and size:</strong> use the obstacle’s tile X/Y plus width/height fields to cover the
+    intended area. These are map-tile units, not pixels.</li>
+    <li><strong>Assign a sprite if needed:</strong> set the hazard sprite id to a sprite from
+    <code>assets/game/sprites/&lt;id&gt;.sprite.json</code>. The id is case-sensitive.</li>
+    <li><strong>For timed spikes:</strong> set the active/inactive timing and offset so the hazard cycles when the
+    game is running.</li>
+  </ul>
+  <div class="note"><strong>Map Logic is part of screen graphics editing.</strong> Obstacles do not currently have a
+  top-level editor tab; they are authored from the selected screen’s graphics/map-logic workflow. Obstacles, item
+  placements, and doors all share the screen’s <code>.admap</code> file; each editor preserves the others’ data when it
+  saves, so adding obstacles will not wipe a screen’s items or doors (or vice-versa).</div>
+</div>
+
+<div class="recipe" id="recipe-doors">
+  <h4>R23. Add a door trigger to a screen</h4>
+  <p>Screens → select the screen → <code>Edit Doors</code>. Add a door on the canvas, then set its tile X/Y and tile
+  W/H fields. Door size is stored in tile units, so a two-tile-tall doorway uses height <code>2</code>.</p>
+  <ul>
+    <li><strong>Lock mode:</strong> choose free use, locked, or requires item.</li>
+    <li><strong>Required item:</strong> for key doors, enter the item id and whether the key is consumed.</li>
+    <li><strong>Destination:</strong> enter the target screen id and target tile X/Y where the player should arrive.</li>
+    <li><strong>Optional visuals:</strong> set a door sprite id. Opening animation ids are stored for future animation
+    playback.</li>
+  </ul>
+  <div class="note"><strong>Runtime behavior:</strong> stand on or next to the door and press
+  <span class="kbd">E</span>. Locked doors show feedback, required-item doors check the player inventory, consumed keys
+  are removed, and valid doors transition to the target screen/tile.</div>
 </div>
 
 <!-- ============================================================ -->

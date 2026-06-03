@@ -78,6 +78,17 @@ std::filesystem::path assetPath(const std::filesystem::path& root, const std::fi
     return root / relative;
 }
 
+std::string currencyStateId(const ItemDef& def)
+{
+    if (def.targetId.empty()) {
+        return "Money";
+    }
+    const bool numericTarget = std::all_of(def.targetId.begin(), def.targetId.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+    });
+    return numericTarget ? "Money" : def.targetId;
+}
+
 PathWaypoint catmullPoint(const EnemyPath& path, int segment, float t)
 {
     const int count = static_cast<int>(path.waypoints.size());
@@ -738,6 +749,8 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     projectiles_.clear();
     interactionState_ = InteractionState::None;
     interactingNpcIndex_ = -1;
+    interactingDoorIndex_ = -1;
+    interactingDoorIndex_ = -1;
     dialogueLineIndex_ = 0;
     loadAllSprites();
     updateScreenMusic();
@@ -811,6 +824,7 @@ void Engine::loadWeapons()
         return;
     }
     itemDefs_ = project.itemDefs;
+    syncInventoryFromGameState();
 
     if (project.startingWeaponId.empty()) {
         return;
@@ -827,6 +841,15 @@ void Engine::loadWeapons()
                 loadSpriteById(w.ammoSpriteId);
             }
             break;
+        }
+    }
+}
+
+void Engine::syncInventoryFromGameState()
+{
+    for (const ItemDef& def : itemDefs_) {
+        if (!def.id.empty() && gameState_.hasItem(def.id) && inventory_[def.id] <= 0) {
+            inventory_[def.id] = 1;
         }
     }
 }
@@ -852,16 +875,7 @@ int Engine::ammoCountForWeapon(const WeaponDef& weapon) const
 
 void Engine::consumeAmmoForWeapon(const WeaponDef& weapon, int amount)
 {
-    const std::string key = ammoItemIdForWeapon(weapon);
-    const auto it = inventory_.find(key);
-    if (it == inventory_.end()) {
-        return;
-    }
-    it->second -= amount;
-    if (it->second <= 0) {
-        inventory_.erase(it);
-        gameState_.takeItem(key);
-    }
+    (void)removeInventoryItem(ammoItemIdForWeapon(weapon), amount);
 }
 
 void Engine::loadProjectFont()
@@ -1072,6 +1086,9 @@ void Engine::loadAllSprites()
     for (const MapObstacle& obstacle : activeMap_.obstacles) {
         loadSpriteById(obstacle.spriteId);
     }
+    for (const MapDoorPlacement& door : activeMap_.doors) {
+        loadSpriteById(door.spriteId);
+    }
     for (const RuntimePathEntity& entity : pathEntities_) {
         loadSpriteById(entity.path.spriteId);
     }
@@ -1252,6 +1269,7 @@ void Engine::update(float dt)
     runtimeSeconds_ += dt;
     hazardCooldownSeconds_ = std::max(0.0f, hazardCooldownSeconds_ - dt);
     playerInvulnerableSeconds_ = std::max(0.0f, playerInvulnerableSeconds_ - dt);
+    noticeSeconds_ = std::max(0.0f, noticeSeconds_ - dt);
 
     const bool inventoryInputDown = inputDown(InputAction::Inventory);
     if (inventoryInputDown && !inventoryInputWasDown_ &&
@@ -1311,6 +1329,50 @@ bool Engine::isAmmoItemId(const std::string& id) const
     return false;
 }
 
+bool Engine::isCurrencyItemId(const std::string& id) const
+{
+    for (const ItemDef& def : itemDefs_) {
+        if (def.id == id) {
+            return def.type == ItemDefType::Currency;
+        }
+    }
+    return false;
+}
+
+bool Engine::hasInventoryItem(const std::string& itemId) const
+{
+    const auto it = inventory_.find(itemId);
+    return it != inventory_.end() && it->second > 0;
+}
+
+void Engine::addInventoryItem(const std::string& itemId, int quantity)
+{
+    if (itemId.empty() || quantity <= 0) {
+        return;
+    }
+    inventory_[itemId] += quantity;
+    gameState_.giveItem(itemId);
+}
+
+bool Engine::removeInventoryItem(const std::string& itemId, int quantity)
+{
+    if (itemId.empty() || quantity <= 0) {
+        return false;
+    }
+    auto it = inventory_.find(itemId);
+    if (it == inventory_.end() || it->second < quantity) {
+        return false;
+    }
+    it->second -= quantity;
+    if (it->second <= 0) {
+        inventory_.erase(it);
+        gameState_.takeItem(itemId);
+    } else {
+        gameState_.giveItem(itemId);
+    }
+    return true;
+}
+
 std::vector<std::string> Engine::ammoInventoryIds() const
 {
     std::vector<std::string> ids;
@@ -1328,8 +1390,31 @@ std::vector<std::string> Engine::sortedInventoryIds() const
     std::vector<std::string> ids;
     ids.reserve(inventory_.size());
     for (const auto& [id, count] : inventory_) {
-        // Ammo lives in its own inventory section, not the main item list.
-        if (count > 0 && !isAmmoItemId(id)) {
+        // Ammo and currency have dedicated inventory sections, not main rows.
+        if (count > 0 && !isAmmoItemId(id) && !isCurrencyItemId(id)) {
+            ids.push_back(id);
+        }
+    }
+    std::sort(ids.begin(), ids.end(), [this](const std::string& a, const std::string& b) {
+        const auto nameFor = [this](const std::string& id) -> std::string {
+            for (const ItemDef& def : itemDefs_) {
+                if (def.id == id) {
+                    return def.name.empty() ? def.id : def.name;
+                }
+            }
+            return id;
+        };
+        return nameFor(a) < nameFor(b);
+    });
+    return ids;
+}
+
+std::vector<std::string> Engine::sortedShopInventoryIds() const
+{
+    std::vector<std::string> ids;
+    ids.reserve(inventory_.size());
+    for (const auto& [id, count] : inventory_) {
+        if (count > 0 && !isCurrencyItemId(id)) {
             ids.push_back(id);
         }
     }
@@ -1453,11 +1538,7 @@ void Engine::useInventoryItem(const std::string& itemId)
     }
 
     if (consumed) {
-        --countIt->second;
-        if (countIt->second <= 0) {
-            inventory_.erase(countIt);
-            gameState_.takeItem(itemId);
-        }
+        (void)removeInventoryItem(itemId, 1);
         const int count = static_cast<int>(sortedInventoryIds().size());
         inventorySelection_ = std::clamp(inventorySelection_, 0, std::max(0, count - 1));
     }
@@ -1866,6 +1947,100 @@ bool Engine::playerOverlapsItem(const RuntimeItemEntity& item) const
     return std::sqrt(dx * dx + dy * dy) <= kItemPickupRadius;
 }
 
+bool Engine::playerOverlapsDoor(const MapDoorPlacement& door) const
+{
+    const float x = static_cast<float>(door.x * kTileSize);
+    const float y = static_cast<float>(door.y * kTileSize);
+    const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
+    const float h = static_cast<float>(std::max(1, door.heightTiles) * kTileSize);
+    const float half = kPlayerCollisionSizePx * 0.5f;
+    return playerX_ + half >= x &&
+        playerX_ - half <= x + w &&
+        playerY_ + half >= y &&
+        playerY_ - half <= y + h;
+}
+
+bool Engine::playerCanInteractWithDoor(const MapDoorPlacement& door) const
+{
+    const float x = static_cast<float>(door.x * kTileSize);
+    const float y = static_cast<float>(door.y * kTileSize);
+    const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
+    const float h = static_cast<float>(std::max(1, door.heightTiles) * kTileSize);
+    const float closestX = std::clamp(playerX_, x, x + w);
+    const float closestY = std::clamp(playerY_, y, y + h);
+    const float dx = playerX_ - closestX;
+    const float dy = playerY_ - closestY;
+    return playerOverlapsDoor(door) || std::sqrt(dx * dx + dy * dy) <= kItemPickupRadius;
+}
+
+int Engine::nearestInteractableDoor() const
+{
+    int nearest = -1;
+    float nearestDist = 99999.0f;
+    for (int i = 0; i < static_cast<int>(activeMap_.doors.size()); ++i) {
+        const MapDoorPlacement& door = activeMap_.doors[static_cast<std::size_t>(i)];
+        if (!playerCanInteractWithDoor(door)) {
+            continue;
+        }
+        const float cx = static_cast<float>((door.x + std::max(1, door.widthTiles) * 0.5f) * kTileSize);
+        const float cy = static_cast<float>((door.y + std::max(1, door.heightTiles) * 0.5f) * kTileSize);
+        const float dx = playerX_ - cx;
+        const float dy = playerY_ - cy;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist < nearestDist) {
+            nearest = i;
+            nearestDist = dist;
+        }
+    }
+    return nearest;
+}
+
+void Engine::showNotice(const std::string& text, float seconds)
+{
+    noticeText_ = text;
+    noticeSeconds_ = std::max(0.0f, seconds);
+}
+
+bool Engine::activateDoor(const MapDoorPlacement& door)
+{
+    if (door.lockMode == DoorLockMode::Locked) {
+        showNotice("Locked");
+        return false;
+    }
+    if (door.lockMode == DoorLockMode::RequiresItem) {
+        if (door.requiredItemId.empty() || !hasInventoryItem(door.requiredItemId)) {
+            showNotice(door.requiredItemId.empty() ? "Needs a key" : "Needs " + door.requiredItemId);
+            return false;
+        }
+    }
+    if (door.targetScreenId.empty()) {
+        showNotice("No destination");
+        return false;
+    }
+
+    const float spawnX = static_cast<float>(door.targetTileX * kTileSize + kTileSize / 2);
+    const float spawnY = static_cast<float>(door.targetTileY * kTileSize + kTileSize / 2);
+    float fromX = 0.0f;
+    float fromY = 0.0f;
+    if (std::abs(playerFacingX_) >= std::abs(playerFacingY_)) {
+        fromX = playerFacingX_ >= 0.0f ? screenWidthPx() : -screenWidthPx();
+    } else {
+        fromY = playerFacingY_ >= 0.0f ? screenHeightPx() : -screenHeightPx();
+    }
+
+    if (!beginScreenTransition(door.targetScreenId, spawnX, spawnY, fromX, fromY)) {
+        showNotice("Door is blocked");
+        return false;
+    }
+
+    if (door.lockMode == DoorLockMode::RequiresItem && door.consumeKey) {
+        (void)removeInventoryItem(door.requiredItemId, 1);
+        saveRuntimeState();
+    }
+    endInteraction();
+    return true;
+}
+
 void Engine::collectItem(RuntimeItemEntity& item)
 {
     item.collected = true;
@@ -1880,7 +2055,7 @@ void Engine::collectItem(RuntimeItemEntity& item)
                         } else {
                             rangedWeapon_ = w;
                         }
-                        gameState_.giveItem(w.id);
+                        addInventoryItem(w.id, 1);
                         loadSpriteById(w.spriteId);
                         loadSpriteById(w.ammoSpriteId);
                         break;
@@ -1901,8 +2076,7 @@ void Engine::collectItem(RuntimeItemEntity& item)
                         break;
                     }
                 }
-                inventory_[invKey] += std::max(1, item.placement.quantity);
-                gameState_.giveItem(invKey);
+                addInventoryItem(invKey, std::max(1, item.placement.quantity));
             }
             break;
         }
@@ -1916,15 +2090,13 @@ void Engine::collectItem(RuntimeItemEntity& item)
             const int amount = std::max(1, item.placement.quantity);
             if (defIt == itemDefs_.end()) {
                 if (!item.placement.targetId.empty()) {
-                    inventory_[item.placement.targetId] += amount;
-                    gameState_.giveItem(item.placement.targetId);
+                    addInventoryItem(item.placement.targetId, amount);
                 }
                 break;
             }
 
             const ItemDef& def = *defIt;
-            inventory_[def.id] += def.stackable ? amount : 1;
-            gameState_.giveItem(def.id);
+            addInventoryItem(def.id, def.stackable ? amount : 1);
             switch (def.type) {
                 case ItemDefType::Weapon: {
                     GameProject project;
@@ -1952,7 +2124,7 @@ void Engine::collectItem(RuntimeItemEntity& item)
                 case ItemDefType::Health:
                     break;
                 case ItemDefType::Currency:
-                    gameState_.addInt(def.targetId.empty() ? "Money" : def.targetId, amount);
+                    gameState_.addInt(currencyStateId(def), amount * std::max(1, def.value));
                     break;
                 case ItemDefType::Mana:
                 case ItemDefType::Key:
@@ -2174,10 +2346,12 @@ void Engine::executeDialogueActions(const std::vector<DialogueAction>& actions, 
                 gameState_.setBool(action.targetId, action.boolValue);
                 break;
             case DialogueActionType::GiveItem:
-                gameState_.giveItem(action.targetId);
+                addInventoryItem(action.targetId, std::max(1, action.intValue));
                 break;
             case DialogueActionType::TakeItem:
-                gameState_.takeItem(action.targetId);
+                if (!removeInventoryItem(action.targetId, std::max(1, action.intValue))) {
+                    gameState_.takeItem(action.targetId);
+                }
                 break;
             case DialogueActionType::GiveMoney:
                 gameState_.addInt("Money", action.intValue);
@@ -2236,27 +2410,62 @@ void Engine::endInteraction()
     shopSelection_ = 0;
     shopScroll_[0] = 0;
     shopScroll_[1] = 0;
+    shopBuyActive_ = false;
+    shopBuyIndex_ = -1;
+    shopBuyQuantity_ = 0;
 }
 
-void Engine::buyShopItem(RuntimeNpcEntity& npc, int index)
+int Engine::maxShopBuyQuantity(const RuntimeNpcEntity& npc, int index) const
+{
+    if (index < 0 || index >= static_cast<int>(npc.shopInventory.size())) {
+        return 0;
+    }
+    const ShopItemDef& item = npc.shopInventory[static_cast<std::size_t>(index)];
+    if (item.itemId.empty() || (!item.unlimited && item.quantity <= 0)) {
+        return 0;
+    }
+
+    int maxQuantity = item.unlimited ? 99 : std::max(0, item.quantity);
+    const int price = std::max(0, item.buyPrice);
+    if (price > 0) {
+        maxQuantity = std::min(maxQuantity, gameState_.getInt("Money", 0) / price);
+    }
+    return std::max(0, maxQuantity);
+}
+
+void Engine::beginShopPurchase(const RuntimeNpcEntity& npc, int index)
+{
+    const int maxQuantity = maxShopBuyQuantity(npc, index);
+    if (maxQuantity <= 0) {
+        return;
+    }
+    shopBuyActive_ = true;
+    shopBuyIndex_ = index;
+    shopBuyQuantity_ = std::min(1, maxQuantity);
+}
+
+void Engine::buyShopItem(RuntimeNpcEntity& npc, int index, int quantity)
 {
     if (index < 0 || index >= static_cast<int>(npc.shopInventory.size())) {
         return;
     }
     ShopItemDef& item = npc.shopInventory[static_cast<std::size_t>(index)];
-    if (item.itemId.empty() || (!item.unlimited && item.quantity <= 0)) {
+    const int maxQuantity = maxShopBuyQuantity(npc, index);
+    quantity = std::clamp(quantity, 0, maxQuantity);
+    if (quantity <= 0) {
         return;
     }
+
     const int price = std::max(0, item.buyPrice);
     const int money = gameState_.getInt("Money", 0);
-    if (money < price) {
+    const int total = price * quantity;
+    if (money < total) {
         return;
     }
-    gameState_.setInt("Money", money - price);
-    inventory_[item.itemId] += 1;
-    gameState_.giveItem(item.itemId);
+    gameState_.setInt("Money", money - total);
+    addInventoryItem(item.itemId, quantity);
     if (!item.unlimited) {
-        item.quantity = std::max(0, item.quantity - 1);
+        item.quantity = std::max(0, item.quantity - quantity);
     }
 }
 
@@ -2287,11 +2496,8 @@ void Engine::sellInventoryItem(const std::string& itemId)
             }
         }
     }
-    gameState_.addInt("Money", price);
-    --countIt->second;
-    if (countIt->second <= 0) {
-        inventory_.erase(countIt);
-        gameState_.takeItem(itemId);
+    if (removeInventoryItem(itemId, 1)) {
+        gameState_.addInt("Money", price);
     }
 }
 
@@ -2302,7 +2508,7 @@ void Engine::updateShopInput()
         return;
     }
     RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
-    const std::vector<std::string> playerItems = sortedInventoryIds();
+    const std::vector<std::string> playerItems = sortedShopInventoryIds();
     constexpr int kVisibleRows = 16;
     const int activeCount = shopPanel_ == 0 ? static_cast<int>(npc.shopInventory.size()) : static_cast<int>(playerItems.size());
     shopSelection_ = activeCount <= 0 ? 0 : std::clamp(shopSelection_, 0, activeCount - 1);
@@ -2313,6 +2519,43 @@ void Engine::updateShopInput()
     const bool rightDown = inputDown(InputAction::Right);
     const bool useDown = inputDown(InputAction::Interact);
     const bool exitDown = inputDown(InputAction::Inventory);
+
+    if (shopBuyActive_) {
+        const int maxQuantity = maxShopBuyQuantity(npc, shopBuyIndex_);
+        if (maxQuantity <= 0) {
+            shopBuyActive_ = false;
+            shopBuyIndex_ = -1;
+            shopBuyQuantity_ = 0;
+        } else {
+            shopBuyQuantity_ = std::clamp(shopBuyQuantity_, 0, maxQuantity);
+            if (leftDown && !shopLeftWasDown_) {
+                shopBuyQuantity_ = std::max(0, shopBuyQuantity_ - 1);
+            }
+            if (rightDown && !shopRightWasDown_) {
+                shopBuyQuantity_ = std::min(maxQuantity, shopBuyQuantity_ + 1);
+            }
+            if (useDown && !shopUseWasDown_) {
+                buyShopItem(npc, shopBuyIndex_, shopBuyQuantity_);
+                shopBuyActive_ = false;
+                shopBuyIndex_ = -1;
+                shopBuyQuantity_ = 0;
+            }
+            if (exitDown && !shopExitWasDown_) {
+                shopBuyActive_ = false;
+                shopBuyIndex_ = -1;
+                shopBuyQuantity_ = 0;
+            }
+        }
+
+        shopUpWasDown_ = upDown;
+        shopDownWasDown_ = downDown;
+        shopLeftWasDown_ = leftDown;
+        shopRightWasDown_ = rightDown;
+        shopUseWasDown_ = useDown;
+        shopExitWasDown_ = exitDown;
+        return;
+    }
+
     if (upDown && !shopUpWasDown_ && activeCount > 0) {
         shopSelection_ = std::max(0, shopSelection_ - 1);
     }
@@ -2325,7 +2568,7 @@ void Engine::updateShopInput()
     }
     if (useDown && !shopUseWasDown_) {
         if (shopPanel_ == 0) {
-            buyShopItem(npc, shopSelection_);
+            beginShopPurchase(npc, shopSelection_);
         } else if (shopSelection_ >= 0 && shopSelection_ < static_cast<int>(playerItems.size())) {
             sellInventoryItem(playerItems[static_cast<std::size_t>(shopSelection_)]);
         }
@@ -2463,40 +2706,69 @@ void Engine::updateInteraction()
             if (nearest >= 0) {
                 interactionState_ = InteractionState::PromptVisible;
                 interactingNpcIndex_ = nearest;
+                interactingDoorIndex_ = -1;
+                break;
+            }
+            const int nearestDoor = nearestInteractableDoor();
+            if (nearestDoor >= 0) {
+                interactionState_ = InteractionState::PromptVisible;
+                interactingNpcIndex_ = -1;
+                interactingDoorIndex_ = nearestDoor;
             }
             break;
         }
         case InteractionState::PromptVisible: {
-            if (interactingNpcIndex_ < 0 ||
-                interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
-                interactionState_ = InteractionState::None;
-                break;
-            }
-            const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
-            const float dx = playerX_ - npc.x;
-            const float dy = playerY_ - npc.y;
-            if (std::sqrt(dx * dx + dy * dy) > npc.placement.interactionRadius) {
-                endInteraction();
-                break;
-            }
-            if (interactPressed) {
-                if (npc.interactionMode == NpcInteractionMode::Shop) {
-                    interactionState_ = InteractionState::InShop;
-                    shopPanel_ = 0;
-                    shopSelection_ = 0;
-                    shopScroll_[0] = 0;
-                    shopScroll_[1] = 0;
-                    shopUpWasDown_ = shopDownWasDown_ = shopLeftWasDown_ = shopRightWasDown_ = false;
-                    shopUseWasDown_ = shopExitWasDown_ = false;
+            if (interactingDoorIndex_ >= 0) {
+                if (interactingDoorIndex_ >= static_cast<int>(activeMap_.doors.size())) {
+                    interactionState_ = InteractionState::None;
                     break;
                 }
-                interactionState_ = InteractionState::InDialogue;
-                dialogueLineIndex_ = 0;
-                dialogueScrollLine_ = 0;
-                if (npc.hasGraph) {
-                    startDialogueGraph(npc);
+                const MapDoorPlacement& door = activeMap_.doors[static_cast<std::size_t>(interactingDoorIndex_)];
+                if (!playerCanInteractWithDoor(door)) {
+                    endInteraction();
+                    break;
                 }
+                if (interactPressed) {
+                    const bool opened = activateDoor(door);
+                    if (!opened && interactionState_ == InteractionState::PromptVisible) {
+                        interactionState_ = InteractionState::None;
+                    }
+                }
+                break;
             }
+            if (interactingNpcIndex_ >= 0) {
+                if (interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+                    interactionState_ = InteractionState::None;
+                    break;
+                }
+                const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+                const float dx = playerX_ - npc.x;
+                const float dy = playerY_ - npc.y;
+                if (std::sqrt(dx * dx + dy * dy) > npc.placement.interactionRadius) {
+                    endInteraction();
+                    break;
+                }
+                if (interactPressed) {
+                    if (npc.interactionMode == NpcInteractionMode::Shop) {
+                        interactionState_ = InteractionState::InShop;
+                        shopPanel_ = 0;
+                        shopSelection_ = 0;
+                        shopScroll_[0] = 0;
+                        shopScroll_[1] = 0;
+                        shopUpWasDown_ = shopDownWasDown_ = shopLeftWasDown_ = shopRightWasDown_ = false;
+                        shopUseWasDown_ = shopExitWasDown_ = false;
+                        break;
+                    }
+                    interactionState_ = InteractionState::InDialogue;
+                    dialogueLineIndex_ = 0;
+                    dialogueScrollLine_ = 0;
+                    if (npc.hasGraph) {
+                        startDialogueGraph(npc);
+                    }
+                }
+                break;
+            }
+            interactionState_ = InteractionState::None;
             break;
         }
         case InteractionState::InShop:
@@ -2565,16 +2837,74 @@ void Engine::renderNpcs() const
     }
 }
 
+void Engine::renderDoors() const
+{
+    for (const MapDoorPlacement& door : activeMap_.doors) {
+        const float x = static_cast<float>(door.x * kTileSize);
+        const float y = static_cast<float>(door.y * kTileSize);
+        const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
+        const float h = static_cast<float>(std::max(1, door.heightTiles) * kTileSize);
+
+        auto spriteIt = loadedSprites_.find(door.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
+                renderTextureRegion(spriteIt->second.texture, x, y, w, h, u0, v0, u1, v1);
+                continue;
+            }
+        }
+
+        if (door.lockMode == DoorLockMode::Locked) {
+            renderFilledRect(x, y, w, h, 0.72f, 0.12f, 0.10f, 0.38f);
+        } else if (door.lockMode == DoorLockMode::RequiresItem) {
+            renderFilledRect(x, y, w, h, 0.15f, 0.34f, 0.86f, 0.34f);
+        } else {
+            renderFilledRect(x, y, w, h, 0.10f, 0.62f, 0.32f, 0.30f);
+        }
+    }
+}
+
 void Engine::renderInteractionPrompt() const
 {
-    if (interactionState_ != InteractionState::PromptVisible || interactingNpcIndex_ < 0 ||
-        interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
+    if (interactionState_ != InteractionState::PromptVisible) {
+        return;
+    }
+    const float pulse = 0.55f + 0.45f * std::sin(runtimeSeconds_ * 5.0f);
+    const float size = 6.0f;
+    if (interactingDoorIndex_ >= 0 && interactingDoorIndex_ < static_cast<int>(activeMap_.doors.size())) {
+        const MapDoorPlacement& door = activeMap_.doors[static_cast<std::size_t>(interactingDoorIndex_)];
+        const float x = static_cast<float>(door.x * kTileSize);
+        const float y = static_cast<float>(door.y * kTileSize);
+        const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
+        renderFilledRect(x + w * 0.5f - size * 0.5f, y - 8.0f, size, size, 0.25f, 0.90f, 0.35f, pulse);
+        return;
+    }
+    if (interactingNpcIndex_ < 0 || interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
         return;
     }
     const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
-    const float pulse = 0.55f + 0.45f * std::sin(runtimeSeconds_ * 5.0f);
-    const float size = 6.0f;
     renderFilledRect(npc.x - size * 0.5f, npc.y - 22.0f, size, size, 0.25f, 0.90f, 0.35f, pulse);
+}
+
+void Engine::renderNotice() const
+{
+    if (noticeSeconds_ <= 0.0f || noticeText_.empty()) {
+        return;
+    }
+    const float scale = 1.2f;
+    const float padX = 10.0f;
+    const float padY = 7.0f;
+    const float w = std::min(screenWidthPx() - 16.0f, textWidth(noticeText_, scale) + padX * 2.0f);
+    const float h = 26.0f;
+    const float x = (screenWidthPx() - w) * 0.5f;
+    const float y = 12.0f;
+    const float alpha = std::min(1.0f, noticeSeconds_ / 0.35f);
+    renderFilledRect(x, y, w, h, 0.03f, 0.04f, 0.05f, 0.88f * alpha);
+    renderText(noticeText_, x + padX, y + padY, scale, 0.94f, 0.95f, 0.90f, alpha);
 }
 
 void Engine::renderSpeechBubble() const
@@ -3284,6 +3614,7 @@ void Engine::render()
 
     // Floor-layer animated tiles sit above the floor but below entities/player.
     renderAnimatedTiles(0);
+    renderDoors();
 
     for (int y = 0; y < activeMap_.height; ++y) {
         for (int x = 0; x < activeMap_.width; ++x) {
@@ -3396,6 +3727,7 @@ void Engine::render()
 
     glPopMatrix();
 
+    renderNotice();
     renderDialogueBox();
     renderShopMenu();
 }
@@ -3927,20 +4259,27 @@ void Engine::renderInventory() const
     constexpr float pad = 8.0f;
     constexpr float icon = 18.0f;
     constexpr float rowH = 24.0f;
+    constexpr float moneyHeaderH = 22.0f;
     const float panelX = screenWidthPx() - panelW - 8.0f;
     const float panelY = 8.0f;
     const std::size_t visibleRowCount = std::min<std::size_t>(entries.size(), 7);
     const float visibleRows = static_cast<float>(visibleRowCount);
-    const float panelH = 28.0f + std::max(1.0f, visibleRows) * rowH + pad;
+    const float listY = panelY + 28.0f + moneyHeaderH;
+    const float panelH = 28.0f + moneyHeaderH + std::max(1.0f, visibleRows) * rowH + pad;
 
     const std::vector<std::string> ammoIds = ammoInventoryIds();
 
     renderFilledRect(panelX, panelY, panelW, panelH, 0.03f, 0.04f, 0.06f, 0.88f);
     renderFilledRect(panelX, panelY, panelW, 1.0f, 0.55f, 0.72f, 0.92f, 0.90f);
     renderText("INVENTORY", panelX + pad, panelY + 4.0f, 1.0f, 0.92f, 0.95f, 0.98f, 1.0f);
+    renderFilledRect(panelX + 4.0f, panelY + 27.0f, panelW - 8.0f, moneyHeaderH - 3.0f, 0.10f, 0.11f, 0.13f, 0.82f);
+    renderText("MONEY", panelX + pad, panelY + 30.0f, 0.85f, 0.76f, 0.80f, 0.86f, 1.0f);
+    const std::string moneyAmount = std::to_string(gameState_.getInt("Money", 0));
+    renderText(moneyAmount, panelX + panelW - pad - textWidth(moneyAmount, 0.95f), panelY + 29.0f, 0.95f,
+        1.0f, 0.90f, 0.42f, 1.0f);
 
     if (entries.empty()) {
-        renderText("Empty", panelX + pad, panelY + 30.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
+        renderText("Empty", panelX + pad, listY + 2.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
     }
 
     for (std::size_t i = 0; i < visibleRowCount; ++i) {
@@ -3949,7 +4288,7 @@ void Engine::renderInventory() const
             break;
         }
         const InventoryEntry& entry = entries[entryIndex];
-        const float y = panelY + 28.0f + static_cast<float>(i) * rowH;
+        const float y = listY + static_cast<float>(i) * rowH;
         const float iconX = panelX + pad;
         const float iconY = y + 2.0f;
         const bool selected = static_cast<int>(entryIndex) == inventorySelection_;
@@ -4071,7 +4410,7 @@ void Engine::renderShopMenu() const
         return;
     }
     const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
-    const std::vector<std::string> playerItems = sortedInventoryIds();
+    const std::vector<std::string> playerItems = sortedShopInventoryIds();
 
     const float sw = screenWidthPx();
     const float sh = screenHeightPx();
@@ -4089,10 +4428,12 @@ void Engine::renderShopMenu() const
     renderFilledRect(playerX, y, panelW, panelH, 0.04f, 0.05f, 0.07f, 0.94f);
     renderFilledRect(shopPanel_ == 0 ? shopX : playerX, y, panelW, 2.0f, 0.30f, 0.70f, 0.90f, 0.95f);
 
-    const std::string money = "Money " + std::to_string(gameState_.getInt("Money", 0));
     renderText("SHOP", shopX + 8.0f, y + 7.0f, 1.2f, 0.92f, 0.95f, 0.98f, 1.0f);
-    renderText(money, shopX + panelW - 8.0f - textWidth(money, 1.0f), y + 9.0f, 1.0f, 1.0f, 0.90f, 0.42f, 1.0f);
     renderText("PLAYER", playerX + 8.0f, y + 7.0f, 1.2f, 0.92f, 0.95f, 0.98f, 1.0f);
+    renderFilledRect(playerX + 6.0f, y + 31.0f, panelW - 12.0f, 21.0f, 0.10f, 0.11f, 0.13f, 0.82f);
+    renderText("MONEY", playerX + 10.0f, y + 34.0f, 0.9f, 0.76f, 0.80f, 0.86f, 1.0f);
+    const std::string money = std::to_string(gameState_.getInt("Money", 0));
+    renderText(money, playerX + panelW - 10.0f - textWidth(money, 1.0f), y + 33.0f, 1.0f, 1.0f, 0.90f, 0.42f, 1.0f);
 
     auto itemName = [this](const std::string& id) {
         for (const ItemDef& item : itemDefs_) {
@@ -4103,11 +4444,12 @@ void Engine::renderShopMenu() const
         return id;
     };
 
+    const float listY = y + 60.0f;
     const int shopFirst = std::clamp(shopScroll_[0], 0, std::max(0, static_cast<int>(npc.shopInventory.size()) - visibleRows));
     for (int i = 0; i < std::min<int>(visibleRows, static_cast<int>(npc.shopInventory.size()) - shopFirst); ++i) {
         const int itemIndex = shopFirst + i;
         const ShopItemDef& item = npc.shopInventory[static_cast<std::size_t>(itemIndex)];
-        const float rowY = y + 34.0f + static_cast<float>(i) * rowH;
+        const float rowY = listY + static_cast<float>(i) * rowH;
         const bool selected = shopPanel_ == 0 && itemIndex == shopSelection_;
         if (selected) {
             renderFilledRect(shopX + 5.0f, rowY - 2.0f, panelW - 10.0f, rowH - 2.0f, 0.18f, 0.32f, 0.42f, 0.88f);
@@ -4121,7 +4463,7 @@ void Engine::renderShopMenu() const
         renderText(price, shopX + panelW - 9.0f - textWidth(price, 0.95f), rowY, 0.95f, 1.0f, 0.90f, 0.42f, 1.0f);
     }
     if (npc.shopInventory.empty()) {
-        renderText("No stock", shopX + 9.0f, y + 36.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
+        renderText("No stock", shopX + 9.0f, listY + 2.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
     }
 
     const int playerFirst = std::clamp(shopScroll_[1], 0, std::max(0, static_cast<int>(playerItems.size()) - visibleRows));
@@ -4130,7 +4472,7 @@ void Engine::renderShopMenu() const
         const std::string& itemId = playerItems[static_cast<std::size_t>(itemIndex)];
         const auto countIt = inventory_.find(itemId);
         const int count = countIt == inventory_.end() ? 0 : countIt->second;
-        const float rowY = y + 34.0f + static_cast<float>(i) * rowH;
+        const float rowY = listY + static_cast<float>(i) * rowH;
         const bool selected = shopPanel_ == 1 && itemIndex == shopSelection_;
         if (selected) {
             renderFilledRect(playerX + 5.0f, rowY - 2.0f, panelW - 10.0f, rowH - 2.0f, 0.18f, 0.32f, 0.42f, 0.88f);
@@ -4147,19 +4489,60 @@ void Engine::renderShopMenu() const
         renderText(price, playerX + panelW - 9.0f - textWidth(price, 0.95f), rowY, 0.95f, 1.0f, 0.90f, 0.42f, 1.0f);
     }
     if (playerItems.empty()) {
-        renderText("Inventory empty", playerX + 9.0f, y + 36.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
+        renderText("Inventory empty", playerX + 9.0f, listY + 2.0f, 1.0f, 0.68f, 0.72f, 0.78f, 1.0f);
     }
     if (shopFirst > 0) {
-        renderText("^", shopX + panelW - 16.0f, y + 22.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+        renderText("^", shopX + panelW - 16.0f, y + 48.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
     }
     if (shopFirst + visibleRows < static_cast<int>(npc.shopInventory.size())) {
         renderText("v", shopX + panelW - 16.0f, y + panelH - 18.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
     }
     if (playerFirst > 0) {
-        renderText("^", playerX + panelW - 16.0f, y + 22.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+        renderText("^", playerX + panelW - 16.0f, y + 48.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
     }
     if (playerFirst + visibleRows < static_cast<int>(playerItems.size())) {
         renderText("v", playerX + panelW - 16.0f, y + panelH - 18.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+    }
+
+    if (shopBuyActive_ && shopBuyIndex_ >= 0 && shopBuyIndex_ < static_cast<int>(npc.shopInventory.size())) {
+        const ShopItemDef& item = npc.shopInventory[static_cast<std::size_t>(shopBuyIndex_)];
+        const int price = std::max(0, item.buyPrice);
+        const int maxQuantity = maxShopBuyQuantity(npc, shopBuyIndex_);
+        const int quantity = std::clamp(shopBuyQuantity_, 0, maxQuantity);
+        const int total = price * quantity;
+        const int remainingMoney = std::max(0, gameState_.getInt("Money", 0) - total);
+        const float boxW = std::min(312.0f, sw - margin * 2.0f);
+        const float boxH = 128.0f;
+        const float boxX = (sw - boxW) * 0.5f;
+        const float boxY = (sh - boxH) * 0.5f;
+
+        renderFilledRect(boxX, boxY, boxW, boxH, 0.03f, 0.04f, 0.06f, 0.98f);
+        renderFilledRect(boxX, boxY, boxW, 2.0f, 0.55f, 0.72f, 0.92f, 0.95f);
+
+        std::string title = "Buy " + itemName(item.itemId);
+        constexpr float titleScale = 1.05f;
+        const float titleMaxW = boxW - 20.0f;
+        while (!title.empty() && textWidth(title, titleScale) > titleMaxW) {
+            title.pop_back();
+        }
+        renderText(title, boxX + 10.0f, boxY + 10.0f, titleScale, 0.92f, 0.95f, 0.98f, 1.0f);
+
+        const std::string amount = "< " + std::to_string(quantity) + " >";
+        renderText("AMOUNT", boxX + 14.0f, boxY + 42.0f, 0.9f, 0.76f, 0.80f, 0.86f, 1.0f);
+        renderText(amount, boxX + boxW - 14.0f - textWidth(amount, 1.1f), boxY + 39.0f, 1.1f,
+            1.0f, 0.90f, 0.42f, 1.0f);
+
+        const std::string totalText = "Total " + std::to_string(total);
+        renderText(totalText, boxX + 14.0f, boxY + 68.0f, 0.95f, 0.86f, 0.89f, 0.94f, 1.0f);
+        const std::string moneyText = "Money " + std::to_string(remainingMoney);
+        renderText(moneyText, boxX + boxW - 14.0f - textWidth(moneyText, 0.95f), boxY + 68.0f, 0.95f,
+            1.0f, 0.90f, 0.42f, 1.0f);
+
+        const std::string stockText = item.unlimited ? "Stock unlimited" : "Stock " + std::to_string(item.quantity);
+        renderText(stockText, boxX + 14.0f, boxY + 94.0f, 0.9f, 0.68f, 0.72f, 0.78f, 1.0f);
+        const std::string maxText = "Max " + std::to_string(maxQuantity);
+        renderText(maxText, boxX + boxW - 14.0f - textWidth(maxText, 0.9f), boxY + 94.0f, 0.9f,
+            0.68f, 0.72f, 0.78f, 1.0f);
     }
 }
 

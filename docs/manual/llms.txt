@@ -7,7 +7,7 @@
 
 ## How to use this
 The full manual is `index.html` (same folder). It is plain semantic HTML — read it directly.
-The most useful section for "how do I…" questions is the numbered recipes (R1–R21).
+The most useful section for "how do I…" questions is the numbered recipes (R1–R23).
 
 ## Quick recipe map (effect → where in the editor)
 - Enemy chases the player → Edit Enemy Types → Hit Reaction & AI → Aggro range > 0  (R1)
@@ -31,6 +31,8 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Weapon pickup shows wrong/no sprite on map → pick the weapon in Edit Items; it auto-fills the on-map pickup sprite from the weapon sprite (separate from the weapon's own sprite).  (R19)
 - Slingshot/bow won't use ammo → ammo lives in the INVENTORY (shown in an "AMMO" section), fired directly; weapon ammoTypeId must match an Ammo item id/targetId. No separate ammo pool.  (R20)
 - Editor opens last project automatically (projects/.editor_session); Project menu → Project Manager to open/create/delete projects.  (R21)
+- Obstacles / hazards → Screens → Edit Screen Graphics → Map Logic; add Spike/Pit/Timed Spike rectangles, set tile position/size, optional sprite id, and timed spike cycle fields. Obstacles do not have a top-level tab.  (R22)
+- Doors → Screens → Edit Doors; add tile-sized trigger rectangles with lock mode, required item, consume-key flag, target screen/tile, sprite id, and opening animation. Runtime: stand on/near door + interact; locked/missing-key/blocked destinations show feedback, consumed keys leave inventory, valid doors transition to target screen/tile.  (R23)
 
 ## Key concepts
 - Tiles 16x16, screens 48x32 tiles. Chapters = grids of linked screens.
@@ -50,3 +52,7 @@ Move WASD/arrows; Z melee; X ranged; E interact/confirm/use; I inventory; Esc qu
 - index.html — full human + LLM readable manual
 - llms.txt — this index
 - README.md — what this folder is and how to keep it current
+
+## Related engineering docs
+- ../high_level_functionality_audit.md — checklist for finding feature gaps across editor authoring, save/load, runtime behavior, UI feedback, persistence, validation, performance, and docs.
+- ../manual_high_level_test_checklist.md — manual end-to-end test checklist for money pickups, shops, ammo, dialogue rewards, doors, hazards, animated tiles, and persistence.

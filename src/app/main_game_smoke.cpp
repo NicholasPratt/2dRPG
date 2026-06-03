@@ -22,6 +22,48 @@ int main(int argc, char** argv)
     std::cout << "Loaded map " << map.id << " [" << map.width << "x" << map.height
               << "] spawn [" << map.spawnX << "," << map.spawnY << "]\n";
 
+    adventure::game::MapDoorPlacement smokeDoor;
+    smokeDoor.id = "smoke_door";
+    smokeDoor.x = 3;
+    smokeDoor.y = 4;
+    smokeDoor.widthTiles = 2;
+    smokeDoor.heightTiles = 1;
+    smokeDoor.lockMode = adventure::game::DoorLockMode::RequiresItem;
+    smokeDoor.requiredItemId = "brass_key";
+    smokeDoor.consumeKey = true;
+    smokeDoor.targetScreenId = "screen_2";
+    smokeDoor.targetTileX = 6;
+    smokeDoor.targetTileY = 7;
+    smokeDoor.spriteId = "door_sprite";
+    smokeDoor.openingAnimation = "open";
+    adventure::game::TileMap doorMap = map;
+    doorMap.doors = {smokeDoor};
+    const std::filesystem::path mapSmokePath = "build/smoke_map.admap";
+    if (!adventure::game::saveTileMap(mapSmokePath, doorMap, &error)) {
+        std::cerr << "Failed to save map smoke file: " << error << "\n";
+        return 1;
+    }
+    adventure::game::TileMap loadedDoorMap;
+    if (!adventure::game::loadTileMap(mapSmokePath, loadedDoorMap, &error)) {
+        std::cerr << "Failed to load map smoke file: " << error << "\n";
+        return 1;
+    }
+    if (loadedDoorMap.doors.size() != 1 ||
+        loadedDoorMap.doors.front().id != "smoke_door" ||
+        loadedDoorMap.doors.front().widthTiles != 2 ||
+        loadedDoorMap.doors.front().lockMode != adventure::game::DoorLockMode::RequiresItem ||
+        loadedDoorMap.doors.front().requiredItemId != "brass_key" ||
+        !loadedDoorMap.doors.front().consumeKey ||
+        loadedDoorMap.doors.front().targetScreenId != "screen_2" ||
+        loadedDoorMap.doors.front().targetTileX != 6 ||
+        loadedDoorMap.doors.front().targetTileY != 7 ||
+        loadedDoorMap.doors.front().spriteId != "door_sprite" ||
+        loadedDoorMap.doors.front().openingAnimation != "open") {
+        std::cerr << "Map door round-trip values did not match.\n";
+        return 1;
+    }
+    std::cout << "Round-tripped map doors (ADMAP v6)\n";
+
     const std::filesystem::path chapterPath = argc > 2 ? std::filesystem::path(argv[2]) : std::filesystem::path("assets/game/chapters/chapter_1.adchapter");
     adventure::game::Chapter chapter;
     if (!adventure::game::loadChapter(chapterPath, chapter, &error)) {

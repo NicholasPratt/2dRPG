@@ -139,7 +139,7 @@ void MapEditorPanel::openMapId(EditorContext& context, const std::string& mapId)
 void MapEditorPanel::drawToolbar(EditorContext& context)
 {
     ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::InputText("Map id", mapId_.data(), mapId_.size())) {
+    if (ui::inputTextString("Map id", mapId_.data(), mapId_.size())) {
         context.markDirty();
     }
 
@@ -180,7 +180,7 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
             std::memcpy(obstacleSpriteId_.data(), defaultSprite, std::min(std::strlen(defaultSprite), obstacleSpriteId_.size() - 1));
         }
         ImGui::SetNextItemWidth(150.0f);
-        ImGui::InputText("Sprite id", obstacleSpriteId_.data(), obstacleSpriteId_.size());
+        ui::inputTextString("Sprite id", obstacleSpriteId_.data(), obstacleSpriteId_.size());
         ImGui::SameLine();
         if (ImGui::Button("Edit Sprite")) {
             const std::string spriteId(obstacleSpriteId_.data());
@@ -224,7 +224,7 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
 
     // Tileset selector
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::InputText("Tileset id", tilesetId_.data(), tilesetId_.size());
+    ui::inputTextString("Tileset id", tilesetId_.data(), tilesetId_.size());
     ImGui::SameLine();
     if (ImGui::Button("Load tileset")) {
         loadTileset(context);
@@ -919,6 +919,16 @@ void MapEditorPanel::saveMap(EditorContext& context)
 {
     game::TileMap map;
     map.id = mapId_.data();
+
+    // The .admap also stores item and door placements owned by other editors.
+    // Load the existing file first so saving map-logic data does not wipe them.
+    const std::filesystem::path outputPath = context.assets.gameMapPath() / (map.id + ".admap");
+    game::TileMap existing;
+    if (game::loadTileMap(outputPath, existing, nullptr)) {
+        map.items = std::move(existing.items);
+        map.doors = std::move(existing.doors);
+    }
+
     map.tilesetId = tilesetId_.data();
     map.width = width_;
     map.height = height_;
@@ -928,7 +938,6 @@ void MapEditorPanel::saveMap(EditorContext& context)
     map.obstacles = obstacles_;
 
     std::string error;
-    const std::filesystem::path outputPath = context.assets.gameMapPath() / (map.id + ".admap");
     if (game::saveTileMap(outputPath, map, &error)) {
         status_ = "Saved map: " + outputPath.generic_string();
     } else {

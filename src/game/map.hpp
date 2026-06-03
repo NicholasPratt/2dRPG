@@ -23,6 +23,12 @@ enum class ItemPickupType {
     ProjectItem = 3,
 };
 
+enum class DoorLockMode {
+    FreeUse = 0,
+    Locked = 1,
+    RequiresItem = 2,
+};
+
 struct MapItemPlacement {
     std::string id;
     ItemPickupType pickupType = ItemPickupType::Ammo;
@@ -32,6 +38,22 @@ struct MapItemPlacement {
     float y = 0.0f;
     bool respawn = false;
     std::string spriteId;
+};
+
+struct MapDoorPlacement {
+    std::string id;
+    int x = 0;              // tile coordinate
+    int y = 0;              // tile coordinate
+    int widthTiles = 1;     // size in tiles
+    int heightTiles = 1;    // size in tiles
+    DoorLockMode lockMode = DoorLockMode::FreeUse;
+    std::string requiredItemId;
+    bool consumeKey = false;
+    std::string targetScreenId;
+    int targetTileX = 1;
+    int targetTileY = 1;
+    std::string spriteId;
+    std::string openingAnimation;
 };
 
 struct MapObstacle {
@@ -61,6 +83,7 @@ struct TileMap {
     };
     std::vector<MapObstacle> obstacles;
     std::vector<MapItemPlacement> items;
+    std::vector<MapDoorPlacement> doors;
 };
 
 [[nodiscard]] bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);

@@ -1,5 +1,6 @@
 #include "editor/editor_app.hpp"
 #include "editor/editor_state.hpp"
+#include "editor/imgui_widgets.hpp"
 
 #include "imgui.h"
 
@@ -188,7 +189,7 @@ bool editString(const char* label, std::string& value)
 {
     char buffer[128]{};
     std::memcpy(buffer, value.data(), std::min(value.size(), sizeof(buffer) - 1));
-    if (ImGui::InputText(label, buffer, sizeof(buffer))) {
+    if (ui::inputTextString(label, buffer, sizeof(buffer))) {
         value = buffer;
         return true;
     }
@@ -290,6 +291,13 @@ void EditorApp::draw()
     if (context_.requestEditItems) {
         context_.requestEditItems = false;
         enterScreenMode(ScreenEditMode::Items);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
+    if (context_.requestEditDoors) {
+        context_.requestEditDoors = false;
+        enterScreenMode(ScreenEditMode::Doors);
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
     }
@@ -476,6 +484,16 @@ void EditorApp::enterScreenMode(ScreenEditMode mode)
         context_.selectedScreenItemsMapId = context_.selectedScreenMapId;
         itemPlacementSnapshot_ = context_.selectedScreenItems;
         itemPlacementEditor_.openForScreen(context_);
+    } else if (mode == ScreenEditMode::Doors && !context_.selectedScreenMapId.empty()) {
+        game::TileMap map;
+        if (game::loadTileMap(context_.assets.gameMapPath() / (context_.selectedScreenMapId + ".admap"), map, nullptr)) {
+            context_.selectedScreenDoors = map.doors;
+        } else {
+            context_.selectedScreenDoors.clear();
+        }
+        context_.selectedScreenDoorsMapId = context_.selectedScreenMapId;
+        doorPlacementSnapshot_ = context_.selectedScreenDoors;
+        doorPlacementEditor_.openForScreen(context_);
     }
     screenEditMode_ = mode;
 }
@@ -533,6 +551,11 @@ void EditorApp::drawScreensTab()
             drawScopedEditHeader("Editing Screen Item", true, true);
             ImGui::Separator();
             itemPlacementEditor_.drawEdit(context_);
+            break;
+        case ScreenEditMode::Doors:
+            drawScopedEditHeader("Editing Screen Doors", true, true);
+            ImGui::Separator();
+            doorPlacementEditor_.draw(context_);
             break;
         case ScreenEditMode::Npcs:
             drawScopedEditHeader("Editing Screen NPCs", true, true);
@@ -737,6 +760,9 @@ void EditorApp::drawProjectItemsTab()
                 const auto candidate = static_cast<game::ItemDefType>(t);
                 if (ImGui::Selectable(itemDefTypeName(candidate), t == type)) {
                     item.type = candidate;
+                    if (item.type == game::ItemDefType::Currency && item.targetId.empty()) {
+                        item.targetId = "Money";
+                    }
                     context_.markDirty();
                 }
             }
@@ -759,6 +785,16 @@ void EditorApp::drawProjectItemsTab()
         else if (item.type == game::ItemDefType::Ammo) { targetLabel = "Ammo Type"; }
         else if (item.type == game::ItemDefType::Weapon) { targetLabel = "Weapon ID"; }
         if (editString(targetLabel, item.targetId)) { context_.markDirty(); }
+        if (item.type == game::ItemDefType::Currency) {
+            const bool numericTarget = !item.targetId.empty() &&
+                std::all_of(item.targetId.begin(), item.targetId.end(), [](unsigned char c) {
+                    return std::isdigit(c) != 0;
+                });
+            if (item.targetId.empty() || numericTarget) {
+                item.targetId = "Money";
+                context_.markDirty();
+            }
+        }
         if (item.type == game::ItemDefType::Custom && editString("Custom Type", item.customType)) { context_.markDirty(); }
         if (ImGui::DragInt("Value", &item.value, 1.0f, 0, 999999)) { context_.markDirty(); }
         if (ImGui::Checkbox("Stackable", &item.stackable)) { context_.markDirty(); }
@@ -845,6 +881,9 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::ItemEdit:
             itemPlacementEditor_.saveForScreen(context_);
             break;
+        case ScreenEditMode::Doors:
+            doorPlacementEditor_.saveForScreen(context_);
+            break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);
             if (spriteEditorLaunchedFromCharacter_) {
@@ -900,6 +939,10 @@ void EditorApp::exitScreenModeDiscarding()
         case ScreenEditMode::ItemEdit:
             context_.selectedScreenItems = itemPlacementSnapshot_;
             itemPlacementEditor_.openForScreen(context_);
+            break;
+        case ScreenEditMode::Doors:
+            context_.selectedScreenDoors = doorPlacementSnapshot_;
+            doorPlacementEditor_.openForScreen(context_);
             break;
         case ScreenEditMode::Sprite:
             spriteEditor_.resetDocumentBuffers();
@@ -1257,9 +1300,9 @@ void EditorApp::drawStartupChapterModal()
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::InputText("Project name", newProjectId_.data(), newProjectId_.size());
+        ui::inputTextString("Project name", newProjectId_.data(), newProjectId_.size());
         ImGui::SetNextItemWidth(220.0f);
-        ImGui::InputText("Chapter name", newChapterId_.data(), newChapterId_.size());
+        ui::inputTextString("Chapter name", newChapterId_.data(), newChapterId_.size());
         if (ImGui::Button("Create / Open Project", ImVec2(360.0f, 34.0f))) {
             createProjectAndChapter();
             ImGui::CloseCurrentPopup();
@@ -1319,9 +1362,9 @@ void EditorApp::drawProjectManagerWindow()
         ImGui::Separator();
         ImGui::TextUnformatted("New project");
         ImGui::SetNextItemWidth(200.0f);
-        ImGui::InputText("Project name##pm", newProjectId_.data(), newProjectId_.size());
+        ui::inputTextString("Project name##pm", newProjectId_.data(), newProjectId_.size());
         ImGui::SetNextItemWidth(200.0f);
-        ImGui::InputText("First chapter##pm", newChapterId_.data(), newChapterId_.size());
+        ui::inputTextString("First chapter##pm", newChapterId_.data(), newChapterId_.size());
         if (ImGui::Button("Create Project##pm")) {
             if (context_.dirty) {
                 saveCurrentChapterAndExports();
@@ -1575,6 +1618,9 @@ void EditorApp::saveActiveEditingScope()
             break;
         case ScreenEditMode::ItemEdit:
             itemPlacementEditor_.saveForScreen(context_);
+            break;
+        case ScreenEditMode::Doors:
+            doorPlacementEditor_.saveForScreen(context_);
             break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);

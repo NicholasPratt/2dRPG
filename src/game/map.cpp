@@ -12,6 +12,7 @@ constexpr int kMaxTileId = 65535;
 constexpr int kLayerCount = 3;
 constexpr int kMaxObstacles = 2048;
 constexpr int kMaxItems = 1024;
+constexpr int kMaxDoors = 1024;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -32,13 +33,20 @@ bool validMapShape(const TileMap& map)
             return false;
         }
     }
-    if (map.obstacles.size() > kMaxObstacles) {
+    if (map.obstacles.size() > kMaxObstacles || map.items.size() > kMaxItems || map.doors.size() > kMaxDoors) {
         return false;
     }
     for (const MapObstacle& obstacle : map.obstacles) {
         if (obstacle.x < 0 || obstacle.y < 0 || obstacle.width <= 0 || obstacle.height <= 0 ||
             obstacle.x + obstacle.width > map.width || obstacle.y + obstacle.height > map.height ||
             obstacle.activeSeconds <= 0.0f || obstacle.inactiveSeconds < 0.0f) {
+            return false;
+        }
+    }
+    for (const MapDoorPlacement& door : map.doors) {
+        if (door.x < 0 || door.y < 0 || door.widthTiles <= 0 || door.heightTiles <= 0 ||
+            door.x + door.widthTiles > map.width || door.y + door.heightTiles > map.height ||
+            door.targetTileX < 0 || door.targetTileY < 0) {
             return false;
         }
     }
@@ -57,6 +65,15 @@ bool obstacleTypeFromInt(int value, ObstacleType& type)
         case 1: type = ObstacleType::Pit; return true;
         case 2: type = ObstacleType::TimedSpike; return true;
         default: return false;
+    }
+}
+
+DoorLockMode doorLockModeFromInt(int value)
+{
+    switch (value) {
+        case 1: return DoorLockMode::Locked;
+        case 2: return DoorLockMode::RequiresItem;
+        default: return DoorLockMode::FreeUse;
     }
 }
 
@@ -124,7 +141,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 5\n";
+    output << "ADMAP 6\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -154,6 +171,22 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
                << ' ' << (item.respawn ? 1 : 0)
                << ' ' << encodedToken(item.spriteId) << "\n";
     }
+    output << "doors " << map.doors.size() << "\n";
+    for (const MapDoorPlacement& door : map.doors) {
+        output << "door " << encodedToken(door.id)
+               << ' ' << door.x
+               << ' ' << door.y
+               << ' ' << door.widthTiles
+               << ' ' << door.heightTiles
+               << ' ' << static_cast<int>(door.lockMode)
+               << ' ' << encodedToken(door.requiredItemId)
+               << ' ' << (door.consumeKey ? 1 : 0)
+               << ' ' << encodedToken(door.targetScreenId)
+               << ' ' << door.targetTileX
+               << ' ' << door.targetTileY
+               << ' ' << encodedToken(door.spriteId)
+               << ' ' << encodedToken(door.openingAnimation) << "\n";
+    }
     output << "end\n";
 
     if (!output) {
@@ -174,7 +207,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 5) {
+    if (magic != "ADMAP" || version < 1 || version > 6) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -332,6 +365,45 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                     default: item.pickupType = ItemPickupType::Weapon; break;
                 }
                 loaded.items.push_back(item);
+            }
+            input >> key;
+        }
+        if (version >= 6 && key == "doors") {
+            int doorCount = 0;
+            input >> doorCount;
+            if (!input || doorCount < 0 || doorCount > kMaxDoors) {
+                setError(errorMessage, "Invalid door count.");
+                return false;
+            }
+            loaded.doors.reserve(static_cast<std::size_t>(doorCount));
+            for (int i = 0; i < doorCount; ++i) {
+                if (!(input >> key) || key != "door") {
+                    setError(errorMessage, "Expected door entry.");
+                    return false;
+                }
+                MapDoorPlacement door;
+                std::string idToken;
+                std::string requiredItemToken;
+                std::string targetScreenToken;
+                std::string spriteIdToken;
+                std::string openingAnimationToken;
+                int lockModeValue = 0;
+                int consumeKeyValue = 0;
+                input >> idToken >> door.x >> door.y >> door.widthTiles >> door.heightTiles
+                      >> lockModeValue >> requiredItemToken >> consumeKeyValue >> targetScreenToken
+                      >> door.targetTileX >> door.targetTileY >> spriteIdToken >> openingAnimationToken;
+                if (!input) {
+                    setError(errorMessage, "Invalid door data.");
+                    return false;
+                }
+                door.id = decodedToken(idToken);
+                door.lockMode = doorLockModeFromInt(lockModeValue);
+                door.requiredItemId = decodedToken(requiredItemToken);
+                door.consumeKey = consumeKeyValue != 0;
+                door.targetScreenId = decodedToken(targetScreenToken);
+                door.spriteId = decodedToken(spriteIdToken);
+                door.openingAnimation = decodedToken(openingAnimationToken);
+                loaded.doors.push_back(std::move(door));
             }
             input >> key;
         }

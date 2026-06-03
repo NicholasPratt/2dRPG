@@ -171,17 +171,17 @@ void EnemyPathEditorPanel::drawToolbar(EditorContext& context)
     }
 
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::InputText("Placement id", placementId_.data(), placementId_.size())) {
+    if (ui::inputTextString("Placement id", placementId_.data(), placementId_.size())) {
         writeCurrentPlacement(context);
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::InputText("Enemy type", typeId_.data(), typeId_.size())) {
+    if (ui::inputTextString("Enemy type", typeId_.data(), typeId_.size())) {
         writeCurrentPlacement(context);
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::InputText("Type sprite", spriteId_.data(), spriteId_.size());
+    ui::inputTextString("Type sprite", spriteId_.data(), spriteId_.size());
     ImGui::SameLine();
     if (ImGui::Button("Edit Sprite")) {
         const std::string spriteId(spriteId_.data());
@@ -452,7 +452,7 @@ void EnemyPathEditorPanel::drawAttackEditor(EditorContext& context, game::EnemyT
             char animBuf[64]{};
             std::memcpy(animBuf, atk.animState.data(), std::min(atk.animState.size(), sizeof(animBuf) - 1));
             ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("Anim state##atkanim", animBuf, sizeof(animBuf))) {
+            if (ui::inputTextString("Anim state##atkanim", animBuf, sizeof(animBuf))) {
                 atk.animState = animBuf;
                 context.markDirty();
             }
@@ -468,7 +468,7 @@ void EnemyPathEditorPanel::drawAttackEditor(EditorContext& context, game::EnemyT
                 char ammoBuf[64]{};
                 std::memcpy(ammoBuf, atk.ammoSpriteId.data(), std::min(atk.ammoSpriteId.size(), sizeof(ammoBuf) - 1));
                 ImGui::SetNextItemWidth(120.0f);
-                if (ImGui::InputText("Ammo sprite##atkammo", ammoBuf, sizeof(ammoBuf))) {
+                if (ui::inputTextString("Ammo sprite##atkammo", ammoBuf, sizeof(ammoBuf))) {
                     atk.ammoSpriteId = ammoBuf;
                     context.markDirty();
                 }
@@ -542,7 +542,7 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
     char typeIdBuf[64]{};
     std::memcpy(typeIdBuf, type.id.data(), std::min(type.id.size(), sizeof(typeIdBuf) - 1));
     ImGui::SetNextItemWidth(130.0f);
-    if (ImGui::InputText("Type ID##tid", typeIdBuf, sizeof(typeIdBuf))) {
+    if (ui::inputTextString("Type ID##tid", typeIdBuf, sizeof(typeIdBuf))) {
         type.id = typeIdBuf;
         context.markDirty();
     }
@@ -550,7 +550,7 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
     char spriteBuf[64]{};
     std::memcpy(spriteBuf, type.spriteId.data(), std::min(type.spriteId.size(), sizeof(spriteBuf) - 1));
     ImGui::SetNextItemWidth(130.0f);
-    if (ImGui::InputText("Sprite ID##sid", spriteBuf, sizeof(spriteBuf))) {
+    if (ui::inputTextString("Sprite ID##sid", spriteBuf, sizeof(spriteBuf))) {
         type.spriteId = spriteBuf;
         context.markDirty();
     }
@@ -634,7 +634,7 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
     char killVarBuf[64]{};
     std::memcpy(killVarBuf, type.killVariable.data(), std::min(type.killVariable.size(), sizeof(killVarBuf) - 1));
     ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::InputText("Kill counter var##kv", killVarBuf, sizeof(killVarBuf))) {
+    if (ui::inputTextString("Kill counter var##kv", killVarBuf, sizeof(killVarBuf))) {
         type.killVariable = killVarBuf;
         context.markDirty();
     }
@@ -732,7 +732,7 @@ void EnemyPathEditorPanel::drawWaypointList(EditorContext& context)
         char animBuf[64]{};
         std::memcpy(animBuf, wp.animState.data(), std::min(wp.animState.size(), sizeof(animBuf) - 1));
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::InputText("Anim##wp", animBuf, sizeof(animBuf))) {
+        if (ui::inputTextString("Anim##wp", animBuf, sizeof(animBuf))) {
             wp.animState = animBuf;
             writeCurrentPlacement(context);
         }

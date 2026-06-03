@@ -17,7 +17,7 @@ bool inputString(const char* label, std::string& value, std::size_t maxSize = 64
     char buffer[256]{};
     const std::size_t copyLen = std::min(value.size(), std::min(maxSize, sizeof(buffer) - 1));
     std::memcpy(buffer, value.data(), copyLen);
-    if (ImGui::InputText(label, buffer, sizeof(buffer))) {
+    if (ui::inputTextString(label, buffer, sizeof(buffer))) {
         value = buffer;
         if (value.size() > maxSize) {
             value.resize(maxSize);
@@ -137,7 +137,7 @@ void LayoutEditorPanel::draw(EditorContext& context)
 void LayoutEditorPanel::drawToolbar(EditorContext& context)
 {
     ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::InputText("Chapter id", chapterId_.data(), chapterId_.size())) {
+    if (ui::inputTextString("Chapter id", chapterId_.data(), chapterId_.size())) {
         chapter_.id = chapterId_.data();
         context.currentChapterId = chapter_.id;
         context.markDirty();
@@ -601,6 +601,12 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         context.requestEditItems = true;
     }
 
+    if (ImGui::Button("Edit Doors", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditDoors = true;
+    }
+
     if (ImGui::Button("Edit NPCs", ImVec2(-1.0f, 34.0f))) {
         context.selectedScreenId = screen.id;
         context.selectedScreenMapId = screen.mapId;
@@ -843,6 +849,17 @@ void LayoutEditorPanel::saveDirtyMaps(EditorContext& context)
 
         std::string error;
         const std::filesystem::path outputPath = context.assets.gameMapPath() / (mapId + ".admap");
+
+        // The cached map only tracks tile layers edited here. Obstacles, items,
+        // and doors are authored in other editors and may have changed on disk
+        // since this map was cached, so re-read them to avoid clobbering them.
+        game::TileMap onDisk;
+        if (game::loadTileMap(outputPath, onDisk, nullptr)) {
+            it->second.obstacles = std::move(onDisk.obstacles);
+            it->second.items = std::move(onDisk.items);
+            it->second.doors = std::move(onDisk.doors);
+        }
+
         if (game::saveTileMap(outputPath, it->second, &error)) {
             ++savedCount;
         } else {

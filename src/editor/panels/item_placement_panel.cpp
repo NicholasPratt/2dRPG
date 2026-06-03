@@ -1,5 +1,6 @@
 #include "editor/panels/item_placement_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 #include "game/map.hpp"
 
@@ -203,7 +204,7 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
             ImGui::TextDisabled("Define weapons in the Weapons tab.");
         }
     } else if (pickupType_ == 1) {
-        ImGui::InputText("Ammo type ID##place_ammo", targetId_.data(), targetId_.size());
+        ui::inputTextString("Ammo type ID##place_ammo", targetId_.data(), targetId_.size());
         ImGui::DragInt("Quantity##place_qty", &quantity_, 1.0f, 1, 999);
     } else if (pickupType_ == 2) {
         ImGui::DragInt("HP restore##place_hp", &quantity_, 1.0f, 1, 99);
@@ -223,7 +224,7 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
         ImGui::DragInt("Quantity##place_item_qty", &quantity_, 1.0f, 1, 999);
     }
 
-    ImGui::InputText("Pickup sprite ID##place_sprite", spriteId_.data(), spriteId_.size());
+    ui::inputTextString("Pickup sprite ID##place_sprite", spriteId_.data(), spriteId_.size());
     ImGui::SameLine();
     if (ImGui::Button("Edit Sprite##place_pickup_sprite")) {
         std::string spriteId(spriteId_.data());
@@ -298,7 +299,7 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
     }
 
     ImGui::TextUnformatted("Item Properties");
-    if (ImGui::InputText("ID##iid", itemId_.data(), itemId_.size())) { context.markDirty(); }
+    if (ui::inputTextString("ID##iid", itemId_.data(), itemId_.size())) { context.markDirty(); }
 
     const char* typeItems[] = { "Weapon", "Ammo", "Health", "Project Item" };
     if (ImGui::Combo("Type##itype", &pickupType_, typeItems, 4)) { context.markDirty(); }
@@ -321,10 +322,10 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
             ImGui::EndCombo();
         }
         if (context.weaponDefs.empty()) {
-            if (ImGui::InputText("Weapon ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
+            if (ui::inputTextString("Weapon ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
         }
     } else if (pickupType_ == 1) {
-        if (ImGui::InputText("Ammo type ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
+        if (ui::inputTextString("Ammo type ID##itarget", targetId_.data(), targetId_.size())) { context.markDirty(); }
         if (ImGui::DragInt("Quantity##iqty", &quantity_, 1.0f, 1, 999)) { context.markDirty(); }
     } else if (pickupType_ == 2) {
         if (ImGui::DragInt("HP restore##iqty", &quantity_, 1.0f, 1, 99)) { context.markDirty(); }
@@ -343,13 +344,13 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
             ImGui::EndCombo();
         }
         if (context.itemDefs.empty()) {
-            if (ImGui::InputText("Item ID##itarget_item", targetId_.data(), targetId_.size())) { context.markDirty(); }
+            if (ui::inputTextString("Item ID##itarget_item", targetId_.data(), targetId_.size())) { context.markDirty(); }
         }
         if (ImGui::DragInt("Quantity##iqty_item", &quantity_, 1.0f, 1, 999)) { context.markDirty(); }
     }
 
     if (ImGui::Checkbox("Respawn##iresp", &respawn_)) { context.markDirty(); }
-    if (ImGui::InputText("Pickup sprite ID##isprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+    if (ui::inputTextString("Pickup sprite ID##isprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
     ImGui::SameLine();
     if (ImGui::Button("Edit Pickup Sprite##item_sprite")) {
         requestEditPickupSprite(context);
@@ -359,6 +360,31 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
         ImGui::TextDisabled("Weapon sprite: %s | Ammo sprite: %s",
             weapon == nullptr || weapon->spriteId.empty() ? "(none)" : weapon->spriteId.c_str(),
             weapon == nullptr || weapon->ammoSpriteId.empty() ? "(uses weapon sprite)" : weapon->ammoSpriteId.c_str());
+        if (std::string(targetId_.data()).empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Weapon ID is required.");
+        } else if (weapon == nullptr) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Weapon ID is not defined in the Weapons tab.");
+        }
+    } else if (pickupType_ == 1) {
+        const std::string ammoId(targetId_.data());
+        const bool ammoExists = std::any_of(context.itemDefs.begin(), context.itemDefs.end(), [&ammoId](const game::ItemDef& item) {
+            return item.type == game::ItemDefType::Ammo && (item.id == ammoId || item.targetId == ammoId);
+        });
+        if (ammoId.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Ammo type ID is required.");
+        } else if (!ammoExists) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "No Ammo item matches this id or target id.");
+        }
+    } else if (pickupType_ == 3) {
+        const std::string itemId(targetId_.data());
+        const bool itemExists = std::any_of(context.itemDefs.begin(), context.itemDefs.end(), [&itemId](const game::ItemDef& item) {
+            return item.id == itemId;
+        });
+        if (itemId.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Item ID is required.");
+        } else if (!itemExists) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Item ID is not defined in the Items tab.");
+        }
     }
 
     if (ImGui::Button("Apply##iapply", ImVec2(-1.0f, 0.0f))) {

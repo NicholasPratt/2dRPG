@@ -159,6 +159,20 @@ bool readIntArray2(const std::string& s, std::size_t& pos, std::array<int, 2>& o
     return expect(s, pos, ']');
 }
 
+bool readIntArray4(const std::string& s, std::size_t& pos, std::array<int, 4>& out)
+{
+    if (!expect(s, pos, '[')) {
+        return false;
+    }
+    if (!readJsonInt(s, pos, out[0]) || !expect(s, pos, ',') ||
+        !readJsonInt(s, pos, out[1]) || !expect(s, pos, ',') ||
+        !readJsonInt(s, pos, out[2]) || !expect(s, pos, ',') ||
+        !readJsonInt(s, pos, out[3])) {
+        return false;
+    }
+    return expect(s, pos, ']');
+}
+
 bool readFrame(const std::string& s, std::size_t& pos, SpriteFrameDef& frame)
 {
     if (!expect(s, pos, '{')) {
@@ -287,6 +301,8 @@ bool saveSpriteMetadata(const std::filesystem::path& path, const SpriteMetadata&
     output << "  \"canvasSize\": [" << metadata.canvasSize[0] << ", " << metadata.canvasSize[1] << "],\n";
     output << "  \"gridSize\": [" << metadata.gridSize[0] << ", " << metadata.gridSize[1] << "],\n";
     output << "  \"pivot\": [" << metadata.pivot[0] << ", " << metadata.pivot[1] << "],\n";
+    output << "  \"bodyGuide\": [" << metadata.bodyGuide[0] << ", " << metadata.bodyGuide[1]
+           << ", " << metadata.bodyGuide[2] << ", " << metadata.bodyGuide[3] << "],\n";
     output << "  \"frames\": [\n";
     for (std::size_t i = 0; i < metadata.frames.size(); ++i) {
         const SpriteFrameDef& frame = metadata.frames[i];
@@ -376,6 +392,11 @@ bool loadSpriteMetadata(const std::filesystem::path& path, SpriteMetadata& metad
         } else if (key == "pivot") {
             if (!readIntArray2(content, pos, loaded.pivot)) {
                 setError(errorMessage, "Failed to read pivot.");
+                return false;
+            }
+        } else if (key == "bodyGuide") {
+            if (!readIntArray4(content, pos, loaded.bodyGuide)) {
+                setError(errorMessage, "Failed to read bodyGuide.");
                 return false;
             }
         } else if (key == "frames") {

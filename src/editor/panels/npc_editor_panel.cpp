@@ -76,7 +76,7 @@ bool editString(const char* label, std::string& value)
 {
     char buffer[128]{};
     std::memcpy(buffer, value.data(), std::min(value.size(), sizeof(buffer) - 1));
-    if (ImGui::InputText(label, buffer, sizeof(buffer))) {
+    if (ui::inputTextString(label, buffer, sizeof(buffer))) {
         value = buffer;
         return true;
     }
@@ -241,7 +241,7 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
     ImGui::Separator();
     ImGui::TextUnformatted("Selected NPC");
 
-    if (ImGui::InputText("ID", placementId_.data(), placementId_.size())) {
+    if (ui::inputTextString("ID", placementId_.data(), placementId_.size())) {
         writeCurrentPlacement(context);
     }
 
@@ -261,7 +261,7 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
         writeCurrentPlacement(context);
     }
 
-    if (ImGui::InputText("Graph Override", graphId_.data(), graphId_.size())) {
+    if (ui::inputTextString("Graph Override", graphId_.data(), graphId_.size())) {
         writeCurrentPlacement(context);
     }
     if (ImGui::Button("Edit Instance Dialogue", ImVec2(-1.0f, 22.0f))) {
@@ -301,13 +301,13 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
         char textBuf[256]{};
         std::memcpy(textBuf, line.text.data(), std::min(line.text.size(), sizeof(textBuf) - 1));
         ImGui::SetNextItemWidth(80.0f);
-        if (ImGui::InputText("##spk", speakerBuf, sizeof(speakerBuf))) {
+        if (ui::inputTextString("##spk", speakerBuf, sizeof(speakerBuf))) {
             line.speaker = speakerBuf;
             writeCurrentPlacement(context);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-30.0f);
-        if (ImGui::InputText("##txt", textBuf, sizeof(textBuf))) {
+        if (ui::inputTextString("##txt", textBuf, sizeof(textBuf))) {
             line.text = textBuf;
             writeCurrentPlacement(context);
         }
@@ -358,6 +358,12 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
             ImGui::EndCombo();
         }
         if (editString("Item ID", shopItem.itemId)) { writeCurrentPlacement(context); }
+        if (shopItem.itemId.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Item ID is required.");
+        } else if (std::none_of(context.itemDefs.begin(), context.itemDefs.end(),
+            [&shopItem](const game::ItemDef& item) { return item.id == shopItem.itemId; })) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Item ID is not defined in the Items tab.");
+        }
         if (ImGui::DragInt("Buy", &shopItem.buyPrice, 1.0f, 0, 999999)) { writeCurrentPlacement(context); }
         if (ImGui::DragInt("Sell", &shopItem.sellPrice, 1.0f, 0, 999999)) { writeCurrentPlacement(context); }
         if (ImGui::Checkbox("Unlimited", &shopItem.unlimited)) { writeCurrentPlacement(context); }
@@ -427,7 +433,7 @@ void NpcEditorPanel::drawWaypointList(EditorContext& context)
         char animBuf[64]{};
         std::memcpy(animBuf, wp.animState.data(), std::min(wp.animState.size(), sizeof(animBuf) - 1));
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::InputText("Anim##wp", animBuf, sizeof(animBuf))) {
+        if (ui::inputTextString("Anim##wp", animBuf, sizeof(animBuf))) {
             wp.animState = animBuf;
             writeCurrentPlacement(context);
         }
@@ -738,12 +744,12 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
         char textBuf[256]{};
         std::memcpy(textBuf, line.text.data(), std::min(line.text.size(), sizeof(textBuf) - 1));
         ImGui::SetNextItemWidth(100.0f);
-        if (ImGui::InputText("Speaker", speakerBuf, sizeof(speakerBuf))) {
+        if (ui::inputTextString("Speaker", speakerBuf, sizeof(speakerBuf))) {
             line.speaker = speakerBuf;
             context.markDirty();
         }
         ImGui::SetNextItemWidth(-40.0f);
-        if (ImGui::InputText("Text", textBuf, sizeof(textBuf))) {
+        if (ui::inputTextString("Text", textBuf, sizeof(textBuf))) {
             line.text = textBuf;
             context.markDirty();
         }
@@ -786,6 +792,12 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
             ImGui::EndCombo();
         }
         if (editString("Item ID", shopItem.itemId)) { context.markDirty(); }
+        if (shopItem.itemId.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Item ID is required.");
+        } else if (std::none_of(context.itemDefs.begin(), context.itemDefs.end(),
+            [&shopItem](const game::ItemDef& item) { return item.id == shopItem.itemId; })) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Item ID is not defined in the Items tab.");
+        }
         if (ImGui::DragInt("Buy Price", &shopItem.buyPrice, 1.0f, 0, 999999)) { context.markDirty(); }
         if (ImGui::DragInt("Sell Price", &shopItem.sellPrice, 1.0f, 0, 999999)) { context.markDirty(); }
         if (ImGui::Checkbox("Unlimited", &shopItem.unlimited)) { context.markDirty(); }

@@ -1,5 +1,7 @@
 #include "editor/panels/dialogue_graph_editor_panel.hpp"
 
+#include "editor/imgui_widgets.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -79,7 +81,7 @@ bool editString(const char* label, std::string& value, std::size_t capacity = 25
 {
     std::vector<char> buffer(capacity, '\0');
     std::memcpy(buffer.data(), value.data(), std::min(value.size(), buffer.size() - 1));
-    if (ImGui::InputText(label, buffer.data(), buffer.size())) {
+    if (ui::inputTextString(label, buffer.data(), buffer.size())) {
         value = buffer.data();
         return true;
     }
@@ -296,7 +298,7 @@ void DialogueGraphEditorPanel::drawGraphList(EditorContext& context)
 {
     ImGui::TextUnformatted("Dialogue Graphs");
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputText("##new_graph_id", newGraphId_.data(), newGraphId_.size());
+    ui::inputTextString("##new_graph_id", newGraphId_.data(), newGraphId_.size());
     if (ImGui::Button("New Graph", ImVec2(-1.0f, 26.0f))) {
         if (dirty_) {
             saveCurrentGraph(context);

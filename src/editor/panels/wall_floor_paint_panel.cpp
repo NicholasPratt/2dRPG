@@ -184,10 +184,24 @@ std::uint32_t blendOver(std::uint32_t dst, std::uint32_t src, float opacity)
 
 void checkerboard(ImDrawList* drawList, ImVec2 min, ImVec2 max, float cellSize)
 {
-    for (float y = min.y; y < max.y; y += cellSize) {
-        for (float x = min.x; x < max.x; x += cellSize) {
+    cellSize = std::max(8.0f, cellSize);
+    const ImVec2 clipMin = drawList->GetClipRectMin();
+    const ImVec2 clipMax = drawList->GetClipRectMax();
+    const float startX = std::max(min.x, clipMin.x);
+    const float startY = std::max(min.y, clipMin.y);
+    const float endX = std::min(max.x, clipMax.x);
+    const float endY = std::min(max.y, clipMax.y);
+    if (startX >= endX || startY >= endY) {
+        return;
+    }
+
+    const float firstX = min.x + std::floor((startX - min.x) / cellSize) * cellSize;
+    const float firstY = min.y + std::floor((startY - min.y) / cellSize) * cellSize;
+    for (float y = firstY; y < endY; y += cellSize) {
+        for (float x = firstX; x < endX; x += cellSize) {
             const bool even = (static_cast<int>((x - min.x) / cellSize) + static_cast<int>((y - min.y) / cellSize)) % 2 == 0;
-            drawList->AddRectFilled({x, y}, {std::min(x + cellSize, max.x), std::min(y + cellSize, max.y)},
+            drawList->AddRectFilled({std::max(x, startX), std::max(y, startY)},
+                {std::min(x + cellSize, endX), std::min(y + cellSize, endY)},
                 even ? IM_COL32(58, 62, 66, 255) : IM_COL32(74, 79, 84, 255));
         }
     }
@@ -524,7 +538,7 @@ void WallFloorPaintPanel::drawScreenNavigator(EditorContext& context)
 void WallFloorPaintPanel::drawToolbar(EditorContext& context)
 {
     ImGui::SetNextItemWidth(180.0f);
-    ImGui::InputText("Asset id", assetId_.data(), assetId_.size());
+    ui::inputTextString("Asset id", assetId_.data(), assetId_.size());
     ImGui::SameLine();
     ImGui::Text("%dx%d px", width_, height_);
 
@@ -847,7 +861,7 @@ void WallFloorPaintPanel::drawTilePalette(EditorContext& context)
         const std::size_t nameLen = std::min(tile.name.size(), sizeof(nameBuf) - 1);
         std::memcpy(nameBuf, tile.name.data(), nameLen);
         ImGui::SetNextItemWidth(80.0f);
-        if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) {
+        if (ui::inputTextString("##name", nameBuf, sizeof(nameBuf))) {
             tile.name = nameBuf;
             context.markDirty();
         }
@@ -1475,10 +1489,17 @@ void WallFloorPaintPanel::drawBrushShapeButton(const char* label, BrushShape sha
 
 void WallFloorPaintPanel::drawLayerPixels(ImDrawList* drawList, const PaintLayer& layer, ImVec2 origin, float pixelSize, ImVec2 offset, bool wrap) const
 {
+    const std::size_t expected = static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
+    if (width_ <= 0 || height_ <= 0 || pixelSize <= 0.0f || layer.pixels.size() < expected) {
+        return;
+    }
+
     const int repeatX = wrap ? 2 : 1;
     const int repeatY = wrap ? 2 : 1;
     const float layerWidth = static_cast<float>(width_) * pixelSize;
     const float layerHeight = static_cast<float>(height_) * pixelSize;
+    const ImVec2 clipMin = drawList->GetClipRectMin();
+    const ImVec2 clipMax = drawList->GetClipRectMax();
     float baseX = wrap ? -std::fmod(offset.x * pixelSize, layerWidth) : -offset.x * pixelSize;
     float baseY = wrap ? -std::fmod(offset.y * pixelSize, layerHeight) : -offset.y * pixelSize;
     if (wrap && baseX > 0.0f) {
@@ -1491,15 +1512,41 @@ void WallFloorPaintPanel::drawLayerPixels(ImDrawList* drawList, const PaintLayer
     for (int ry = 0; ry < repeatY; ++ry) {
         for (int rx = 0; rx < repeatX; ++rx) {
             const ImVec2 layerOrigin{origin.x + baseX + static_cast<float>(rx) * layerWidth, origin.y + baseY + static_cast<float>(ry) * layerHeight};
-            for (int y = 0; y < height_; ++y) {
-                for (int x = 0; x < width_; ++x) {
+            const float layerMinX = layerOrigin.x;
+            const float layerMinY = layerOrigin.y;
+            const float layerMaxX = layerOrigin.x + layerWidth;
+            const float layerMaxY = layerOrigin.y + layerHeight;
+            if (layerMaxX <= clipMin.x || layerMaxY <= clipMin.y || layerMinX >= clipMax.x || layerMinY >= clipMax.y) {
+                continue;
+            }
+
+            const int xBegin = std::clamp(static_cast<int>(std::floor((clipMin.x - layerOrigin.x) / pixelSize)), 0, width_);
+            const int xEnd = std::clamp(static_cast<int>(std::ceil((clipMax.x - layerOrigin.x) / pixelSize)), 0, width_);
+            const int yBegin = std::clamp(static_cast<int>(std::floor((clipMin.y - layerOrigin.y) / pixelSize)), 0, height_);
+            const int yEnd = std::clamp(static_cast<int>(std::ceil((clipMax.y - layerOrigin.y) / pixelSize)), 0, height_);
+            if (xBegin >= xEnd || yBegin >= yEnd) {
+                continue;
+            }
+
+            for (int y = yBegin; y < yEnd; ++y) {
+                int x = xBegin;
+                while (x < xEnd) {
                     const std::uint32_t color = layer.pixels[static_cast<std::size_t>(y * width_ + x)];
                     if (alphaOf(color) == 0u) {
+                        ++x;
                         continue;
                     }
-                    const ImVec2 min{layerOrigin.x + static_cast<float>(x) * pixelSize, layerOrigin.y + static_cast<float>(y) * pixelSize};
-                    const ImVec2 max{min.x + pixelSize, min.y + pixelSize};
+                    int runEnd = x + 1;
+                    while (runEnd < xEnd &&
+                        layer.pixels[static_cast<std::size_t>(y * width_ + runEnd)] == color) {
+                        ++runEnd;
+                    }
+                    const ImVec2 min{layerOrigin.x + static_cast<float>(x) * pixelSize,
+                        layerOrigin.y + static_cast<float>(y) * pixelSize};
+                    const ImVec2 max{layerOrigin.x + static_cast<float>(runEnd) * pixelSize,
+                        min.y + pixelSize};
                     drawCompositePixel(drawList, min, max, color, layer.opacity);
+                    x = runEnd;
                 }
             }
         }

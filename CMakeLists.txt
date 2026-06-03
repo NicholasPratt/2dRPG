@@ -39,6 +39,7 @@ add_library(adventure_editor STATIC
     src/editor/editor_state.cpp
     src/editor/stb_image_impl.cpp
     src/editor/panels/character_editor_panel.cpp
+    src/editor/panels/door_placement_panel.cpp
     src/editor/panels/dialogue_graph_editor_panel.cpp
     src/editor/panels/enemy_path_editor_panel.cpp
     src/editor/panels/item_placement_panel.cpp

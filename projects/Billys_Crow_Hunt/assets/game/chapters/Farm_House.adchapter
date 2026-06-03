@@ -40,14 +40,15 @@ wp 248 72 0 0 -1 -
 wp 136 152 0 0 -1 -
 wp 104 152 0 0 -1 -
 dl "" "There's a lot of crows about!"
-npc npc_2 Fred 568 104 0 64 24 0 1 15 - 1 1 0
+npc npc_2 Fred 568 104 0 64 24 0 1 15 screen_1_npc_2_dialogue 1 1 0
 wp 568 104 0 0 -1 -
 dl "" "You Should Find Grandma Spelling, She'll know what to do!"
 npc Dhag1 Fred 424 344 0 64 24 0 1 15 - 1 1 0
 wp 424 344 0 0 -1 -
 dl "" "I find crows a bit scary..."
-animtiles 1
+animtiles 2
 animtile anim_tile_screen_1_map 11 14 1
+animtile tile_screen_1_map_6 11 13 1
 screen screen_2 screen_2_map -1 0
 links - - screen_1 -
 respawn 0

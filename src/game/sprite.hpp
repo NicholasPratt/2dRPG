@@ -23,6 +23,9 @@ struct SpriteMetadata {
     std::array<int, 2> canvasSize{16, 16};
     std::array<int, 2> gridSize{16, 16};
     std::array<int, 2> pivot{8, 8};
+    // Editor-only authoring guide rectangle [x, y, width, height] in canvas
+    // pixels. width/height <= 0 means "unset". Ignored by the game runtime.
+    std::array<int, 4> bodyGuide{0, 0, 0, 0};
     std::vector<SpriteFrameDef> frames{{}};
     std::vector<std::string> tags{"idle"};
 };

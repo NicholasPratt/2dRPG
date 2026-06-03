@@ -237,6 +237,7 @@ private:
     TransitionState transitionState_ = TransitionState::None;
     InteractionState interactionState_ = InteractionState::None;
     int interactingNpcIndex_ = -1;
+    int interactingDoorIndex_ = -1;
     int dialogueLineIndex_ = 0;
     int dialogueScrollLine_ = 0;
     std::string dialogueGraphNodeId_;
@@ -249,12 +250,17 @@ private:
     int shopPanel_ = 0;
     int shopSelection_ = 0;
     int shopScroll_[2] = {0, 0};
+    bool shopBuyActive_ = false;
+    int shopBuyIndex_ = -1;
+    int shopBuyQuantity_ = 0;
     bool shopUpWasDown_ = false;
     bool shopDownWasDown_ = false;
     bool shopLeftWasDown_ = false;
     bool shopRightWasDown_ = false;
     bool shopUseWasDown_ = false;
     bool shopExitWasDown_ = false;
+    std::string noticeText_;
+    float noticeSeconds_ = 0.0f;
 
     [[nodiscard]] bool loadScreen(const std::string& screenId, std::string* errorMessage);
     [[nodiscard]] bool loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage);
@@ -262,6 +268,7 @@ private:
     void loadPlayableCharacter();
     void loadProjectFont();
     void loadWeapons();
+    void syncInventoryFromGameState();
     void loadPathEntities();
     void loadNpcEntities();
     void loadAllSprites();
@@ -274,8 +281,13 @@ private:
     void update(float dt);
     void updateInventoryInput();
     [[nodiscard]] std::vector<std::string> sortedInventoryIds() const;
+    [[nodiscard]] std::vector<std::string> sortedShopInventoryIds() const;
     [[nodiscard]] std::vector<std::string> ammoInventoryIds() const;
     [[nodiscard]] bool isAmmoItemId(const std::string& id) const;
+    [[nodiscard]] bool isCurrencyItemId(const std::string& id) const;
+    [[nodiscard]] bool hasInventoryItem(const std::string& itemId) const;
+    void addInventoryItem(const std::string& itemId, int quantity);
+    [[nodiscard]] bool removeInventoryItem(const std::string& itemId, int quantity);
     void useInventoryItem(const std::string& itemId);
     void updatePlayer(float dt);
     void updateAttack(float dt);
@@ -290,8 +302,14 @@ private:
     void updateNpcs(float dt);
     void updateNpcAwareness();
     void updateInteraction();
+    [[nodiscard]] int nearestInteractableDoor() const;
+    [[nodiscard]] bool playerCanInteractWithDoor(const MapDoorPlacement& door) const;
+    [[nodiscard]] bool activateDoor(const MapDoorPlacement& door);
+    void showNotice(const std::string& text, float seconds = 1.6f);
     void updateShopInput();
-    void buyShopItem(RuntimeNpcEntity& npc, int index);
+    [[nodiscard]] int maxShopBuyQuantity(const RuntimeNpcEntity& npc, int index) const;
+    void beginShopPurchase(const RuntimeNpcEntity& npc, int index);
+    void buyShopItem(RuntimeNpcEntity& npc, int index, int quantity);
     void sellInventoryItem(const std::string& itemId);
     void startDialogueGraph(const RuntimeNpcEntity& npc);
     void advanceDialogueGraph();
@@ -311,6 +329,7 @@ private:
     [[nodiscard]] bool playerOverlapsObstacle(const MapObstacle& obstacle) const;
     [[nodiscard]] bool playerOverlapsEnemy(const RuntimePathEntity& entity) const;
     [[nodiscard]] bool playerOverlapsItem(const RuntimeItemEntity& item) const;
+    [[nodiscard]] bool playerOverlapsDoor(const MapDoorPlacement& door) const;
     void collectItem(RuntimeItemEntity& item);
     void recordEnemyDefeated(const std::string& screenId, const RuntimePathEntity& entity);
     void applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, float dirY);
@@ -337,8 +356,10 @@ private:
     [[nodiscard]] const SpriteFrameDef* playerSpriteFrame(bool& flipHorizontal) const;
     static std::string directionFromFacing(float fx, float fy);
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;
+    void renderDoors() const;
     void renderNpcs() const;
     void renderInteractionPrompt() const;
+    void renderNotice() const;
     void renderSpeechBubble() const;
     void renderDialogueBox() const;
     void renderShopMenu() const;

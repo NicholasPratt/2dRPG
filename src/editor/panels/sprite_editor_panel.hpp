@@ -47,6 +47,9 @@ struct SpriteDocument {
     std::array<int, 2> canvasSize{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
     std::array<int, 2> gridSize{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
     std::array<int, 2> pivot{kDefaultSpriteCanvasSize / 2, kDefaultSpriteCanvasSize / 2};
+    // Authoring guide rectangle [x, y, width, height] in canvas pixels.
+    // width/height <= 0 means "unset". Overlay only; never rendered in game.
+    std::array<int, 4> bodyGuide{0, 0, 0, 0};
     std::vector<SpriteFrame> frames{{}};
     std::vector<SpriteLayer> layers{{}};
     std::vector<std::string> tags{"idle"};
@@ -91,6 +94,8 @@ private:
     std::unordered_map<std::string, SpriteDocumentBuffer> documentBuffers_;
     bool showGrid_ = true;
     bool onionSkin_ = false;
+    bool showPivot_ = true;
+    bool showBodyGuide_ = true;
     int zoom_ = 8;
     int selectedFrame_ = 0;
     int selectedLayer_ = 0;

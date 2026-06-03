@@ -104,7 +104,7 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
         ImGui::Separator();
         ImGui::TextUnformatted("Edit Weapon");
 
-        if (ImGui::InputText("ID##wid", weaponId_.data(), weaponId_.size())) { context.markDirty(); }
+        if (ui::inputTextString("ID##wid", weaponId_.data(), weaponId_.size())) { context.markDirty(); }
         const char* typeItems[] = { "Melee", "Ranged" };
         if (ImGui::Combo("Type", &weaponType_, typeItems, 2)) { context.markDirty(); }
         if (ImGui::DragInt("Damage", &damage_, 0.1f, 1, 100)) { context.markDirty(); }
@@ -115,7 +115,7 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
             ImGui::Separator();
             ImGui::TextDisabled("Ranged");
             if (ImGui::DragFloat("Projectile speed", &projectileSpeed_, 1.0f, 50.0f, 2000.0f)) { context.markDirty(); }
-            if (ImGui::InputText("Ammo type ID", ammoTypeId_.data(), ammoTypeId_.size())) { context.markDirty(); }
+            if (ui::inputTextString("Ammo type ID", ammoTypeId_.data(), ammoTypeId_.size())) { context.markDirty(); }
             if (ImGui::DragInt("Ammo per shot", &ammoPerShot_, 0.1f, 1, 100)) { context.markDirty(); }
             const char* wallItems[] = { "Break (arrow/bullet)", "Rebound (slingshot stone)" };
             if (ImGui::Combo("On wall hit", &wallBehavior_, wallItems, 2)) { context.markDirty(); }
@@ -125,7 +125,7 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
         ImGui::Separator();
         ImGui::TextUnformatted("Weapon Sprite");
         ImGui::TextDisabled("Visual for the weapon definition.");
-        if (ImGui::InputText("Weapon sprite ID", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+        if (ui::inputTextString("Weapon sprite ID", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
         ImGui::SameLine();
         if (ImGui::Button("Edit Weapon Sprite##weapon_sprite")) {
             std::string spriteId(spriteId_.data());
@@ -144,7 +144,7 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
             ImGui::Spacing();
             ImGui::TextUnformatted("Ammo Projectile Sprite");
             ImGui::TextDisabled("Visual for shots fired by this ranged weapon. Leave blank to use the weapon sprite.");
-            if (ImGui::InputText("Ammo sprite ID", ammoSpriteId_.data(), ammoSpriteId_.size())) { context.markDirty(); }
+            if (ui::inputTextString("Ammo sprite ID", ammoSpriteId_.data(), ammoSpriteId_.size())) { context.markDirty(); }
             ImGui::SameLine();
             if (ImGui::Button("Edit Ammo Sprite##weapon_ammo_sprite")) {
                 std::string ammoSpriteId(ammoSpriteId_.data());
@@ -170,7 +170,7 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
 
     std::array<char, 64> startBuf{};
     copyToBuffer(startBuf, context.startingWeaponId);
-    if (ImGui::InputText("Starting weapon ID", startBuf.data(), startBuf.size())) {
+    if (ui::inputTextString("Starting weapon ID", startBuf.data(), startBuf.size())) {
         context.startingWeaponId = startBuf.data();
         context.markDirty();
     }
