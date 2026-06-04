@@ -3638,7 +3638,10 @@ void Engine::render()
     }
 
     for (const MapObstacle& obstacle : activeMap_.obstacles) {
-        const bool active = obstacleIsActive(obstacle);
+        if (!obstacleIsActive(obstacle)) {
+            continue;
+        }
+
         const float x = static_cast<float>(obstacle.x * kTileSize);
         const float y = static_cast<float>(obstacle.y * kTileSize);
         const float w = static_cast<float>(obstacle.width * kTileSize);
@@ -3653,25 +3656,8 @@ void Engine::render()
                 const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
                 const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
                 renderTextureRegion(spriteIt->second.texture, x, y, w, h, u0, v0, u1, v1);
-                if (!active) {
-                    renderFilledRect(x, y, w, h, 0.05f, 0.08f, 0.10f, 0.45f);
-                }
-                continue;
             }
         }
-
-        float r = 0.90f;
-        float g = 0.12f;
-        float b = 0.16f;
-        float a = active ? 0.42f : 0.18f;
-        if (obstacle.type == ObstacleType::Pit) {
-            r = 0.02f; g = 0.02f; b = 0.03f; a = 0.70f;
-        } else if (obstacle.type == ObstacleType::TimedSpike) {
-            r = active ? 1.0f : 0.20f;
-            g = active ? 0.62f : 0.50f;
-            b = active ? 0.10f : 0.80f;
-        }
-        renderFilledRect(x, y, w, h, r, g, b, a);
     }
 
     renderItems();

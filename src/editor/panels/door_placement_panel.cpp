@@ -113,6 +113,9 @@ void DoorPlacementPanel::drawDoorList(EditorContext& context)
             }
             context.markDirty();
         }
+        if (selectedDoor_ >= 0 && ImGui::Button("Edit Door Sprite", ImVec2(-1.0f, 0.0f))) {
+            requestEditDoorSprite(context);
+        }
     }
 
     for (int i = 0; i < static_cast<int>(context.selectedScreenDoors.size()); ++i) {
@@ -153,6 +156,9 @@ void DoorPlacementPanel::drawInspector(EditorContext& context)
     if (ImGui::DragInt("Target Tile X##door_tx", &targetTileX_, 1.0f, 0, game::kScreenTilesW - 1)) { context.markDirty(); }
     if (ImGui::DragInt("Target Tile Y##door_ty", &targetTileY_, 1.0f, 0, game::kScreenTilesH - 1)) { context.markDirty(); }
     if (ui::inputTextString("Sprite ID##door_sprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+    if (ImGui::Button("Edit Door Sprite##door_sprite_edit", ImVec2(-1.0f, 0.0f))) {
+        requestEditDoorSprite(context);
+    }
     if (ui::inputTextString("Opening Anim##door_anim", openingAnimation_.data(), openingAnimation_.size())) { context.markDirty(); }
 
     if (ImGui::Button("Apply Door##door_apply", ImVec2(-1.0f, 0.0f))) {
@@ -329,6 +335,24 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
         syncInspectorFromSelected(context);
         context.markDirty();
     }
+}
+
+void DoorPlacementPanel::requestEditDoorSprite(EditorContext& context)
+{
+    if (selectedDoor_ < 0 || selectedDoor_ >= static_cast<int>(context.selectedScreenDoors.size())) {
+        return;
+    }
+
+    std::string spriteId(spriteId_.data());
+    if (spriteId.empty()) {
+        const std::string doorId(doorId_.data());
+        spriteId = doorId.empty() ? "door_sprite" : doorId;
+        copyToBuffer(spriteId_, spriteId);
+        context.markDirty();
+    }
+    writeInspectorToSelected(context);
+    context.requestedSpriteReference = (context.assets.gameSpritePath() / (spriteId + ".sprite.json")).generic_string();
+    context.requestEditSprite = true;
 }
 
 void DoorPlacementPanel::placeDoorAt(EditorContext& context, int tileX, int tileY)

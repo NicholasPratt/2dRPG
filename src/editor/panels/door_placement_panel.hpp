@@ -45,6 +45,7 @@ private:
     void drawCanvas(EditorContext& context);
     void syncInspectorFromSelected(const EditorContext& context);
     void writeInspectorToSelected(EditorContext& context);
+    void requestEditDoorSprite(EditorContext& context);
     void placeDoorAt(EditorContext& context, int tileX, int tileY);
 };
 
