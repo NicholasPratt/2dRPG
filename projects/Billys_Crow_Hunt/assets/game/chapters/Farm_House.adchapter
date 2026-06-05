@@ -53,7 +53,12 @@ screen screen_2 screen_2_map -1 0
 links - - screen_1 -
 respawn 0
 music "-" 1
-enemies 0
+enemies 1
+enemy enemy_1 wevfer 1 1 33 1 0 0 4
+wp 80 320 0 0 -1 -
+wp 192 400 0 0 -1 -
+wp 400 416 0 0 -1 -
+wp 224 400 0 0 -1 -
 npcs 0
 animtiles 0
 screen screen_3 screen_3_map 1 0

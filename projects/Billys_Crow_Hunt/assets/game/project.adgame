@@ -24,9 +24,11 @@ state_def Crows_killed 0 0 0
 state_def player_coins 0 0 0
 effect_defs 1
 effect_def 5crowsdead 1 Crows_killed 5 1
-npc_types 2
+npc_types 3
 npc_type Fred Dhag - 0 1 15 - 1 0
 dl "" "Howzit going young fella!"
 npc_type Merchantile silas silas 0 2 32 - 0 1
 shop_item ss_rock 1 1 1 1
+npc_type Nana Spelling - grandma_spelling 0 1 32 - 1 0
+dl "" "Slow down there Billy!"
 end

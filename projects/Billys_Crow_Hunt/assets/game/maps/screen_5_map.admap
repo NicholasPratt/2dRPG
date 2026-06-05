@@ -1,4 +1,4 @@
-ADMAP 5
+ADMAP 8
 id screen_5_map
 size 48 32
 spawn 1 1
@@ -103,4 +103,5 @@ layer 2
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 obstacles 0
 items 0
+doors 0
 end

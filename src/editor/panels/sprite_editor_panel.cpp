@@ -532,7 +532,15 @@ void SpriteEditorPanel::openSpriteReference(const std::filesystem::path& spriteR
         return;
     }
 
-    // New sprite: set ID and sourcePng (existing behaviour)
+    // New sprite: start from a blank canvas so leftover pixels from the
+    // previously edited sprite do not bleed into this one. Preserve the prior
+    // canvas size when it is valid, otherwise fall back to the default.
+    const bool hasValidSize = document_.canvasSize[0] > 0 && document_.canvasSize[1] > 0;
+    const int blankWidth = hasValidSize ? document_.canvasSize[0] : kDefaultSpriteCanvasSize;
+    const int blankHeight = hasValidSize ? document_.canvasSize[1] : kDefaultSpriteCanvasSize;
+    createBlankSprite(blankWidth, blankHeight);
+    documentDirty_ = false;
+    undoStack_.clear();
     document_.id = newId;
     if (spriteReference.extension() == ".png") {
         document_.sourcePng = spriteReference;
