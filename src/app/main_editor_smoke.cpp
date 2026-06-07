@@ -1,9 +1,33 @@
 #include "editor/editor_app.hpp"
+#include "editor/asset_directories.hpp"
 
 #include "imgui.h"
 
-int main()
+#include <filesystem>
+#include <iostream>
+#include <string>
+
+int main(int argc, char** argv)
 {
+    adventure::editor::AssetDirectories smokeAssets;
+    smokeAssets.projectRoot = "build/editor_asset_structure_smoke";
+    std::string error;
+    if (!smokeAssets.ensureRequiredPaths(&error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    for (const std::filesystem::path& path : smokeAssets.requiredPaths()) {
+        if (!std::filesystem::is_directory(path)) {
+            std::cerr << "Missing required asset directory: " << path << "\n";
+            return 1;
+        }
+    }
+    if (argc > 1 && std::string(argv[1]) == "--directories-only") {
+        std::cout << "Created and verified " << smokeAssets.requiredPaths().size()
+                  << " required asset directories.\n";
+        return 0;
+    }
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();

@@ -126,6 +126,8 @@ private:
     bool selectionDragActive_ = false;
     bool moveDragActive_ = false;
     std::vector<unsigned int> moveSourcePixels_;
+    std::vector<std::array<int, 2>> polygonPoints_;
+    bool polygonUsesSecondaryColor_ = false;
     SpriteClipboard clipboard_;
     std::vector<SpriteUndoState> undoStack_;
     bool strokeUndoCaptured_ = false;
@@ -179,6 +181,10 @@ private:
     void drawLine(SpriteCel& cel, int x0, int y0, int x1, int y1, unsigned int color, bool mirror);
     void drawRectangle(SpriteCel& cel, int x0, int y0, int x1, int y1, unsigned int color);
     void drawCircle(SpriteCel& cel, int x0, int y0, int x1, int y1, unsigned int color);
+    void drawPolygon(SpriteCel& cel, const std::vector<std::array<int, 2>>& points, unsigned int color);
+    void drawPolygonOverlay(ImDrawList* drawList, ImVec2 canvasOrigin, float pixelSize) const;
+    void finishPolygon();
+    void cancelPolygon();
     void floodFill(SpriteCel& cel, int startX, int startY, unsigned int replacementColor);
     void shadePixel(int x, int y, bool useSecondaryColor);
     void drawSelectionOverlay(ImDrawList* drawList, ImVec2 canvasOrigin, float pixelSize) const;
@@ -191,6 +197,7 @@ private:
     void finalizeMoveSelection();
     void duplicateCurrentFrame();
     void deleteCurrentFrame();
+    void reorderFrame(int fromIndex, int toIndex);
     void flipHorizontal();
     void flipVertical();
     void rotateClockwise();

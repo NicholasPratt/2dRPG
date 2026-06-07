@@ -33,7 +33,7 @@ public:
 
 private:
     enum class ActiveLayer { Floor = 0, Wall = 1 };
-    enum class PaintTool { Pencil = 0, Eraser, Fill, Line, Rect, Select, PickColor, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase, TileRotate };
+    enum class PaintTool { Pencil = 0, Eraser, Darken, Lighten, Fill, Line, Rect, Select, PickColor, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase, TileRotate };
     enum class BrushShape { Square = 0, Circle, Spray, Dither };
     enum class SnapMode { None = 0, Full, Half, Quarter };
 
@@ -62,6 +62,7 @@ private:
     int height_ = game::kScreenTilesH * game::kTileSize;
     int zoom_ = 10;
     int brushSize_ = 1;
+    int adjustmentIntensity_ = 20;
     int pixelsPerTile_ = game::kTileSize;
     ActiveLayer activeLayer_ = ActiveLayer::Wall;
     PaintTool tool_ = PaintTool::Pencil;
@@ -69,10 +70,12 @@ private:
     SnapMode snapMode_ = SnapMode::None;
     bool showGrid_ = true;
     bool showWallGuide_ = true;
+    bool showObstacleOverlay_ = true;
     std::string wallGuideMapId_;
     int wallGuideWidth_ = 0;
     int wallGuideHeight_ = 0;
     std::vector<std::uint8_t> wallGuide_;
+    std::vector<game::MapObstacle> obstacleOverlay_;
     bool animatePreview_ = true;
     float previewScrollX_ = 0.0f;
     float previewScrollY_ = 0.0f;
@@ -81,6 +84,7 @@ private:
     std::array<int, 2> dragStart_{-1, -1};
     std::array<int, 2> lastPaint_{-1, -1};
     bool strokeCaptured_ = false;
+    std::vector<std::uint32_t> adjustmentStrokeBaseline_;
     std::uint32_t activeColor_ = 0xff3b82f6u;
     std::vector<std::uint32_t> palette_{
         0xff000000u, 0xffffffffu, 0xff3b82f6u, 0xff22c55eu,
@@ -138,6 +142,7 @@ private:
     void rotateTile(int x, int y, bool clockwise);
     void drawCanvas(EditorContext& context);
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
+    void drawObstacleOverlay(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawParallaxPreview();
     void drawToolButton(const char* label, PaintTool tool);
     void drawBrushShapeButton(const char* label, BrushShape shape);
@@ -154,7 +159,9 @@ private:
     void undo();
     void setPixel(PaintLayer& layer, int x, int y, std::uint32_t color);
     void setBrushPixel(PaintLayer& layer, int x, int y, std::uint32_t color);
+    void setAdjustmentBrushPixel(PaintLayer& layer, int x, int y, bool lighten);
     void paintStroke(int x0, int y0, int x1, int y1, std::uint32_t color);
+    void paintAdjustmentStroke(int x0, int y0, int x1, int y1, bool lighten);
     void drawLine(PaintLayer& layer, int x0, int y0, int x1, int y1, std::uint32_t color);
     void drawRect(PaintLayer& layer, int x0, int y0, int x1, int y1, std::uint32_t color);
     void floodFill(PaintLayer& layer, int startX, int startY, std::uint32_t color);

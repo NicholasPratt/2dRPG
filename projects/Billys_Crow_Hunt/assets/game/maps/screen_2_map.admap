@@ -1,4 +1,4 @@
-ADMAP 8
+ADMAP 10
 id screen_2_map
 size 48 32
 spawn 47 5
@@ -107,6 +107,6 @@ obstacle obstacle_2 2 timed_spikes 23 16 3 3 1 2.4 0 1 0.75
 obstacle obstacle_3 2 timed_spikes 28 17 3 3 1 1.5 0 1 0.75
 obstacle obstacle_4 1 pit 25 4 5 5 1 1 0 1 4
 items 1
-item item_1 0 slingshot 5 547.333 264.667 0 slingshot
+item item_1 3 key 1 269.333 285.333 0 key
 doors 0
 end

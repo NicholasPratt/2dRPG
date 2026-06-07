@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
+#include <vector>
 
 namespace adventure::editor {
 
@@ -21,6 +23,7 @@ struct AssetDirectories {
     std::filesystem::path gameDialogue{"assets/game/dialogue"};
     std::filesystem::path gameFonts{"assets/game/fonts"};
     std::filesystem::path gameMusic{"assets/game/music"};
+    std::filesystem::path gameSfx{"assets/game/sfx"};
 
     [[nodiscard]] std::filesystem::path rawSpritePath() const;
     [[nodiscard]] std::filesystem::path rawCharacterSpritePath() const;
@@ -37,6 +40,9 @@ struct AssetDirectories {
     [[nodiscard]] std::filesystem::path gameDialoguePath() const;
     [[nodiscard]] std::filesystem::path gameFontPath() const;
     [[nodiscard]] std::filesystem::path gameMusicPath() const;
+    [[nodiscard]] std::filesystem::path gameSfxPath() const;
+    [[nodiscard]] std::vector<std::filesystem::path> requiredPaths() const;
+    [[nodiscard]] bool ensureRequiredPaths(std::string* errorMessage = nullptr) const;
 };
 
 } // namespace adventure::editor

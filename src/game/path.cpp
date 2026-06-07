@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <system_error>
 
 namespace adventure::game {
@@ -51,7 +52,7 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
         return false;
     }
 
-    output << "ADPATH 4\n";
+    output << "ADPATH 5\n";
     output << "id " << enemyPath.id << "\n";
     output << "enemy " << encodedToken(enemyPath.enemyId) << "\n";
     output << "sprite " << encodedToken(enemyPath.spriteId) << "\n";
@@ -71,7 +72,10 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
         output << "wp " << waypoint.x << " " << waypoint.y
                << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
                << ' ' << waypoint.facing
-               << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState) << "\n";
+               << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState)
+               << ' ' << static_cast<int>(waypoint.action)
+               << ' ' << waypoint.speechDurationSeconds
+               << ' ' << std::quoted(waypoint.speechText) << "\n";
     }
     output << "end\n";
 
@@ -93,7 +97,7 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADPATH" || version < 1 || version > 4) {
+    if (magic != "ADPATH" || version < 1 || version > 5) {
         setError(errorMessage, "Unsupported path file type or version.");
         return false;
     }
@@ -187,6 +191,12 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
             std::string animToken;
             input >> waypoint.speedOverride >> waypoint.waitSeconds >> waypoint.facing >> animToken;
             waypoint.animState = (animToken == "-") ? std::string{} : animToken;
+        }
+        if (version >= 5) {
+            int action = 0;
+            input >> action >> waypoint.speechDurationSeconds >> std::quoted(waypoint.speechText);
+            waypoint.action = static_cast<PathWaypointAction>(std::clamp(action, 0, 3));
+            waypoint.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
         }
         loaded.waypoints.push_back(waypoint);
     }

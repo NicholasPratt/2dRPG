@@ -54,6 +54,9 @@ struct MapDoorPlacement {
     int targetTileY = 1;
     std::string spriteId;
     std::string openingAnimation;
+    std::string openSoundPath;
+    std::string closeSoundPath;
+    std::string lockedSoundPath;
 };
 
 struct MapObstacle {

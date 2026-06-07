@@ -224,6 +224,10 @@ void ItemPlacementPanel::drawPlacementDefaults(EditorContext& context)
         ImGui::DragInt("Quantity##place_item_qty", &quantity_, 1.0f, 1, 999);
     }
 
+    ImGui::Checkbox("Respawn when screen reloads##place_respawn", &respawn_);
+    ImGui::TextDisabled(respawn_
+        ? "Pickup returns when this screen is loaded again."
+        : "Pickup stays collected for this playthrough.");
     ui::inputTextString("Pickup sprite ID##place_sprite", spriteId_.data(), spriteId_.size());
     ImGui::SameLine();
     if (ImGui::Button("Edit Sprite##place_pickup_sprite")) {
@@ -300,6 +304,21 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
 
     ImGui::TextUnformatted("Item Properties");
     if (ui::inputTextString("ID##iid", itemId_.data(), itemId_.size())) { context.markDirty(); }
+    const std::string placementId(itemId_.data());
+    if (placementId.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+            "Item placement ID is required for pickup persistence.");
+    } else {
+        const int duplicateCount = static_cast<int>(std::count_if(
+            context.selectedScreenItems.begin(), context.selectedScreenItems.end(),
+            [&placementId](const game::MapItemPlacement& item) {
+                return item.id == placementId;
+            }));
+        if (duplicateCount > 1) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                "Item placement ID is duplicated on this screen.");
+        }
+    }
 
     const char* typeItems[] = { "Weapon", "Ammo", "Health", "Project Item" };
     if (ImGui::Combo("Type##itype", &pickupType_, typeItems, 4)) { context.markDirty(); }
@@ -349,7 +368,10 @@ void ItemPlacementPanel::drawInspector(EditorContext& context)
         if (ImGui::DragInt("Quantity##iqty_item", &quantity_, 1.0f, 1, 999)) { context.markDirty(); }
     }
 
-    if (ImGui::Checkbox("Respawn##iresp", &respawn_)) { context.markDirty(); }
+    if (ImGui::Checkbox("Respawn when screen reloads##iresp", &respawn_)) { context.markDirty(); }
+    ImGui::TextDisabled(respawn_
+        ? "Returns after leaving and re-entering the screen."
+        : "Collected once and persisted in the save.");
     if (ui::inputTextString("Pickup sprite ID##isprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
     ImGui::SameLine();
     if (ImGui::Button("Edit Pickup Sprite##item_sprite")) {

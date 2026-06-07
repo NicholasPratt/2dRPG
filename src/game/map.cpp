@@ -141,7 +141,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 8\n";
+    output << "ADMAP 10\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -187,7 +187,10 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
                << ' ' << door.targetTileX
                << ' ' << door.targetTileY
                << ' ' << encodedToken(door.spriteId)
-               << ' ' << encodedToken(door.openingAnimation) << "\n";
+               << ' ' << encodedToken(door.openingAnimation)
+               << ' ' << encodedToken(door.openSoundPath)
+               << ' ' << encodedToken(door.closeSoundPath)
+               << ' ' << encodedToken(door.lockedSoundPath) << "\n";
     }
     output << "end\n";
 
@@ -209,7 +212,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 8) {
+    if (magic != "ADMAP" || version < 1 || version > 10) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -400,11 +403,20 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                 std::string targetScreenToken;
                 std::string spriteIdToken;
                 std::string openingAnimationToken;
+                std::string openSoundToken;
+                std::string closeSoundToken;
+                std::string lockedSoundToken;
                 int lockModeValue = 0;
                 int consumeKeyValue = 0;
                 input >> idToken >> door.x >> door.y >> door.widthTiles >> door.heightTiles
                       >> lockModeValue >> requiredItemToken >> consumeKeyValue >> targetScreenToken
                       >> door.targetTileX >> door.targetTileY >> spriteIdToken >> openingAnimationToken;
+                if (version >= 9) {
+                    input >> openSoundToken >> closeSoundToken;
+                }
+                if (version >= 10) {
+                    input >> lockedSoundToken;
+                }
                 if (!input) {
                     setError(errorMessage, "Invalid door data.");
                     return false;
@@ -416,6 +428,9 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                 door.targetScreenId = decodedToken(targetScreenToken);
                 door.spriteId = decodedToken(spriteIdToken);
                 door.openingAnimation = decodedToken(openingAnimationToken);
+                door.openSoundPath = decodedToken(openSoundToken);
+                door.closeSoundPath = decodedToken(closeSoundToken);
+                door.lockedSoundPath = decodedToken(lockedSoundToken);
                 loaded.doors.push_back(std::move(door));
             }
             input >> key;

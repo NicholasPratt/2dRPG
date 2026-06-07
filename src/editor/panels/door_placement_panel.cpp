@@ -4,8 +4,11 @@
 #include "game/constants.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
+#include <system_error>
+#include <vector>
 
 namespace adventure::editor {
 namespace {
@@ -15,6 +18,28 @@ void copyToBuffer(std::array<char, 64>& buf, const std::string& value)
     std::memset(buf.data(), 0, buf.size());
     const std::size_t len = std::min(value.size(), buf.size() - 1);
     std::memcpy(buf.data(), value.data(), len);
+}
+
+void copyToBuffer(std::array<char, 256>& buf, const std::string& value)
+{
+    std::memset(buf.data(), 0, buf.size());
+    const std::size_t len = std::min(value.size(), buf.size() - 1);
+    std::memcpy(buf.data(), value.data(), len);
+}
+
+std::string portableProjectPath(const EditorContext& context, const std::filesystem::path& path)
+{
+    std::error_code error;
+    const std::filesystem::path relative = std::filesystem::relative(path, context.assets.projectRoot, error);
+    return error ? path.generic_string() : relative.generic_string();
+}
+
+bool supportedSoundFile(const std::filesystem::path& path)
+{
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == ".ogg" || extension == ".wav";
 }
 
 const char* lockModeLabel(int mode)
@@ -140,32 +165,113 @@ void DoorPlacementPanel::drawInspector(EditorContext& context)
     }
 
     ImGui::TextUnformatted("Door Properties");
-    if (ui::inputTextString("ID##door_id", doorId_.data(), doorId_.size())) { context.markDirty(); }
+    ImGui::TextUnformatted("Door ID");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ui::inputTextString("##door_id", doorId_.data(), doorId_.size())) { context.markDirty(); }
     if (ImGui::DragInt("Tile X##door_x", &tileX_, 1.0f, 0, game::kScreenTilesW - 1)) { context.markDirty(); }
     if (ImGui::DragInt("Tile Y##door_y", &tileY_, 1.0f, 0, game::kScreenTilesH - 1)) { context.markDirty(); }
     if (ImGui::DragInt("Tile W##door_w", &widthTiles_, 1.0f, 1, game::kScreenTilesW)) { context.markDirty(); }
     if (ImGui::DragInt("Tile H##door_h", &heightTiles_, 1.0f, 1, game::kScreenTilesH)) { context.markDirty(); }
 
     const char* lockModes[] = {"Free Use", "Locked", "Requires Item"};
-    if (ImGui::Combo("Lock##door_lock", &lockMode_, lockModes, 3)) { context.markDirty(); }
+    ImGui::TextUnformatted("Lock mode");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##door_lock", &lockMode_, lockModes, 3)) { context.markDirty(); }
+    if (lockMode_ == 1) {
+        ImGui::TextDisabled("Locked is permanent.");
+    }
     if (lockMode_ == 2) {
-        if (ui::inputTextString("Required Item##door_req", requiredItemId_.data(), requiredItemId_.size())) { context.markDirty(); }
+        ImGui::TextUnformatted("Required item ID");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ui::inputTextString("##door_req", requiredItemId_.data(), requiredItemId_.size())) { context.markDirty(); }
         if (ImGui::Checkbox("Consume Key##door_consume", &consumeKey_)) { context.markDirty(); }
     }
-    if (ui::inputTextString("Target Screen##door_target", targetScreenId_.data(), targetScreenId_.size())) { context.markDirty(); }
+    ImGui::TextUnformatted("Target screen ID");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ui::inputTextString("##door_target", targetScreenId_.data(), targetScreenId_.size())) { context.markDirty(); }
     if (ImGui::DragInt("Target Tile X##door_tx", &targetTileX_, 1.0f, 0, game::kScreenTilesW - 1)) { context.markDirty(); }
     if (ImGui::DragInt("Target Tile Y##door_ty", &targetTileY_, 1.0f, 0, game::kScreenTilesH - 1)) { context.markDirty(); }
-    if (ui::inputTextString("Sprite ID##door_sprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
+    ImGui::TextUnformatted("Sprite ID");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ui::inputTextString("##door_sprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
     if (ImGui::Button("Edit Door Sprite##door_sprite_edit", ImVec2(-1.0f, 0.0f))) {
         requestEditDoorSprite(context);
     }
-    if (ui::inputTextString("Opening Anim##door_anim", openingAnimation_.data(), openingAnimation_.size())) { context.markDirty(); }
+    ImGui::TextUnformatted("Opening animation ID");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ui::inputTextString("##door_anim", openingAnimation_.data(), openingAnimation_.size())) { context.markDirty(); }
+    drawSoundPicker(context);
 
     if (ImGui::Button("Apply Door##door_apply", ImVec2(-1.0f, 0.0f))) {
         writeInspectorToSelected(context);
     }
     ImGui::TextDisabled("Mode: %s", lockModeLabel(lockMode_));
     drawValidation(context);
+}
+
+void DoorPlacementPanel::drawSoundPicker(EditorContext& context)
+{
+    ImGui::SeparatorText("Door sounds");
+    const std::filesystem::path sfxDir = context.assets.gameSfxPath() / "doors";
+    ImGui::TextDisabled("Assets: %s", sfxDir.string().c_str());
+    std::error_code error;
+    if (!std::filesystem::exists(sfxDir, error)) {
+        ImGui::TextDisabled("No door SFX folder yet.");
+        return;
+    }
+
+    std::vector<std::filesystem::path> soundFiles;
+    for (const std::filesystem::directory_entry& entry :
+        std::filesystem::recursive_directory_iterator(sfxDir, error)) {
+        if (error) {
+            break;
+        }
+        if (!entry.is_regular_file(error) || !supportedSoundFile(entry.path())) {
+            continue;
+        }
+        soundFiles.push_back(entry.path());
+    }
+    std::sort(soundFiles.begin(), soundFiles.end());
+
+    const auto drawDropdown = [&context, &sfxDir, &soundFiles](
+        const char* label, const char* id, std::array<char, 256>& selectedPath) {
+        ImGui::TextUnformatted(label);
+        const std::string current(selectedPath.data());
+        std::string preview = "<None>";
+        if (!current.empty()) {
+            const std::filesystem::path currentPath(current);
+            std::error_code relativeError;
+            const std::filesystem::path relative = std::filesystem::relative(
+                currentPath.is_absolute() ? currentPath : context.assets.projectRoot / currentPath,
+                sfxDir, relativeError);
+            preview = relativeError ? currentPath.filename().string() : relative.generic_string();
+        }
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo(id, preview.c_str())) {
+            if (ImGui::Selectable("<None>", current.empty())) {
+                copyToBuffer(selectedPath, "");
+                context.markDirty();
+            }
+            for (const std::filesystem::path& file : soundFiles) {
+                const std::string path = portableProjectPath(context, file);
+                std::error_code relativeError;
+                const std::string display = std::filesystem::relative(file, sfxDir, relativeError).generic_string();
+                if (ImGui::Selectable(relativeError ? file.filename().string().c_str() : display.c_str(),
+                        current == path)) {
+                    copyToBuffer(selectedPath, path);
+                    context.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+    };
+
+    drawDropdown("Open sound", "##door_open_sound", openSoundPath_);
+    drawDropdown("Close sound", "##door_close_sound", closeSoundPath_);
+    drawDropdown("Locked sound", "##door_locked_sound", lockedSoundPath_);
+    if (soundFiles.empty()) {
+        ImGui::TextDisabled("No .ogg or .wav files found.");
+    }
 }
 
 void DoorPlacementPanel::drawValidation(EditorContext& context)
@@ -208,10 +314,33 @@ void DoorPlacementPanel::drawValidation(EditorContext& context)
         }
     }
 
+    const auto validateSound = [&context, &warning](const std::string& path, const char* label) {
+        if (path.empty()) {
+            return;
+        }
+        const std::filesystem::path configured(path);
+        const std::filesystem::path fullPath = configured.is_absolute()
+            ? configured
+            : context.assets.projectRoot / configured;
+        std::error_code error;
+        if (!supportedSoundFile(fullPath)) {
+            const std::string message = std::string(label) + " must be an .ogg or .wav file.";
+            warning(message.c_str());
+        } else if (!std::filesystem::exists(fullPath, error)) {
+            const std::string message = std::string(label) + " file does not exist.";
+            warning(message.c_str());
+        }
+    };
+    validateSound(door.openSoundPath, "Open sound");
+    validateSound(door.closeSoundPath, "Close sound");
+    validateSound(door.lockedSoundPath, "Locked sound");
+
     const auto screenIt = std::find_if(context.chapterScreens.begin(), context.chapterScreens.end(),
         [&door](const ChapterScreenEntry& screen) { return screen.id == door.targetScreenId; });
     if (door.targetScreenId.empty()) {
-        warning("Target screen is empty.");
+        if (door.lockMode == game::DoorLockMode::FreeUse) {
+            warning("Target screen is empty.");
+        }
         return;
     }
     if (screenIt == context.chapterScreens.end()) {
@@ -372,6 +501,9 @@ void DoorPlacementPanel::placeDoorAt(EditorContext& context, int tileX, int tile
     door.targetTileY = targetTileY_;
     door.spriteId = spriteId_.data();
     door.openingAnimation = openingAnimation_.data();
+    door.openSoundPath = openSoundPath_.data();
+    door.closeSoundPath = closeSoundPath_.data();
+    door.lockedSoundPath = lockedSoundPath_.data();
     context.selectedScreenDoors.push_back(door);
     selectedDoor_ = static_cast<int>(context.selectedScreenDoors.size()) - 1;
     syncInspectorFromSelected(context);
@@ -397,6 +529,9 @@ void DoorPlacementPanel::syncInspectorFromSelected(const EditorContext& context)
     targetTileY_ = door.targetTileY;
     copyToBuffer(spriteId_, door.spriteId);
     copyToBuffer(openingAnimation_, door.openingAnimation);
+    copyToBuffer(openSoundPath_, door.openSoundPath);
+    copyToBuffer(closeSoundPath_, door.closeSoundPath);
+    copyToBuffer(lockedSoundPath_, door.lockedSoundPath);
 }
 
 void DoorPlacementPanel::writeInspectorToSelected(EditorContext& context)
@@ -418,6 +553,9 @@ void DoorPlacementPanel::writeInspectorToSelected(EditorContext& context)
     door.targetTileY = std::clamp(targetTileY_, 0, game::kScreenTilesH - 1);
     door.spriteId = spriteId_.data();
     door.openingAnimation = openingAnimation_.data();
+    door.openSoundPath = openSoundPath_.data();
+    door.closeSoundPath = closeSoundPath_.data();
+    door.lockedSoundPath = lockedSoundPath_.data();
 }
 
 } // namespace adventure::editor

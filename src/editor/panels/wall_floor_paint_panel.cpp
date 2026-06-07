@@ -310,6 +310,7 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
         wallGuideMapId_ = map.id;
         wallGuideWidth_ = map.width;
         wallGuideHeight_ = map.height;
+        obstacleOverlay_ = map.obstacles;
         wallGuide_.assign(static_cast<std::size_t>(wallGuideWidth_ * wallGuideHeight_), 0u);
         for (int y = 0; y < wallGuideHeight_; ++y) {
             for (int x = 0; x < wallGuideWidth_; ++x) {
@@ -322,6 +323,7 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
         wallGuideWidth_ = 0;
         wallGuideHeight_ = 0;
         wallGuideMapId_.clear();
+        obstacleOverlay_.clear();
     }
 
     const int pw = game::kScreenTilesW * game::kTileSize;
@@ -344,6 +346,8 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
     selectionActive_ = false;
     selectionDragging_ = false;
     pasteMode_ = false;
+    adjustmentStrokeBaseline_.clear();
+    strokeCaptured_ = false;
 
     // Restore from in-memory buffer (highest priority)
     const auto expected = static_cast<std::size_t>(pw * ph);
@@ -433,6 +437,8 @@ void WallFloorPaintPanel::resetScreenBuffers()
     currentScreenId_.clear();
     documentDirty_ = false;
     undoStack_.clear();
+    adjustmentStrokeBaseline_.clear();
+    strokeCaptured_ = false;
 }
 
 void WallFloorPaintPanel::ensureDocument()
@@ -551,6 +557,12 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
         ui::checkbox("Wall guide", "##ScreenGraphicsWallGuide", &showWallGuide_);
     }
     ImGui::SameLine();
+    ui::checkbox("Trap hints", "##ScreenGraphicsObstacles", &showObstacleOverlay_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%d pit/spike trap%s on this screen",
+            static_cast<int>(obstacleOverlay_.size()), obstacleOverlay_.size() == 1 ? "" : "s");
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Undo")) {
         undo();
     }
@@ -589,6 +601,16 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
     drawToolButton("Pencil", PaintTool::Pencil);
     ImGui::SameLine();
     drawToolButton("Eraser", PaintTool::Eraser);
+    drawToolButton("Darken", PaintTool::Darken);
+    ImGui::SameLine();
+    drawToolButton("Lighten", PaintTool::Lighten);
+    if (tool_ == PaintTool::Darken || tool_ == PaintTool::Lighten) {
+        ui::sliderInt("Intensity", "##AdjustmentBrushIntensity", &adjustmentIntensity_,
+            1, 100, 120.0f);
+        ImGui::SameLine();
+        ImGui::TextDisabled("%d%%", adjustmentIntensity_);
+        ImGui::TextDisabled("One adjustment per pixel per stroke; edges are dithered.");
+    }
     drawToolButton("Fill", PaintTool::Fill);
     ImGui::SameLine();
     drawToolButton("Line", PaintTool::Line);
@@ -1180,6 +1202,9 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
     if (showWallGuide_) {
         drawWallGuide(drawList, origin, pixelSize);
     }
+    if (showObstacleOverlay_) {
+        drawObstacleOverlay(drawList, origin, pixelSize);
+    }
 
     if ((tool_ == PaintTool::TileDraw || tool_ == PaintTool::TileSelect || tool_ == PaintTool::TilePaste ||
             tool_ == PaintTool::TileFill || tool_ == PaintTool::TileRotate) && ImGui::IsItemHovered()) {
@@ -1425,6 +1450,45 @@ void WallFloorPaintPanel::drawWallGuide(ImDrawList* drawList, ImVec2 origin, flo
     }
 }
 
+void WallFloorPaintPanel::drawObstacleOverlay(ImDrawList* drawList, ImVec2 origin, float pixelSize) const
+{
+    const float tileScreen = static_cast<float>(pixelsPerTile_) * pixelSize;
+    const float now = static_cast<float>(ImGui::GetTime());
+    for (const game::MapObstacle& obstacle : obstacleOverlay_) {
+        const bool active = obstacle.type != game::ObstacleType::TimedSpike ||
+            std::fmod(now + obstacle.phaseSeconds,
+                std::max(0.05f, obstacle.activeSeconds + obstacle.inactiveSeconds)) < obstacle.activeSeconds;
+
+        ImU32 fill = IM_COL32(230, 60, 70, 82);
+        ImU32 border = IM_COL32(255, 105, 115, 235);
+        const char* typeLabel = "S";
+        if (obstacle.type == game::ObstacleType::Pit) {
+            fill = IM_COL32(20, 20, 28, 150);
+            border = IM_COL32(150, 155, 175, 235);
+            typeLabel = "P";
+        } else if (obstacle.type == game::ObstacleType::TimedSpike) {
+            fill = active ? IM_COL32(245, 160, 45, 92) : IM_COL32(80, 150, 210, 64);
+            border = active ? IM_COL32(255, 190, 70, 240) : IM_COL32(115, 185, 240, 220);
+            typeLabel = "T";
+        }
+
+        const ImVec2 min{
+            origin.x + static_cast<float>(obstacle.x) * tileScreen,
+            origin.y + static_cast<float>(obstacle.y) * tileScreen,
+        };
+        const ImVec2 max{
+            min.x + static_cast<float>(std::max(1, obstacle.width)) * tileScreen,
+            min.y + static_cast<float>(std::max(1, obstacle.height)) * tileScreen,
+        };
+        drawList->AddRectFilled(min, max, fill);
+        drawList->AddRect(min, max, border, 0.0f, 0, 2.0f);
+        drawList->AddText({min.x + 3.0f, min.y + 2.0f}, border, typeLabel);
+        if (!obstacle.id.empty() && tileScreen >= 20.0f) {
+            drawList->AddText({min.x + 3.0f, min.y + 16.0f}, border, obstacle.id.c_str());
+        }
+    }
+}
+
 void WallFloorPaintPanel::drawParallaxPreview()
 {
     if (animatePreview_) {
@@ -1465,6 +1529,8 @@ void WallFloorPaintPanel::drawToolButton(const char* label, PaintTool tool)
     if (ImGui::Button(label, {132.0f, 0.0f})) {
         if (tool_ != tool) {
             pasteMode_ = false;
+            adjustmentStrokeBaseline_.clear();
+            strokeCaptured_ = false;
         }
         tool_ = tool;
     }
@@ -1567,6 +1633,7 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         lastPaint_ = {-1, -1};
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             strokeCaptured_ = false;
+            adjustmentStrokeBaseline_.clear();
         }
         return;
     }
@@ -1798,13 +1865,25 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         return;
     }
 
-    ImGui::SetTooltip("%s [%d,%d]", activeLayer().name.c_str(), x, y);
+    const bool adjustmentTool = tool_ == PaintTool::Darken || tool_ == PaintTool::Lighten;
+    if (adjustmentTool) {
+        ImGui::SetTooltip("%s %s %.0f%% [%d,%d]", activeLayer().name.c_str(),
+            tool_ == PaintTool::Lighten ? "lighten" : "darken",
+            static_cast<float>(adjustmentIntensity_), x, y);
+    } else {
+        ImGui::SetTooltip("%s [%d,%d]", activeLayer().name.c_str(), x, y);
+    }
     const bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
     const bool rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-    const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const bool clicked = adjustmentTool
+        ? ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+        : ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
 
     if (clicked && !strokeCaptured_) {
         recordUndo();
+        if (adjustmentTool) {
+            adjustmentStrokeBaseline_ = activeLayer().pixels;
+        }
         strokeCaptured_ = true;
         dragStart_ = {x, y};
         lastPaint_ = {x, y};
@@ -1818,6 +1897,11 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
         paintStroke(lastPaint_[0] < 0 ? x : lastPaint_[0], lastPaint_[1] < 0 ? y : lastPaint_[1], x, y, paintColor);
         lastPaint_ = {x, y};
     }
+    if (leftDown && adjustmentTool && strokeCaptured_) {
+        paintAdjustmentStroke(lastPaint_[0] < 0 ? x : lastPaint_[0],
+            lastPaint_[1] < 0 ? y : lastPaint_[1], x, y, tool_ == PaintTool::Lighten);
+        lastPaint_ = {x, y};
+    }
 
     if (!leftDown && !rightDown && strokeCaptured_) {
         if (tool_ == PaintTool::Line) {
@@ -1826,6 +1910,7 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             drawRect(activeLayer(), dragStart_[0], dragStart_[1], x, y, activeColor_);
         }
         strokeCaptured_ = false;
+        adjustmentStrokeBaseline_.clear();
         lastPaint_ = {-1, -1};
     }
 }
@@ -1962,9 +2047,93 @@ void WallFloorPaintPanel::setBrushPixel(PaintLayer& layer, int x, int y, std::ui
     }
 }
 
+void WallFloorPaintPanel::setAdjustmentBrushPixel(PaintLayer& layer, int x, int y, bool lighten)
+{
+    const std::size_t expected = static_cast<std::size_t>(width_ * height_);
+    if (adjustmentStrokeBaseline_.size() != expected) {
+        return;
+    }
+
+    static constexpr int kBayer4x4[4][4] = {
+        {0, 8, 2, 10},
+        {12, 4, 14, 6},
+        {3, 11, 1, 9},
+        {15, 7, 13, 5},
+    };
+
+    const int radius = std::max(0, brushSize_ - 1);
+    const float outerRadius = static_cast<float>(radius) + 0.5f;
+    const float featherWidth = radius > 0 ? std::min(2.5f, std::max(1.0f, outerRadius * 0.35f)) : 0.0f;
+    const float innerRadius = std::max(0.0f, outerRadius - featherWidth);
+    const int extent = std::max(0, static_cast<int>(std::ceil(outerRadius)));
+    const float intensity = static_cast<float>(std::clamp(adjustmentIntensity_, 0, 100)) / 100.0f;
+
+    for (int py = y - extent; py <= y + extent; ++py) {
+        for (int px = x - extent; px <= x + extent; ++px) {
+            if (px < 0 || py < 0 || px >= width_ || py >= height_) {
+                continue;
+            }
+
+            const float dx = static_cast<float>(px - x);
+            const float dy = static_cast<float>(py - y);
+            const float distance = std::sqrt(dx * dx + dy * dy);
+            if (distance > outerRadius) {
+                continue;
+            }
+            if (featherWidth > 0.0f && distance > innerRadius) {
+                const float coverage = (outerRadius - distance) / featherWidth;
+                const float threshold = (static_cast<float>(kBayer4x4[py & 3][px & 3]) + 0.5f) / 16.0f;
+                if (coverage <= threshold) {
+                    continue;
+                }
+            }
+
+            const std::size_t index = static_cast<std::size_t>(py * width_ + px);
+            const std::uint32_t source = adjustmentStrokeBaseline_[index];
+            if (alphaOf(source) == 0u) {
+                continue;
+            }
+            const auto adjustChannel = [lighten, intensity](std::uint32_t channel) {
+                const float target = lighten ? 255.0f : 0.0f;
+                return static_cast<std::uint32_t>(std::round(
+                    static_cast<float>(channel) + (target - static_cast<float>(channel)) * intensity));
+            };
+            const std::uint32_t red = adjustChannel((source >> 0u) & 0xffu);
+            const std::uint32_t green = adjustChannel((source >> 8u) & 0xffu);
+            const std::uint32_t blue = adjustChannel((source >> 16u) & 0xffu);
+            layer.pixels[index] = (source & 0xff000000u) | (blue << 16u) | (green << 8u) | red;
+        }
+    }
+}
+
 void WallFloorPaintPanel::paintStroke(int x0, int y0, int x1, int y1, std::uint32_t color)
 {
     drawLine(activeLayer(), x0, y0, x1, y1, color);
+}
+
+void WallFloorPaintPanel::paintAdjustmentStroke(int x0, int y0, int x1, int y1, bool lighten)
+{
+    const int dx = std::abs(x1 - x0);
+    const int sx = x0 < x1 ? 1 : -1;
+    const int dy = -std::abs(y1 - y0);
+    const int sy = y0 < y1 ? 1 : -1;
+    int error = dx + dy;
+
+    while (true) {
+        setAdjustmentBrushPixel(activeLayer(), x0, y0, lighten);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        const int twiceError = 2 * error;
+        if (twiceError >= dy) {
+            error += dy;
+            x0 += sx;
+        }
+        if (twiceError <= dx) {
+            error += dx;
+            y0 += sy;
+        }
+    }
 }
 
 void WallFloorPaintPanel::drawLine(PaintLayer& layer, int x0, int y0, int x1, int y1, std::uint32_t color)

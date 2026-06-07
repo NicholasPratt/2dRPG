@@ -1,0 +1,17 @@
+ADDIALOGUE 1
+id grandma_spelling
+start start
+nodes 3
+node start 0 40 80 "" "" dialogue_1 -
+condition 0 5 - 0 1
+choices 0
+actions 0
+node dialogue_1 1 280 80 "NPC" "Billy! I have been wanting to talk to you all week! Where have you been?" end -
+condition 0 5 - 0 1
+choices 0
+actions 0
+node end 5 520 80 "" "" - -
+condition 0 5 - 0 1
+choices 0
+actions 0
+end

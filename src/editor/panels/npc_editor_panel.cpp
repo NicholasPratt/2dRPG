@@ -157,6 +157,14 @@ void NpcEditorPanel::draw(EditorContext& context)
         projectLoaded_ = true;
         lastLoadedProjectRoot_ = currentRoot;
     }
+    const std::string placementOwner = context.selectedScreenNpcsOwnerId.empty()
+        ? context.selectedScreenId
+        : context.selectedScreenNpcsOwnerId;
+    const std::string placementContextKey =
+        currentRoot + "\n" + context.currentChapterId + "\n" + placementOwner;
+    if (loadedPlacementContextKey_ != placementContextKey) {
+        openForScreen(context);
+    }
     if (context.npcTypes.empty()) {
         context.npcTypes.push_back({});
     }
@@ -188,6 +196,26 @@ void NpcEditorPanel::draw(EditorContext& context)
     ImGui::BeginChild("NpcCanvas", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
     drawCanvas(context);
     ImGui::EndChild();
+}
+
+void NpcEditorPanel::openForScreen(EditorContext& context)
+{
+    const std::string placementOwner = context.selectedScreenNpcsOwnerId.empty()
+        ? context.selectedScreenId
+        : context.selectedScreenNpcsOwnerId;
+    loadedPlacementContextKey_ =
+        context.assets.projectRoot.string() + "\n" + context.currentChapterId + "\n" + placementOwner;
+
+    selectedPlacement_ = -1;
+    selectedWaypoint_ = -1;
+    dragging_ = false;
+    waypoints_.clear();
+    dialogueLines_.clear();
+    shopInventoryOverride_.clear();
+
+    if (!context.selectedScreenNpcs.empty()) {
+        selectPlacement(context, 0);
+    }
 }
 
 void NpcEditorPanel::drawToolbar(EditorContext& context)
@@ -285,6 +313,12 @@ void NpcEditorPanel::drawPlacementList(EditorContext& context)
     }
 
     if (movementMode_ == 1) {
+        const char* curveNames[] = {"Linear", "Spline"};
+        int curve = static_cast<int>(curveMode_);
+        if (ImGui::Combo("Path", &curve, curveNames, 2)) {
+            curveMode_ = static_cast<CurveMode>(curve);
+            writeCurrentPlacement(context);
+        }
         if (ImGui::Checkbox("Loop", &loop_)) { writeCurrentPlacement(context); }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(100.0f);
@@ -410,7 +444,11 @@ void NpcEditorPanel::drawWaypointList(EditorContext& context)
         ImGui::PushID(1000 + i);
         const Waypoint& wp = waypoints_[static_cast<std::size_t>(i)];
         char label[64];
-        std::snprintf(label, sizeof(label), "WP %d (%.0f, %.0f)%s", i, wp.x, wp.y, wp.waitSeconds > 0.0f ? " [W]" : "");
+        const char* actionTag = wp.action == game::PathWaypointAction::Enter ? " [ENTER]"
+            : wp.action == game::PathWaypointAction::Speak ? " [SPEAK]"
+            : wp.action == game::PathWaypointAction::Leave ? " [LEAVE]" : "";
+        std::snprintf(label, sizeof(label), "WP %d (%.0f, %.0f)%s%s", i, wp.x, wp.y,
+            wp.waitSeconds > 0.0f ? " [W]" : "", actionTag);
         if (ImGui::Selectable(label, i == selectedWaypoint_)) {
             selectedWaypoint_ = i;
         }
@@ -419,23 +457,59 @@ void NpcEditorPanel::drawWaypointList(EditorContext& context)
     if (selectedWaypoint_ >= 0 && selectedWaypoint_ < static_cast<int>(waypoints_.size())) {
         ImGui::Separator();
         Waypoint& wp = waypoints_[static_cast<std::size_t>(selectedWaypoint_)];
+        ImGui::Text("Waypoint %d", selectedWaypoint_);
+
+        ImGui::TextUnformatted("X");
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::InputFloat("Seg Speed", &wp.speedOverride, 1.0f, 10.0f, "%.0f")) { writeCurrentPlacement(context); }
+        if (ImGui::InputFloat("##wp_x", &wp.x, 1.0f, 16.0f, "%.0f")) { writeCurrentPlacement(context); }
+        ImGui::TextUnformatted("Y");
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::InputFloat("Wait (s)", &wp.waitSeconds, 0.1f, 0.5f, "%.1f")) { writeCurrentPlacement(context); }
+        if (ImGui::InputFloat("##wp_y", &wp.y, 1.0f, 16.0f, "%.0f")) { writeCurrentPlacement(context); }
+        ImGui::TextUnformatted("Segment speed");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("##wp_speed", &wp.speedOverride, 1.0f, 10.0f, "%.0f")) { writeCurrentPlacement(context); }
+        ImGui::TextUnformatted("Wait (seconds)");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("##wp_wait", &wp.waitSeconds, 0.1f, 0.5f, "%.1f")) { writeCurrentPlacement(context); }
         const char* facingNames[] = {"Unchanged", "South", "North", "East", "West"};
         int facingIdx = wp.facing + 1;
+        ImGui::TextUnformatted("Facing");
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::Combo("Facing##wp", &facingIdx, facingNames, 5)) {
+        if (ImGui::Combo("##wp_facing", &facingIdx, facingNames, 5)) {
             wp.facing = facingIdx - 1;
             writeCurrentPlacement(context);
         }
         char animBuf[64]{};
         std::memcpy(animBuf, wp.animState.data(), std::min(wp.animState.size(), sizeof(animBuf) - 1));
+        ImGui::TextUnformatted("Animation");
         ImGui::SetNextItemWidth(-1.0f);
-        if (ui::inputTextString("Anim##wp", animBuf, sizeof(animBuf))) {
+        if (ui::inputTextString("##wp_animation", animBuf, sizeof(animBuf))) {
             wp.animState = animBuf;
             writeCurrentPlacement(context);
+        }
+        const char* actionNames[] = {"None", "Enter / Show", "Speak", "Leave / Hide"};
+        int action = static_cast<int>(wp.action);
+        ImGui::TextUnformatted("Action");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##wp_action", &action, actionNames, 4)) {
+            wp.action = static_cast<game::PathWaypointAction>(action);
+            writeCurrentPlacement(context);
+        }
+        if (wp.action == game::PathWaypointAction::Speak) {
+            ImGui::TextUnformatted("Speech time (seconds)");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputFloat("##wp_speech_time", &wp.speechDurationSeconds, 0.1f, 0.5f, "%.1f")) {
+                wp.speechDurationSeconds = std::max(0.0f, wp.speechDurationSeconds);
+                writeCurrentPlacement(context);
+            }
+            char speechBuf[256]{};
+            std::memcpy(speechBuf, wp.speechText.data(), std::min(wp.speechText.size(), sizeof(speechBuf) - 1));
+            ImGui::TextUnformatted("Speech text");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ui::inputTextString("##wp_speech", speechBuf, sizeof(speechBuf))) {
+                wp.speechText = speechBuf;
+                writeCurrentPlacement(context);
+            }
         }
         if (ImGui::Button("Delete Waypoint")) {
             waypoints_.erase(waypoints_.begin() + selectedWaypoint_);
@@ -527,17 +601,29 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
     if (selectedPlacement_ >= 0 && canvasMode_ == CanvasMode::EditPath) {
         const ImU32 lineCol = IM_COL32(60, 200, 210, 200);
         const ImU32 loopLineCol = IM_COL32(60, 200, 210, 100);
-        for (int i = 0; i + 1 < static_cast<int>(waypoints_.size()); ++i) {
-            dl->AddLine(
-                {origin.x + waypoints_[i].x * zoom_, origin.y + waypoints_[i].y * zoom_},
-                {origin.x + waypoints_[i + 1].x * zoom_, origin.y + waypoints_[i + 1].y * zoom_},
-                lineCol, 2.0f);
-        }
-        if (loop_ && waypoints_.size() >= 2) {
-            dl->AddLine(
-                {origin.x + waypoints_.back().x * zoom_, origin.y + waypoints_.back().y * zoom_},
-                {origin.x + waypoints_.front().x * zoom_, origin.y + waypoints_.front().y * zoom_},
-                loopLineCol, 2.0f);
+        if (curveMode_ == CurveMode::Spline && waypoints_.size() >= 3) {
+            const int segmentCount = loop_ ? static_cast<int>(waypoints_.size()) : static_cast<int>(waypoints_.size()) - 1;
+            for (int segment = 0; segment < segmentCount; ++segment) {
+                Waypoint previous = splinePoint(segment, 0.0f);
+                for (int step = 1; step <= 16; ++step) {
+                    const Waypoint next = splinePoint(segment, static_cast<float>(step) / 16.0f);
+                    dl->AddLine(waypointToCanvas(origin, previous), waypointToCanvas(origin, next), lineCol, 2.0f);
+                    previous = next;
+                }
+            }
+        } else {
+            for (int i = 0; i + 1 < static_cast<int>(waypoints_.size()); ++i) {
+                dl->AddLine(
+                    {origin.x + waypoints_[i].x * zoom_, origin.y + waypoints_[i].y * zoom_},
+                    {origin.x + waypoints_[i + 1].x * zoom_, origin.y + waypoints_[i + 1].y * zoom_},
+                    lineCol, 2.0f);
+            }
+            if (loop_ && waypoints_.size() >= 2) {
+                dl->AddLine(
+                    {origin.x + waypoints_.back().x * zoom_, origin.y + waypoints_.back().y * zoom_},
+                    {origin.x + waypoints_.front().x * zoom_, origin.y + waypoints_.front().y * zoom_},
+                    loopLineCol, 2.0f);
+            }
         }
 
         for (int i = 0; i < static_cast<int>(waypoints_.size()); ++i) {
@@ -546,6 +632,15 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
             dl->AddCircleFilled(wp, sel ? kWaypointRadius + 2.0f : kWaypointRadius,
                 sel ? IM_COL32(60, 255, 220, 255) : IM_COL32(40, 210, 190, 230));
             dl->AddCircle(wp, sel ? kWaypointRadius + 3.0f : kWaypointRadius + 1.0f, IM_COL32(20, 20, 24, 200), 0, 1.5f);
+
+            const std::string label = std::to_string(i);
+            const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+            const ImVec2 textPos{wp.x + 10.0f, wp.y - textSize.y * 0.5f};
+            dl->AddRectFilled(
+                {textPos.x - 3.0f, textPos.y - 2.0f},
+                {textPos.x + textSize.x + 3.0f, textPos.y + textSize.y + 2.0f},
+                IM_COL32(12, 14, 18, 220), 3.0f);
+            dl->AddText(textPos, IM_COL32(255, 255, 255, 255), label.c_str());
         }
     }
 
@@ -951,6 +1046,7 @@ void NpcEditorPanel::selectPlacement(EditorContext& context, int index)
     awarenessRadius_ = npc.awarenessRadius;
     interactionRadius_ = npc.interactionRadius;
     movementMode_ = static_cast<int>(npc.movementOverride);
+    curveMode_ = static_cast<CurveMode>(std::clamp(static_cast<int>(npc.curveMode), 0, 1));
     loop_ = npc.loop;
     speed_ = npc.speedOverride;
     waypoints_.clear();
@@ -962,6 +1058,9 @@ void NpcEditorPanel::selectPlacement(EditorContext& context, int index)
         w.waitSeconds = wp.waitSeconds;
         w.facing = wp.facing;
         w.animState = wp.animState;
+        w.action = wp.action;
+        w.speechDurationSeconds = wp.speechDurationSeconds;
+        w.speechText = wp.speechText;
         waypoints_.push_back(std::move(w));
     }
     dialogueLines_ = npc.dialogueOverride;
@@ -982,6 +1081,7 @@ void NpcEditorPanel::writeCurrentPlacement(EditorContext& context)
     npc.awarenessRadius = awarenessRadius_;
     npc.interactionRadius = interactionRadius_;
     npc.movementOverride = static_cast<game::NpcMovementMode>(std::clamp(movementMode_, 0, 2));
+    npc.curveMode = static_cast<game::PathCurveMode>(static_cast<int>(curveMode_));
     npc.loop = loop_;
     npc.speedOverride = std::max(0.0f, speed_);
     npc.waypoints.clear();
@@ -994,6 +1094,9 @@ void NpcEditorPanel::writeCurrentPlacement(EditorContext& context)
         pw.waitSeconds = wp.waitSeconds;
         pw.facing = wp.facing;
         pw.animState = wp.animState;
+        pw.action = wp.action;
+        pw.speechDurationSeconds = std::max(0.0f, wp.speechDurationSeconds);
+        pw.speechText = wp.speechText;
         npc.waypoints.push_back(std::move(pw));
     }
     if (!npc.waypoints.empty()) {
@@ -1058,6 +1161,38 @@ void NpcEditorPanel::drawPixelLayer(ImDrawList* dl, ImVec2 origin, const PixelLa
             }
         }
     }
+}
+
+NpcEditorPanel::Waypoint NpcEditorPanel::splinePoint(int segment, float t) const
+{
+    const int count = static_cast<int>(waypoints_.size());
+    if (count == 0) {
+        return {};
+    }
+    const auto at = [this, count](int index) -> const Waypoint& {
+        if (loop_) {
+            index %= count;
+            if (index < 0) {
+                index += count;
+            }
+            return waypoints_[static_cast<std::size_t>(index)];
+        }
+        return waypoints_[static_cast<std::size_t>(std::clamp(index, 0, count - 1))];
+    };
+    const Waypoint& p0 = at(segment - 1);
+    const Waypoint& p1 = at(segment);
+    const Waypoint& p2 = at(segment + 1);
+    const Waypoint& p3 = at(segment + 2);
+    const float t2 = t * t;
+    const float t3 = t2 * t;
+    Waypoint result;
+    result.x = 0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t +
+        (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 +
+        (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3);
+    result.y = 0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t +
+        (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 +
+        (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3);
+    return result;
 }
 
 } // namespace adventure::editor

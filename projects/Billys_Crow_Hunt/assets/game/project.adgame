@@ -14,9 +14,10 @@ enemy_attack 1 1 32 1 120 attack_1 -
 weapon_defs 2
 weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0
 weapon_def slingshot 1 9 293 0.59 200 slingshot ss_rock ss_rock 1 1
-item_defs 2
+item_defs 3
 item_def coins "Coins" 4 coin Money 1 1 -
 item_def ss_rock "Slingshot Rock" 1 rock ss_rock 1 1 -
+item_def key "key" 5 key - 1 1 -
 starting_weapon Pocketknife
 font "Roboto.ttf"
 state_defs 2
@@ -29,6 +30,5 @@ npc_type Fred Dhag - 0 1 15 - 1 0
 dl "" "Howzit going young fella!"
 npc_type Merchantile silas silas 0 2 32 - 0 1
 shop_item ss_rock 1 1 1 1
-npc_type Nana Spelling - grandma_spelling 0 1 32 - 1 0
-dl "" "Slow down there Billy!"
+npc_type grandma_spelling grandma_spelling grandma_spelling 0 1 32 - 0 0
 end

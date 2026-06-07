@@ -8,6 +8,13 @@
 
 namespace adventure::game {
 
+enum class PathWaypointAction {
+    None = 0,
+    Enter = 1,
+    Speak = 2,
+    Leave = 3,
+};
+
 struct PathWaypoint {
     float x = 0.0f;
     float y = 0.0f;
@@ -15,6 +22,9 @@ struct PathWaypoint {
     float waitSeconds = 0.0f;
     int facing = -1;
     std::string animState;
+    PathWaypointAction action = PathWaypointAction::None;
+    float speechDurationSeconds = 2.0f;
+    std::string speechText;
 };
 
 enum class PathBehavior {
@@ -49,6 +59,7 @@ struct NpcPlacement {
     float awarenessRadius = 64.0f;
     float interactionRadius = 24.0f;
     NpcMovementMode movementOverride = NpcMovementMode::Stationary;
+    PathCurveMode curveMode = PathCurveMode::Linear;
     std::vector<PathWaypoint> waypoints;
     bool loop = true;
     float speedOverride = 0.0f;

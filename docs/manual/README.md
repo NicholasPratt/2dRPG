@@ -7,17 +7,17 @@ editor steps.
 
 ## Contents
 - **`index.html`** — the full manual. Open in a browser, or feed the raw HTML to an LLM (it is
-  plain semantic HTML with anchored sections and a numbered "How do I…?" recipe list).
+  plain semantic HTML with anchored sections and numbered recipes R1-R29).
 - **`llms.txt`** — a compact LLM entry point (the [llms.txt](https://llmstxt.org/) convention):
   a recipe→location map plus key concepts, so an assistant can answer common questions without
   loading the whole HTML, and knows to open `index.html` for detail.
 - **`README.md`** — this file.
 - **`../high_level_functionality_audit.md`** — engineering checklist for finding gaps between
   editor authoring, save/load, runtime behavior, UI feedback, persistence, and docs.
-- **`../manual_high_level_test_checklist.md`** — repeatable manual test checklist for money,
-  shops, inventory, doors, hazards, animated tiles, and persistence.
+- **`../manual_high_level_test_checklist.md`** — repeatable manual test checklist for pickups,
+  shops, doors/SFX, path actions, sprite tools, hazards, animated tiles, and persistence.
 
 ## Keeping it current
 The manual describes editor behavior. The authoritative sources are
-`RPG_Engine_Specification.md` and `code_base.md` at the repository root; when they change,
-update `index.html` and `llms.txt`. If the manual and the code disagree, the code is correct.
+`../RPG_Spec.md` and `../code_base.md`; when they change, update `index.html` and
+`llms.txt`. If the manual and the code disagree, the code is correct.

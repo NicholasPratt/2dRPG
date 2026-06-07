@@ -1,4 +1,4 @@
-ADCHAPTER 11
+ADCHAPTER 12
 id Farm_House
 start screen_1
 playable billy
@@ -12,39 +12,39 @@ respawn 0
 music "assets/game/music/screen1.ogg" 1
 enemies 2
 enemy enemy_1 enemy_1 1 1 64 0 0 1 8
-wp 128 80 0 0 -1 -
-wp 416 64 0 0 -1 -
-wp 704 112 0 0 -1 -
-wp 592 224 0 0 -1 -
-wp 544 320 0 0 -1 -
-wp 512 448 0 0 -1 -
-wp 464 304 0 0 -1 -
-wp 288 112 0 0 -1 -
+wp 128 80 0 0 -1 - 0 2 ""
+wp 416 64 0 0 -1 - 0 2 ""
+wp 704 112 0 0 -1 - 0 2 ""
+wp 592 224 0 0 -1 - 0 2 ""
+wp 544 320 0 0 -1 - 0 2 ""
+wp 512 448 0 0 -1 - 0 2 ""
+wp 464 304 0 0 -1 - 0 2 ""
+wp 288 112 0 0 -1 - 0 2 ""
 enemy enemy_2 enemy_1 1 1 64 1 0 1 12
-wp 656 48 0 0 -1 -
-wp 400 96 0 0 -1 -
-wp 448 112 0 0 -1 -
-wp 400 112 0 0 -1 -
-wp 416 128 0 0 -1 -
-wp 656 144 0 0 -1 -
-wp 656 192 0 0 -1 -
-wp 624 208 0 0 -1 -
-wp 704 192 0 0 -1 -
-wp 704 256 0 0 -1 -
-wp 224 320 0 0 -1 -
-wp 384 112 0 0 -1 -
+wp 656 48 0 0 -1 - 0 2 ""
+wp 400 96 0 0 -1 - 0 2 ""
+wp 448 112 0 0 -1 - 0 2 ""
+wp 400 112 0 0 -1 - 0 2 ""
+wp 416 128 0 0 -1 - 0 2 ""
+wp 656 144 0 0 -1 - 0 2 ""
+wp 656 192 0 0 -1 - 0 2 ""
+wp 624 208 0 0 -1 - 0 2 ""
+wp 704 192 0 0 -1 - 0 2 ""
+wp 704 256 0 0 -1 - 0 2 ""
+wp 224 320 0 0 -1 - 0 2 ""
+wp 384 112 0 0 -1 - 0 2 ""
 npcs 3
-npc npc_1 Fred 64 64 0 64 24 1 1 32 - 4 1 0
-wp 64 64 0 0 -1 -
-wp 248 72 0 0 -1 -
-wp 136 152 0 0 -1 -
-wp 104 152 0 0 -1 -
+npc npc_1 Fred 64 64 0 64 24 1 0 1 32 - 4 1 0
+wp 64 64 0 0 -1 - 0 2 ""
+wp 248 72 0 0 -1 - 0 2 ""
+wp 136 152 0 0 -1 - 0 2 ""
+wp 104 152 0 0 -1 - 0 2 ""
 dl "" "There's a lot of crows about!"
-npc npc_2 Fred 568 104 0 64 24 0 1 15 screen_1_npc_2_dialogue 1 1 0
-wp 568 104 0 0 -1 -
+npc npc_2 Fred 568 104 0 64 24 0 0 1 15 screen_1_npc_2_dialogue 1 1 0
+wp 568 104 0 0 -1 - 0 2 ""
 dl "" "You Should Find Grandma Spelling, She'll know what to do!"
-npc Dhag1 Fred 424 344 0 64 24 0 1 15 - 1 1 0
-wp 424 344 0 0 -1 -
+npc Dhag1 Fred 424 344 0 64 24 0 0 1 15 - 1 1 0
+wp 424 344 0 0 -1 - 0 2 ""
 dl "" "I find crows a bit scary..."
 animtiles 2
 animtile anim_tile_screen_1_map 11 14 1
@@ -55,26 +55,33 @@ respawn 0
 music "-" 1
 enemies 1
 enemy enemy_1 wevfer 1 1 33 1 0 0 4
-wp 80 320 0 0 -1 -
-wp 192 400 0 0 -1 -
-wp 400 416 0 0 -1 -
-wp 224 400 0 0 -1 -
-npcs 0
-animtiles 0
+wp 80 320 0 0 -1 - 0 2 ""
+wp 192 400 0 0 -1 - 0 2 ""
+wp 400 416 0 0 -1 - 0 2 ""
+wp 224 400 0 0 -1 - 0 2 ""
+npcs 1
+npc npc_1 Fred -20 63 2 64 24 1 0 0 173 - 4 0 0
+wp -20 63 2 0 -1 - 0 2 ""
+wp 328 40 0 1.7 -1 - 2 2 "Look out fot this pit!"
+wp 376 168 0 0 -1 - 0 2 ""
+wp -20 104 0 0 -1 - 0 2 ""
+animtiles 2
+animtile tile_screen_2_map_7 27 6 0
+animtile tile_screen_2_map_8 26 5 0
 screen screen_3 screen_3_map 1 0
 links - screen_4 - screen_1
 respawn 0
 music "assets/game/music/merrydigging.ogg" 1
 enemies 0
 npcs 3
-npc npc_1 Fred 296 280 2 64 24 0 1 15 screen_3_npc_1_dialogue 2 1 0
-wp 296 280 0 0 -1 -
-wp 488 280 0 0 -1 -
+npc npc_1 Fred 296 280 2 64 24 0 0 1 15 screen_3_npc_1_dialogue 2 1 0
+wp 296 280 0 0 -1 - 0 2 ""
+wp 488 280 0 0 -1 - 0 2 ""
 dl "" "Hello!"
-npc npc_2 Fred 184 104 0 64 24 0 1 15 screen_3_npc_2_dialogue 1 0 0
-wp 184 104 0 0 -1 -
-npc npc_4 Merchantile 616 168 0 64 58 0 1 32 - 1 0 0
-wp 616 168 0 0 -1 -
+npc npc_2 Fred 184 104 0 64 24 0 0 1 15 screen_3_npc_2_dialogue 1 0 0
+wp 184 104 0 0 -1 - 0 2 ""
+npc npc_4 Merchantile 616 168 0 64 58 0 0 1 32 - 1 0 0
+wp 616 168 0 0 -1 - 0 2 ""
 animtiles 0
 screen screen_4 screen_4_map 1 1
 links screen_3 - screen_5 screen_6
@@ -82,57 +89,57 @@ respawn 0
 music "assets/game/music/merrydigging.ogg" 1
 enemies 9
 enemy enemy_1 wevfer 1 0 64 1 0 0 6
-wp 144 112 0 0 -1 -
-wp 352 112 0 0 -1 -
-wp 528 240 0 0 -1 -
-wp 80 224 0 0 -1 -
-wp 320 64 0 0 -1 -
-wp 64 256 0 0 -1 -
+wp 144 112 0 0 -1 - 0 2 ""
+wp 352 112 0 0 -1 - 0 2 ""
+wp 528 240 0 0 -1 - 0 2 ""
+wp 80 224 0 0 -1 - 0 2 ""
+wp 320 64 0 0 -1 - 0 2 ""
+wp 64 256 0 0 -1 - 0 2 ""
 enemy enemy_2 wevfer 1 0 64 1 0 0 3
-wp 416 144 0 0 -1 -
-wp 272 160 0 0 -1 -
-wp 64 256 0 0 -1 -
+wp 416 144 0 0 -1 - 0 2 ""
+wp 272 160 0 0 -1 - 0 2 ""
+wp 64 256 0 0 -1 - 0 2 ""
 enemy enemy_3 wevfer 1 1 64 1 0 0 4
-wp 304 256 0 0 -1 -
-wp 416 144 0 0 -1 -
-wp 272 176 0 0 -1 -
-wp 160 192 0 0 -1 -
+wp 304 256 0 0 -1 - 0 2 ""
+wp 416 144 0 0 -1 - 0 2 ""
+wp 272 176 0 0 -1 - 0 2 ""
+wp 160 192 0 0 -1 - 0 2 ""
 enemy enemy_4 wevfer 1 1 64 1 0 0 4
-wp 272 208 0 0 -1 -
-wp 464 48 0 0 -1 -
-wp 496 176 0 0 -1 -
-wp 496 288 0 0 -1 -
+wp 272 208 0 0 -1 - 0 2 ""
+wp 464 48 0 0 -1 - 0 2 ""
+wp 496 176 0 0 -1 - 0 2 ""
+wp 496 288 0 0 -1 - 0 2 ""
 enemy enemy_5 enemy_1 1 0 64 1 0 0 5
-wp 320 64 0 0 -1 -
-wp 128 176 0 0 -1 -
-wp 224 240 0 0 -1 -
-wp 464 288 0 0 -1 -
-wp 480 160 0 0 -1 -
+wp 320 64 0 0 -1 - 0 2 ""
+wp 128 176 0 0 -1 - 0 2 ""
+wp 224 240 0 0 -1 - 0 2 ""
+wp 464 288 0 0 -1 - 0 2 ""
+wp 480 160 0 0 -1 - 0 2 ""
 enemy enemy_6 enemy_1 1 1 64 1 0 0 4
-wp 144 240 0 0 -1 -
-wp 144 192 0 0 -1 -
-wp 368 160 0 0 -1 -
-wp 416 224 0 0 -1 -
+wp 144 240 0 0 -1 - 0 2 ""
+wp 144 192 0 0 -1 - 0 2 ""
+wp 368 160 0 0 -1 - 0 2 ""
+wp 416 224 0 0 -1 - 0 2 ""
 enemy enemy_7 enemy_1 1 1 64 1 0 0 5
-wp 464 240 0 0 -1 -
-wp 208 176 0 0 -1 -
-wp 112 240 0 0 -1 -
-wp 400 288 0 0 -1 -
-wp 464 128 0 0 -1 -
+wp 464 240 0 0 -1 - 0 2 ""
+wp 208 176 0 0 -1 - 0 2 ""
+wp 112 240 0 0 -1 - 0 2 ""
+wp 400 288 0 0 -1 - 0 2 ""
+wp 464 128 0 0 -1 - 0 2 ""
 enemy enemy_8 enemy_1 1 1 64 1 0 0 6
-wp 464 48 0 0 -1 -
-wp 208 176 0 0 -1 -
-wp 400 240 0 0 -1 -
-wp 544 160 0 0 -1 -
-wp 208 32 0 0 -1 -
-wp 176 128 0 0 -1 -
+wp 464 48 0 0 -1 - 0 2 ""
+wp 208 176 0 0 -1 - 0 2 ""
+wp 400 240 0 0 -1 - 0 2 ""
+wp 544 160 0 0 -1 - 0 2 ""
+wp 208 32 0 0 -1 - 0 2 ""
+wp 176 128 0 0 -1 - 0 2 ""
 enemy enemy_9 enemy_1 1 1 64 1 0 0 6
-wp 176 288 0 0 -1 -
-wp 240 160 0 0 -1 -
-wp 400 224 0 0 -1 -
-wp 480 192 0 0 -1 -
-wp 416 112 0 0 -1 -
-wp 320 96 0 0 -1 -
+wp 176 288 0 0 -1 - 0 2 ""
+wp 240 160 0 0 -1 - 0 2 ""
+wp 400 224 0 0 -1 - 0 2 ""
+wp 480 192 0 0 -1 - 0 2 ""
+wp 416 112 0 0 -1 - 0 2 ""
+wp 320 96 0 0 -1 - 0 2 ""
 npcs 0
 animtiles 0
 screen screen_5 screen_5_map 2 1
@@ -140,7 +147,9 @@ links - - - screen_4
 respawn 0
 music "-" 1
 enemies 0
-npcs 0
+npcs 1
+npc npc_1 grandma_spelling 488 344 3 64 24 0 0 1 32 grandma_spelling 1 0 0
+wp 488 344 0 0 -1 - 0 2 ""
 animtiles 0
 screen screen_6 screen_6_map 0 1
 links - - screen_4 -

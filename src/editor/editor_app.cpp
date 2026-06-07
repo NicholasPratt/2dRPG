@@ -471,6 +471,7 @@ void EditorApp::enterScreenMode(ScreenEditMode mode)
     } else if (mode == ScreenEditMode::Npcs && !context_.selectedScreenId.empty()) {
         layoutEditor_.selectScreenById(context_, context_.selectedScreenId);
         npcPlacementSnapshot_ = context_.selectedScreenNpcs;
+        npcEditor_.openForScreen(context_);
     } else if (mode == ScreenEditMode::NpcTypes) {
         npcTypeSnapshot_ = context_.npcTypes;
     } else if (mode == ScreenEditMode::Items && !context_.selectedScreenMapId.empty()) {
@@ -512,6 +513,9 @@ void EditorApp::drawScreensTab()
                 if (screenMapLogicMode_ && !context_.selectedScreenMapId.empty()) {
                     wallFloorPaint_.saveForChapter(context_);
                     mapEditor_.openMapId(context_, context_.selectedScreenMapId);
+                } else if (!screenMapLogicMode_ && !context_.selectedScreenMapId.empty()) {
+                    mapEditor_.saveMap(context_);
+                    wallFloorPaint_.openScreenGraphics(context_, context_.selectedScreenMapId);
                 }
             }
             ImGui::Separator();
@@ -1125,22 +1129,7 @@ void EditorApp::refreshProjectList()
 
 void EditorApp::ensureProjectDirectories() const
 {
-    std::error_code error;
-    std::filesystem::create_directories(context_.assets.rawSpritePath(), error);
-    std::filesystem::create_directories(context_.assets.rawCharacterSpritePath(), error);
-    std::filesystem::create_directories(context_.assets.rawTilesetPath(), error);
-    std::filesystem::create_directories(context_.assets.gameSpritePath(), error);
-    std::filesystem::create_directories(context_.assets.gameCharacterSpritePath(), error);
-    std::filesystem::create_directories(context_.assets.gameCharacterPath(), error);
-    std::filesystem::create_directories(context_.assets.gameChapterPath(), error);
-    std::filesystem::create_directories(context_.assets.gameMapPath(), error);
-    std::filesystem::create_directories(context_.assets.gameTilesetPath(), error);
-    std::filesystem::create_directories(context_.assets.gameAnimationPath(), error);
-    std::filesystem::create_directories(context_.assets.gamePalettePath(), error);
-    std::filesystem::create_directories(context_.assets.gamePathPath(), error);
-    std::filesystem::create_directories(context_.assets.gameDialoguePath(), error);
-    std::filesystem::create_directories(context_.assets.gameFontPath(), error);
-    std::filesystem::create_directories(context_.assets.gameMusicPath(), error);
+    (void)context_.assets.ensureRequiredPaths();
 }
 
 void EditorApp::selectProject(const std::string& projectId)
@@ -1492,6 +1481,11 @@ void EditorApp::createChapter()
         return;
     }
     layoutEditor_.createChapter(context_, newChapterId_.data());
+    if (!context_.currentChapterId.empty()) {
+        std::error_code error;
+        std::filesystem::create_directories(
+            context_.assets.gameDialoguePath() / context_.currentChapterId, error);
+    }
     game::TileMap map;
     map.id = context_.selectedScreenMapId.empty() ? "screen_1_map" : context_.selectedScreenMapId;
     map.width = game::kScreenTilesW;

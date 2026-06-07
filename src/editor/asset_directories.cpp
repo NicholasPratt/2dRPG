@@ -1,5 +1,7 @@
 #include "editor/asset_directories.hpp"
 
+#include <system_error>
+
 namespace adventure::editor {
 
 std::filesystem::path AssetDirectories::rawSpritePath() const
@@ -75,6 +77,52 @@ std::filesystem::path AssetDirectories::gameFontPath() const
 std::filesystem::path AssetDirectories::gameMusicPath() const
 {
     return projectRoot / gameMusic;
+}
+
+std::filesystem::path AssetDirectories::gameSfxPath() const
+{
+    return projectRoot / gameSfx;
+}
+
+std::vector<std::filesystem::path> AssetDirectories::requiredPaths() const
+{
+    return {
+        projectRoot / "assets",
+        projectRoot / "assets/raw",
+        rawSpritePath(),
+        rawCharacterSpritePath(),
+        rawTilesetPath(),
+        projectRoot / "assets/game",
+        gameSpritePath(),
+        gameCharacterSpritePath(),
+        gameCharacterPath(),
+        gameChapterPath(),
+        gameMapPath(),
+        gameTilesetPath(),
+        gameAnimationPath(),
+        gamePalettePath(),
+        gamePathPath(),
+        gameDialoguePath(),
+        gameFontPath(),
+        gameMusicPath(),
+        gameSfxPath(),
+        gameSfxPath() / "doors",
+    };
+}
+
+bool AssetDirectories::ensureRequiredPaths(std::string* errorMessage) const
+{
+    for (const std::filesystem::path& path : requiredPaths()) {
+        std::error_code error;
+        std::filesystem::create_directories(path, error);
+        if (error) {
+            if (errorMessage != nullptr) {
+                *errorMessage = "Could not create asset directory " + path.string() + ": " + error.message();
+            }
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace adventure::editor

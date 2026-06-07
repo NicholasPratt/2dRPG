@@ -11,12 +11,12 @@ Every gameplay feature should have a full loop:
 1. Author it in the editor.
 2. Save it to the right project/chapter/map file.
 3. Reload it in the editor without data loss.
-4. Load it in the runtime from the selected project, not fallback assets.
+4. Load it in the runtime from the selected project, not another project's assets.
 5. Interact with it in-game using keyboard and controller input where applicable.
 6. Show clear runtime feedback when it succeeds, fails, or is unavailable.
 7. Update state, inventory, money, health, position, or persistence consistently.
 8. Survive screen transitions, test launches, fresh launches, and continue launches as designed.
-9. Be documented in `RPG_Engine_Specification.md`, `code_base.md`, and the manual when user-facing.
+9. Be documented in `docs/RPG_Spec.md`, `docs/code_base.md`, and the manual when user-facing.
 10. Have a smoke/manual test path that exercises the whole loop.
 
 ## Priority Passes
@@ -28,7 +28,7 @@ Goal: confirm editor-authored data is actually used by the game.
 - For each editor panel, list the file(s) it writes and the runtime code that reads them.
 - Check version numbers and backwards-compatible load behavior after each format change.
 - Verify save/discard/back actions do not silently drop contextual edits.
-- Confirm project-root lookup is used everywhere instead of repo-root fallback paths.
+- Confirm project-root lookup is used everywhere and cannot leak assets between projects.
 - Add missing runtime consumption for editor-only data.
 
 Completed pass: doors now have editor support, `.admap` v6 save/load, runtime prompt/transition
@@ -54,8 +54,7 @@ Goal: avoid adding isolated screen tools that do not compose.
 - For trigger-like features, define whether they block movement, trigger on overlap, require interaction, or both.
 - For locked/interactable features, define success/failure feedback and required item behavior.
 
-Completed pass: doors are interaction triggers, not collision blockers. Locked, missing-key,
-missing-destination, and blocked-destination cases show runtime feedback.
+Completed pass: free-use destination doors are walkable interaction triggers; locked and required-item doors are collision blockers. Required-item doors without destinations unlock in place. Locked, missing-key, invalid free-use destination, and blocked-destination cases show runtime feedback.
 
 ### 4. Runtime Feedback and Failure States
 
@@ -100,8 +99,8 @@ Goal: keep editor responsiveness while feature layers grow.
 
 Goal: keep human and LLM docs aligned with code.
 
-- Update `RPG_Engine_Specification.md` for feature behavior and known planned gaps.
-- Update `code_base.md` for file formats, panel ownership, runtime readers, and status matrix.
+- Update `docs/RPG_Spec.md` for feature behavior and known planned gaps.
+- Update `docs/code_base.md` for file formats, panel ownership, runtime readers, and status matrix.
 - Update `docs/manual/index.html` and `docs/manual/llms.txt` for user-facing workflows.
 - For each feature, record at least one manual test recipe: editor steps, save/reload, runtime action, expected result.
 - Run `adventure_editor_smoke` and a project-specific `adventure_game_smoke` when code changes touch load/save/runtime.

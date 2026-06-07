@@ -709,7 +709,11 @@ void EnemyPathEditorPanel::drawWaypointList(EditorContext& context)
         const bool sel = (i == selectedWaypoint_);
         char label[64];
         const Waypoint& wp = waypoints_[static_cast<std::size_t>(i)];
-        std::snprintf(label, sizeof(label), "[%d]  %.0f, %.0f%s", i, wp.x, wp.y, wp.waitSeconds > 0.0f ? " [W]" : "");
+        const char* actionTag = wp.action == game::PathWaypointAction::Enter ? " [ENTER]"
+            : wp.action == game::PathWaypointAction::Speak ? " [SPEAK]"
+            : wp.action == game::PathWaypointAction::Leave ? " [LEAVE]" : "";
+        std::snprintf(label, sizeof(label), "[%d]  %.0f, %.0f%s%s", i, wp.x, wp.y,
+            wp.waitSeconds > 0.0f ? " [W]" : "", actionTag);
         if (ImGui::Selectable(label, sel)) {
             selectedWaypoint_ = i;
         }
@@ -718,6 +722,10 @@ void EnemyPathEditorPanel::drawWaypointList(EditorContext& context)
     if (selectedWaypoint_ >= 0 && selectedWaypoint_ < static_cast<int>(waypoints_.size())) {
         ImGui::Separator();
         Waypoint& wp = waypoints_[static_cast<std::size_t>(selectedWaypoint_)];
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("X##wp", &wp.x, 1.0f, 16.0f, "%.0f")) { writeCurrentPlacement(context); }
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputFloat("Y##wp", &wp.y, 1.0f, 16.0f, "%.0f")) { writeCurrentPlacement(context); }
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::InputFloat("Seg Speed", &wp.speedOverride, 1.0f, 10.0f, "%.0f")) { writeCurrentPlacement(context); }
         ImGui::SetNextItemWidth(-1.0f);
@@ -735,6 +743,27 @@ void EnemyPathEditorPanel::drawWaypointList(EditorContext& context)
         if (ui::inputTextString("Anim##wp", animBuf, sizeof(animBuf))) {
             wp.animState = animBuf;
             writeCurrentPlacement(context);
+        }
+        const char* actionNames[] = {"None", "Enter / Show", "Speak", "Leave / Hide"};
+        int action = static_cast<int>(wp.action);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("Action##wp", &action, actionNames, 4)) {
+            wp.action = static_cast<game::PathWaypointAction>(action);
+            writeCurrentPlacement(context);
+        }
+        if (wp.action == game::PathWaypointAction::Speak) {
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputFloat("Speech time (s)", &wp.speechDurationSeconds, 0.1f, 0.5f, "%.1f")) {
+                wp.speechDurationSeconds = std::max(0.0f, wp.speechDurationSeconds);
+                writeCurrentPlacement(context);
+            }
+            char speechBuf[256]{};
+            std::memcpy(speechBuf, wp.speechText.data(), std::min(wp.speechText.size(), sizeof(speechBuf) - 1));
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ui::inputTextString("Speech##wp", speechBuf, sizeof(speechBuf))) {
+                wp.speechText = speechBuf;
+                writeCurrentPlacement(context);
+            }
         }
     }
 }
@@ -1119,6 +1148,9 @@ void EnemyPathEditorPanel::selectPlacement(EditorContext& context, int index)
         wp.waitSeconds = waypoint.waitSeconds;
         wp.facing = waypoint.facing;
         wp.animState = waypoint.animState;
+        wp.action = waypoint.action;
+        wp.speechDurationSeconds = waypoint.speechDurationSeconds;
+        wp.speechText = waypoint.speechText;
         waypoints_.push_back(std::move(wp));
     }
     selectedWaypoint_ = -1;
@@ -1148,6 +1180,9 @@ void EnemyPathEditorPanel::writeCurrentPlacement(EditorContext& context)
         pw.waitSeconds = waypoint.waitSeconds;
         pw.facing = waypoint.facing;
         pw.animState = waypoint.animState;
+        pw.action = waypoint.action;
+        pw.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+        pw.speechText = waypoint.speechText;
         placement.waypoints.push_back(std::move(pw));
     }
     context.markDirty();

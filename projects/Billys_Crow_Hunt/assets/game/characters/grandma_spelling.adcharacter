@@ -31,6 +31,11 @@ anim "swim" "assets/game/sprites/grandma_spelling.sprite.json"
 anim "dash" "assets/game/sprites/grandma_spelling.sprite.json"
 anim "block_break" "assets/game/sprites/grandma_spelling.sprite.json"
 anim "revive" "assets/game/sprites/grandma_spelling.sprite.json"
-frames 1
+frames 6
 frame 0 "idle" "assets/raw/sprites/grandma_spelling_frame_1.png"
+frame 1 "conversation" "assets/raw/sprites/grandma_spelling_frame_2.png"
+frame 2 "conversation" "assets/raw/sprites/grandma_spelling_frame_3.png"
+frame 3 "conversation" "assets/raw/sprites/grandma_spelling_frame_4.png"
+frame 4 "walk" "assets/raw/sprites/grandma_spelling_frame_5.png"
+frame 5 "walk" "assets/raw/sprites/grandma_spelling_frame_6.png"
 end

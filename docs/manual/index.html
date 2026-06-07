@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="User manual for the Adventure RPG Engine editor: how to build chapters, screens, sprites, enemies, NPCs, weapons, items, quests and combat effects.">
-<meta name="generator" content="hand-authored, kept in sync with RPG_Engine_Specification.md and code_base.md">
+<meta name="generator" content="hand-authored, kept in sync with docs/RPG_Spec.md and docs/code_base.md">
 <title>Adventure RPG Engine — Editor Manual</title>
 <style>
   :root { --fg:#1f2937; --muted:#5b6573; --accent:#0f766e; --bg:#fbfbfa; --code:#f3f4f6; --border:#e2e5e9; }
@@ -48,8 +48,8 @@
     user questions like “how do I make an enemy chase the player?” or “how do I make a quest that counts kills?”
     Each task is documented as a numbered recipe under <a href="#recipes">How do I…?</a>, and the concepts those
     recipes rely on are explained under <a href="#concepts">Core concepts</a> and <a href="#combat">Combat model</a>.
-    When the codebase contradicts this manual, the code wins — see <code>RPG_Engine_Specification.md</code> and
-    <code>code_base.md</code> at the repository root. Terms in <code>monospace</code> are exact field/control names
+    When the codebase contradicts this manual, the code wins — see <code>docs/RPG_Spec.md</code> and
+    <code>docs/code_base.md</code>. Terms in <code>monospace</code> are exact field/control names
     in the editor or data formats.
   </div>
 </header>
@@ -84,7 +84,9 @@ chapter-specific. Every project is isolated under <code>projects/&lt;project&gt;
 <p>On startup the editor <strong>re-opens the last project &amp; chapter you worked on</strong> (remembered in
 <code>projects/.editor_session</code>); if that no longer exists it shows the <strong>Open Project</strong> modal.
 Pick an existing project + chapter, or type a new project/chapter name to create <code>projects/&lt;project&gt;/</code>
-with its asset folders. The <strong>Project</strong> menu → <strong>Project Manager…</strong> lets you open, create,
+with its complete asset folder structure. This includes raw and game folders for sprites, character sprites,
+characters, tilesets, chapters, maps, animations, palettes, paths, dialogue, fonts, music, and
+<code>sfx/doors</code>. The <strong>Project</strong> menu → <strong>Project Manager…</strong> lets you open, create,
 or delete projects at any time (deleting asks for confirmation and is permanent). Closing the editor or switching
 chapters/projects prompts you to save or discard unsaved work.</p>
 
@@ -336,11 +338,12 @@ questions.</p>
   <p>Define the item in the <strong>Items</strong> tab (or use a built-in pickup type). Screens → select screen →
   <code>Edit Items</code> → place the pickup on the canvas. Selecting a weapon auto-fills the pickup’s on-map sprite
   from the weapon’s sprite. Walking over it collects it: weapons equip, health restores HP, and items/ammo go to the
-  inventory + write ownership to the state registry.</p>
+  inventory + write ownership to the state registry. Enable <code>Respawn when screen reloads</code> for repeatable
+  resources such as flowers. Leave it disabled for one-time coins or keys; their collected state is saved.</p>
   <div class="note"><strong>Ammo lives in the inventory.</strong> A ranged weapon fires directly from the matching
   ammo item in your inventory (matched by the weapon’s <code>ammo type</code>); the inventory shows an <strong>AMMO</strong>
   section with each ammo’s sprite and count. There is no separate ammo pool — buying ammo from a shop or picking it up
-  makes it immediately usable.</p></div>
+  makes it immediately usable.</div>
 </div>
 
 <div class="recipe" id="recipe-playable">
@@ -449,7 +452,8 @@ questions.</p>
   <strong>Project Manager…</strong>. From there you can open an existing project, create a new isolated project folder,
   or delete a project you no longer need.</p>
   <div class="note"><strong>Projects are isolated.</strong> Each project owns its own
-  <code>assets/game</code> folder, project library, chapters, maps, sprites, and dialogue files.</div>
+  <code>assets/raw</code> and <code>assets/game</code> structure. All declared asset folders are created when a
+  project is created or opened, and each chapter receives its own dialogue subfolder.</div>
 </div>
 
 <div class="recipe" id="recipe-obstacles">
@@ -473,19 +477,120 @@ questions.</p>
 </div>
 
 <div class="recipe" id="recipe-doors">
-  <h4>R23. Add a door trigger to a screen</h4>
+  <h4>R23. Choose and place a door</h4>
   <p>Screens → select the screen → <code>Edit Doors</code>. Add a door on the canvas, then set its tile X/Y and tile
   W/H fields. Door size is stored in tile units, so a two-tile-tall doorway uses height <code>2</code>.</p>
+  <table>
+    <tr><th>Configuration</th><th>Result</th></tr>
+    <tr><td>Free Use + destination</td><td>Walkable interaction trigger that transfers the player.</td></tr>
+    <tr><td>Locked + no destination</td><td>Permanent collision barrier that reports Locked.</td></tr>
+    <tr><td>Requires Item + destination</td><td>Key-controlled transfer door.</td></tr>
+    <tr><td>Requires Item + no destination</td><td>Key-controlled barrier that unlocks within the current screen.</td></tr>
+  </table>
   <ul>
     <li><strong>Lock mode:</strong> choose free use, locked, or requires item.</li>
-    <li><strong>Required item:</strong> for key doors, enter the item id and whether the key is consumed.</li>
+    <li><strong>Required item ID:</strong> enter the key item’s <code>ID</code>, not its Target field. This control only
+    appears for <code>Requires Item</code>.</li>
+    <li><strong>Target screen ID:</strong> the text field below the lock controls is the destination screen id. Leave
+    it empty for a permanently Locked barrier or for a Requires Item door that should unlock within the current
+    screen.</li>
     <li><strong>Destination:</strong> enter the target screen id and target tile X/Y where the player should arrive.</li>
     <li><strong>Optional visuals:</strong> set a door sprite id. Opening animation ids are stored for future animation
     playback.</li>
+    <li><strong>Door sounds:</strong> put <code>.ogg</code> or <code>.wav</code> files in
+    <code>assets/game/sfx/doors</code>, then choose the Open, Close, and Locked sounds from their dropdowns. The folder
+    is created automatically for each project.</li>
   </ul>
   <div class="note"><strong>Runtime behavior:</strong> stand on or next to the door and press
-  <span class="kbd">E</span>. Locked doors show feedback, required-item doors check the player inventory, consumed keys
-  are removed, and valid doors transition to the target screen/tile.</div>
+  <span class="kbd">E</span>. Locked and required-item doors block movement. Locked doors show feedback,
+  required-item doors check the player inventory, consumed keys are removed, and valid doors transition to the target
+  screen/tile. A key door without a destination unlocks in place and becomes walkable; if it has no opening animation,
+  the door disappears when the player enters its tiles. Free-use doors remain walkable triggers. A successful
+  transition plays Open when activated and Close after the slide; permanently locked and missing-key interactions
+  play Locked.</div>
+</div>
+
+<div class="recipe" id="recipe-path-actions">
+  <h4>R24. Make an NPC or enemy enter, speak on a timer, and leave</h4>
+  <p>Open <strong>Edit NPCs → Edit Path</strong> or <strong>Edit Enemies → Edit Splines</strong>. Select each waypoint
+  to edit its exact pixel X/Y, path action, wait, facing, animation, and speech fields. NPC paths can be Linear or
+  Spline; enemy paths use the same action controls.</p>
+  <ul>
+    <li><strong>Enter from off-screen:</strong> set the first waypoint outside the 768×512 screen, for example
+    X <code>-16</code>. Add an <code>Enter / Show</code> action where the actor should become visible. A path
+    containing Enter starts hidden.</li>
+    <li><strong>Timed speech:</strong> choose <code>Speak</code>, enter the bubble text, and set
+    <code>Speech time (s)</code>. Movement pauses while the bubble is visible.</li>
+    <li><strong>Leave:</strong> add a final waypoint outside the opposite edge and choose
+    <code>Leave / Hide</code>. On arrival the actor is hidden and its path ends.</li>
+    <li><strong>Spline timing:</strong> actions execute at spline control points, so the curve stops at Speak points
+    for the authored duration before continuing.</li>
+  </ul>
+</div>
+
+<div class="recipe" id="recipe-sprite-polygon-order">
+  <h4>R25. Draw a polygon or rearrange sprite frames</h4>
+  <p>Open the Sprite editor. Choose <code>Polygon</code> in the Tools rail, then left-click each vertex on the canvas.
+  Double-click the final vertex or press Enter to close and draw the outline with the current brush size and primary
+  color. Right-click or press Escape to cancel the unfinished polygon.</p>
+  <p>To change animation order, drag a frame thumbnail onto another thumbnail, or select a thumbnail and use
+  <code>Earlier</code>/<code>Later</code>. The frame’s pixels on every layer, action type, direction, and duration move
+  together, and the operation can be undone.</p>
+</div>
+
+<div class="recipe" id="recipe-destination-door">
+  <h4>R26. Make a door travel to another screen</h4>
+  <ol>
+    <li>Create the destination screen first and note its exact screen ID.</li>
+    <li>In <code>Edit Doors</code>, choose <code>Free Use</code> or <code>Requires Item</code>.</li>
+    <li>Set <code>Target screen ID</code> and a clear <code>Target Tile X/Y</code>.</li>
+    <li>For a key door, set <code>Required item ID</code> to the project item’s ID and optionally enable
+    <code>Consume Key</code>.</li>
+    <li>Save, stand beside the door, and press <span class="kbd">E</span>.</li>
+  </ol>
+  <div class="note">The target tile must be inside the destination map and clear of its wall layer. A Free Use door
+  without a destination is invalid; use Locked or Requires Item for a same-screen barrier.</div>
+</div>
+
+<div class="recipe" id="recipe-key-barrier">
+  <h4>R27. Unlock a door into a walled-off area on the same screen</h4>
+  <ol>
+    <li>Define a project item with type <code>Key</code>. Its <code>Target</code> field is unused; the item
+    <code>ID</code> is what doors check.</li>
+    <li>Place the key as a <code>Project Item</code>, normally with pickup respawn disabled.</li>
+    <li>Create the door over the opening in the wall and choose <code>Requires Item</code>.</li>
+    <li>Set <code>Required item ID</code> to the key’s ID and leave <code>Target screen ID</code> empty.</li>
+    <li>Choose whether <code>Consume Key</code> removes one key when unlocking.</li>
+  </ol>
+  <p>Using the key removes the door collision and persists the unlocked state. If no opening animation is configured,
+  the door sprite disappears when the player enters its tiles. A <code>Locked</code> door is permanent and cannot be
+  opened by an item.</p>
+</div>
+
+<div class="recipe" id="recipe-door-sfx">
+  <h4>R28. Add open, close, and locked door sounds</h4>
+  <p>Put <code>.wav</code> or <code>.ogg</code> files under <code>assets/game/sfx/doors</code>. This folder is created
+  automatically for every project. Reopen <code>Edit Doors</code> and choose files from the three dropdowns:</p>
+  <ul>
+    <li><strong>Open:</strong> successful key unlock or destination-door activation.</li>
+    <li><strong>Close:</strong> after a destination screen slide completes.</li>
+    <li><strong>Locked:</strong> permanent-lock and missing-key failures.</li>
+  </ul>
+  <p>The picker scans subfolders recursively and stores project-relative paths.</p>
+</div>
+
+<div class="recipe" id="recipe-item-respawn">
+  <h4>R29. Make flowers repeatable but coins collect only once</h4>
+  <p>Screens → select screen → <code>Edit Items</code>. The placement controls and detailed item inspector both expose
+  <code>Respawn when screen reloads</code>.</p>
+  <ul>
+    <li><strong>Checked:</strong> the pickup returns after leaving and loading the screen again. Use for flowers,
+    renewable materials, or repeatable health.</li>
+    <li><strong>Unchecked:</strong> collection is stored by chapter, screen, and placement ID. Use for coins, keys,
+    weapons, and one-time quest items.</li>
+  </ul>
+  <div class="note">Every placement needs a unique, non-empty ID on its screen. Duplicate IDs would share persistence,
+  so the editor warns about them.</div>
 </div>
 
 <!-- ============================================================ -->
@@ -520,8 +625,8 @@ questions.</p>
 </table>
 
 <footer>
-  <p>Adventure RPG Engine editor manual. Authoritative feature sources: <code>RPG_Engine_Specification.md</code> and
-  <code>code_base.md</code> at the repository root. If a described control or field is missing, the build may predate
+  <p>Adventure RPG Engine editor manual. Authoritative feature sources: <code>docs/RPG_Spec.md</code> and
+  <code>docs/code_base.md</code>. If a described control or field is missing, the build may predate
   it — verify against the current editor.</p>
 </footer>
 

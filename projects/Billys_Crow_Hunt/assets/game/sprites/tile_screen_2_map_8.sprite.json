@@ -1,0 +1,20 @@
+{
+  "id": "tile_screen_2_map_8",
+  "source": "assets/raw/sprites/tile_screen_2_map_8_sheet.png",
+  "canvasSize": [64, 64],
+  "gridSize": [64, 64],
+  "pivot": [32, 32],
+  "bodyGuide": [0, 0, 0, 0],
+  "frames": [
+    {"rect": [0, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [64, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [128, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [192, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [256, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [320, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [384, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [448, 0, 64, 64], "durationMs": 100, "type": "idle"},
+    {"rect": [512, 0, 64, 64], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

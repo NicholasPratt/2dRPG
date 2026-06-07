@@ -36,12 +36,16 @@ private:
     int targetTileY_ = 1;
     std::array<char, 64> spriteId_{'\0'};
     std::array<char, 64> openingAnimation_{'\0'};
+    std::array<char, 256> openSoundPath_{'\0'};
+    std::array<char, 256> closeSoundPath_{'\0'};
+    std::array<char, 256> lockedSoundPath_{'\0'};
 
     void loadBackground(EditorContext& context);
     void drawToolbar(EditorContext& context);
     void drawDoorList(EditorContext& context);
     void drawInspector(EditorContext& context);
     void drawValidation(EditorContext& context);
+    void drawSoundPicker(EditorContext& context);
     void drawCanvas(EditorContext& context);
     void syncInspectorFromSelected(const EditorContext& context);
     void writeInspectorToSelected(EditorContext& context);

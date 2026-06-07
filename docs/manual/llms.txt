@@ -3,11 +3,11 @@
 > Authoritative guide for answering user questions about how to achieve effects in the
 > Adventure RPG Engine editor (a 2D action-RPG maker, SNES/GBA style). When this index is
 > not enough, read docs/manual/index.html in full. When the codebase contradicts the
-> manual, the code wins (RPG_Engine_Specification.md and code_base.md at the repo root).
+> manual, the code wins (docs/RPG_Spec.md and docs/code_base.md).
 
 ## How to use this
 The full manual is `index.html` (same folder). It is plain semantic HTML — read it directly.
-The most useful section for "how do I…" questions is the numbered recipes (R1–R23).
+The most useful section for "how do I…" questions is the numbered recipes (R1–R29).
 
 ## Quick recipe map (effect → where in the editor)
 - Enemy chases the player → Edit Enemy Types → Hit Reaction & AI → Aggro range > 0  (R1)
@@ -20,7 +20,7 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Placed enemies don't appear → check waypoint present, typeId matches a type, not walled off (state no longer carries over between launches)  (R8)
 - Shop NPC → interaction mode is TYPE-level only (no per-placement override). Edit NPC Types → default interaction = Shop + inventory rows; place an instance (stock can be overridden per instance). Setting a shop stock override on a Talk-type placement does NOT make it a shop.  (R9)
 - Branching dialogue / choices → NPC → Edit Instance Dialogue (Start/Dialogue/Choice/Condition/Action/End)  (R10)
-- Place a pickup → Items tab to define, then Screens → Edit Items  (R11)
+- Place a pickup → Items tab to define, then Screens → Edit Items. Enable Respawn when screen reloads for repeatable flowers; leave it off for one-time coins/keys.  (R11)
 - Choose playable character / edit sprite → Characters tab → Playable + Edit Sprite  (R12)
 - Attack/hurt/death animations → add sprite frames labelled attack_1/cast/hit_react/death/hurt/dead  (R13)
 - Add & link a screen → Screens tab directional N/S/E/W controls  (R14)
@@ -30,9 +30,15 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Animated scenery tile (water/fire/torch) → add region to Tile Palette → "Edit Sprite" on the row → add frames in Sprite editor → Refresh → tile shows "● anim (N)" → Stamp it (active layer = Wall in front / Floor behind). Single-frame tiles stamp static pixels.  (R18)
 - Weapon pickup shows wrong/no sprite on map → pick the weapon in Edit Items; it auto-fills the on-map pickup sprite from the weapon sprite (separate from the weapon's own sprite).  (R19)
 - Slingshot/bow won't use ammo → ammo lives in the INVENTORY (shown in an "AMMO" section), fired directly; weapon ammoTypeId must match an Ammo item id/targetId. No separate ammo pool.  (R20)
-- Editor opens last project automatically (projects/.editor_session); Project menu → Project Manager to open/create/delete projects.  (R21)
+- Editor opens last project automatically (projects/.editor_session); Project Manager opens/creates/deletes projects. Creating or opening ensures the complete declared assets/raw and assets/game folder tree, including sfx/doors; chapters get dialogue/<chapter-id>.  (R21)
 - Obstacles / hazards → Screens → Edit Screen Graphics → Map Logic; add Spike/Pit/Timed Spike rectangles, set tile position/size, optional sprite id, and timed spike cycle fields. Obstacles do not have a top-level tab.  (R22)
-- Doors → Screens → Edit Doors; add tile-sized trigger rectangles with lock mode, required item, consume-key flag, target screen/tile, sprite id, and opening animation. Runtime: stand on/near door + interact; locked/missing-key/blocked destinations show feedback, consumed keys leave inventory, valid doors transition to target screen/tile.  (R23)
+- Door behavior overview → Screens → Edit Doors; Free Use+target transfers, Locked is permanent, Requires Item+target transfers, Requires Item without target unlocks in place. Required Item uses the key item ID, not Target.  (R23)
+- NPC/enemy enters, speaks, or leaves on a path → edit its path/spline; use off-screen X/Y coordinates, Enter/Speak/Leave waypoint actions, and Speech time.  (R24)
+- Draw a polygon in a sprite → Sprite editor → Polygon; click vertices, double-click/Enter to close, right-click/Esc to cancel. Reorder frames by dragging thumbnails or Earlier/Later.  (R25)
+- Destination door → set Target screen ID and clear Target Tile X/Y; optionally require/consume a key.  (R26)
+- Same-screen key barrier → Requires Item + key item ID + empty Target screen; unlock persists and an unanimated door disappears when crossed.  (R27)
+- Door SFX → put `.wav`/`.ogg` under assets/game/sfx/doors and select Open, Close, Locked dropdowns.  (R28)
+- Repeatable flowers vs one-time coins → Edit Items → Respawn when screen reloads checked/unchecked; placement IDs must be unique.  (R29)
 
 ## Key concepts
 - Tiles 16x16, screens 48x32 tiles. Chapters = grids of linked screens.
@@ -54,5 +60,8 @@ Move WASD/arrows; Z melee; X ranged; E interact/confirm/use; I inventory; Esc qu
 - README.md — what this folder is and how to keep it current
 
 ## Related engineering docs
+- ../../README.md — build, run, runtime flags, and smoke-test commands.
+- ../RPG_Spec.md — implemented behavior and planned features.
+- ../code_base.md — architecture, modules, targets, and data formats.
 - ../high_level_functionality_audit.md — checklist for finding feature gaps across editor authoring, save/load, runtime behavior, UI feedback, persistence, validation, performance, and docs.
 - ../manual_high_level_test_checklist.md — manual end-to-end test checklist for money pickups, shops, ammo, dialogue rewards, doors, hazards, animated tiles, and persistence.

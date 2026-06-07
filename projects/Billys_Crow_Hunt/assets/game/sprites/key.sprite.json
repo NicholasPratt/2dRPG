@@ -1,0 +1,22 @@
+{
+  "id": "key",
+  "source": "assets/raw/sprites/key_sheet.png",
+  "canvasSize": [32, 32],
+  "gridSize": [32, 32],
+  "pivot": [16, 16],
+  "bodyGuide": [0, 0, 0, 0],
+  "frames": [
+    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [32, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [64, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [96, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [128, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [160, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [192, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [224, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [256, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [288, 0, 32, 32], "durationMs": 100, "type": "idle"},
+    {"rect": [320, 0, 32, 32], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}

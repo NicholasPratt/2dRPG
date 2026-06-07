@@ -112,7 +112,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 11\n";
+    output << "ADCHAPTER 12\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -142,7 +142,10 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                 output << "wp " << waypoint.x << ' ' << waypoint.y
                        << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
                        << ' ' << waypoint.facing
-                       << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState) << "\n";
+                       << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState)
+                       << ' ' << static_cast<int>(waypoint.action)
+                       << ' ' << waypoint.speechDurationSeconds
+                       << ' ' << std::quoted(waypoint.speechText) << "\n";
             }
         }
         output << "npcs " << screen.npcs.size() << "\n";
@@ -151,6 +154,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                    << npc.x << ' ' << npc.y << ' ' << npc.facing << ' '
                    << npc.awarenessRadius << ' ' << npc.interactionRadius << ' '
                    << static_cast<int>(npc.movementOverride) << ' '
+                   << static_cast<int>(npc.curveMode) << ' '
                    << (npc.loop ? 1 : 0) << ' ' << npc.speedOverride << ' '
                    << (npc.graphOverride.empty() ? "-" : npc.graphOverride) << ' '
                    << npc.waypoints.size() << ' ' << npc.dialogueOverride.size()
@@ -159,7 +163,10 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                 output << "wp " << waypoint.x << ' ' << waypoint.y
                        << ' ' << waypoint.speedOverride << ' ' << waypoint.waitSeconds
                        << ' ' << waypoint.facing
-                       << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState) << "\n";
+                       << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState)
+                       << ' ' << static_cast<int>(waypoint.action)
+                       << ' ' << waypoint.speechDurationSeconds
+                       << ' ' << std::quoted(waypoint.speechText) << "\n";
             }
             for (const DialogueLine& dl : npc.dialogueOverride) {
                 output << "dl " << std::quoted(dl.speaker) << ' ' << std::quoted(dl.text) << "\n";
@@ -200,7 +207,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 11) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 12) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -361,6 +368,12 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                         input >> waypoint.speedOverride >> waypoint.waitSeconds >> waypoint.facing >> animToken;
                         waypoint.animState = (animToken == "-") ? std::string{} : animToken;
                     }
+                    if (version >= 12) {
+                        int action = 0;
+                        input >> action >> waypoint.speechDurationSeconds >> std::quoted(waypoint.speechText);
+                        waypoint.action = static_cast<PathWaypointAction>(std::clamp(action, 0, 3));
+                        waypoint.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+                    }
                     enemy.waypoints.push_back(waypoint);
                 }
                 screen.enemies.push_back(std::move(enemy));
@@ -378,6 +391,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
             for (int npcIndex = 0; npcIndex < npcCount; ++npcIndex) {
                 NpcPlacement npc;
                 int movement = 0;
+                int curve = 0;
                 int loopVal = 1;
                 int waypointCount = 0;
                 std::string graphOverride;
@@ -390,7 +404,11 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 int shopCount = 0;
                 input >> npc.id >> npc.typeId >> npc.x >> npc.y >> npc.facing
                       >> npc.awarenessRadius >> npc.interactionRadius
-                      >> movement >> loopVal >> npc.speedOverride >> graphOverride >> waypointCount;
+                      >> movement;
+                if (version >= 12) {
+                    input >> curve;
+                }
+                input >> loopVal >> npc.speedOverride >> graphOverride >> waypointCount;
                 if (version >= 6) {
                     input >> dialogueCount;
                 }
@@ -402,6 +420,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                     return false;
                 }
                 npc.movementOverride = static_cast<NpcMovementMode>(std::clamp(movement, 0, 2));
+                npc.curveMode = static_cast<PathCurveMode>(std::clamp(curve, 0, 1));
                 npc.loop = loopVal != 0;
                 npc.graphOverride = (graphOverride == "-") ? std::string{} : graphOverride;
                 npc.waypoints.reserve(static_cast<std::size_t>(waypointCount));
@@ -416,6 +435,12 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                         std::string animToken;
                         input >> waypoint.speedOverride >> waypoint.waitSeconds >> waypoint.facing >> animToken;
                         waypoint.animState = (animToken == "-") ? std::string{} : animToken;
+                    }
+                    if (version >= 12) {
+                        int action = 0;
+                        input >> action >> waypoint.speechDurationSeconds >> std::quoted(waypoint.speechText);
+                        waypoint.action = static_cast<PathWaypointAction>(std::clamp(action, 0, 3));
+                        waypoint.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
                     }
                     npc.waypoints.push_back(waypoint);
                 }

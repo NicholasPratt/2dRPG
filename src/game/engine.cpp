@@ -44,6 +44,7 @@ constexpr float kMeleeActiveWindowSeconds = 0.12f;
 constexpr float kEnemyKnockbackBasePxPerSecond = 220.0f;  // scaled by (1 - knockbackResistance)
 constexpr float kEnemyKnockbackDecayPerSecond = 6.0f;     // exponential decay rate
 constexpr float kEnemyHitFlashSeconds = 0.12f;
+constexpr float kPlayerHitFlashSeconds = 0.16f;
 constexpr float kPlayerKnockbackPxPerSecond = 160.0f;
 constexpr float kPlayerKnockbackDecayPerSecond = 8.0f;
 constexpr float kItemPickupRadius = 12.0f;
@@ -146,6 +147,38 @@ float approximatePathLength(const EnemyPath& path)
         total += distance(path.waypoints.back(), path.waypoints.front());
     }
     return total;
+}
+
+float pathDistanceToWaypoint(const EnemyPath& path, std::size_t waypointIndex)
+{
+    if (path.waypoints.empty() || waypointIndex == 0) {
+        return 0.0f;
+    }
+    const std::size_t clampedIndex = std::min(waypointIndex, path.waypoints.size() - 1);
+    float total = 0.0f;
+    if (path.curveMode == PathCurveMode::Spline && path.waypoints.size() >= 3) {
+        for (std::size_t segment = 0; segment < clampedIndex; ++segment) {
+            PathWaypoint previous = catmullPoint(path, static_cast<int>(segment), 0.0f);
+            for (int sample = 1; sample <= 12; ++sample) {
+                const PathWaypoint next = catmullPoint(
+                    path, static_cast<int>(segment), static_cast<float>(sample) / 12.0f);
+                total += distance(previous, next);
+                previous = next;
+            }
+        }
+        return total;
+    }
+    for (std::size_t i = 1; i <= clampedIndex; ++i) {
+        total += distance(path.waypoints[i - 1], path.waypoints[i]);
+    }
+    return total;
+}
+
+bool pathStartsHidden(const std::vector<PathWaypoint>& waypoints)
+{
+    return std::any_of(waypoints.begin(), waypoints.end(), [](const PathWaypoint& waypoint) {
+        return waypoint.action == PathWaypointAction::Enter;
+    });
 }
 
 std::string characterSpriteId(const std::filesystem::path& projectRoot, const std::string& characterId)
@@ -456,6 +489,8 @@ public:
             SDL_CloseAudioDevice(device_);
             device_ = 0;
             deviceSpec_ = {};
+            effectPcm_.clear();
+            effectCursor_ = 0;
         }
 
         if (device_ == 0) {
@@ -478,6 +513,58 @@ public:
         return true;
     }
 
+    bool playEffect(const std::filesystem::path& path, std::string* errorMessage)
+    {
+        std::vector<std::uint8_t> decoded;
+        SDL_AudioSpec decodedSpec{};
+        if (!decodeAudio(path, decoded, decodedSpec, errorMessage)) {
+            return false;
+        }
+        if (!audioInitialized_) {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+                setError(errorMessage, std::string("Failed to initialize SDL audio: ") + SDL_GetError());
+                return false;
+            }
+            audioInitialized_ = true;
+        }
+        if (device_ == 0) {
+            decodedSpec.callback = &MusicPlayer::audioCallback;
+            decodedSpec.userdata = this;
+            SDL_AudioSpec obtained{};
+            device_ = SDL_OpenAudioDevice(nullptr, 0, &decodedSpec, &obtained, 0);
+            if (device_ == 0) {
+                setError(errorMessage, std::string("Failed to open SDL audio device: ") + SDL_GetError());
+                return false;
+            }
+            deviceSpec_ = obtained;
+        } else if (deviceSpec_.freq != decodedSpec.freq || deviceSpec_.format != decodedSpec.format ||
+            deviceSpec_.channels != decodedSpec.channels) {
+            SDL_AudioCVT converter{};
+            if (SDL_BuildAudioCVT(&converter, decodedSpec.format, decodedSpec.channels, decodedSpec.freq,
+                    deviceSpec_.format, deviceSpec_.channels, deviceSpec_.freq) < 0) {
+                setError(errorMessage, std::string("Failed to configure SFX conversion: ") + SDL_GetError());
+                return false;
+            }
+            std::vector<std::uint8_t> converted(decoded.size() * static_cast<std::size_t>(converter.len_mult));
+            std::memcpy(converted.data(), decoded.data(), decoded.size());
+            converter.buf = converted.data();
+            converter.len = static_cast<int>(decoded.size());
+            if (SDL_ConvertAudio(&converter) != 0) {
+                setError(errorMessage, std::string("Failed to convert SFX audio: ") + SDL_GetError());
+                return false;
+            }
+            converted.resize(static_cast<std::size_t>(converter.len_cvt));
+            decoded = std::move(converted);
+        }
+
+        SDL_LockAudioDevice(device_);
+        effectPcm_ = std::move(decoded);
+        effectCursor_ = 0;
+        SDL_UnlockAudioDevice(device_);
+        SDL_PauseAudioDevice(device_, 0);
+        return true;
+    }
+
     void stop()
     {
         currentKey_.clear();
@@ -486,12 +573,15 @@ public:
             cursor_ = 0;
             return;
         }
-        SDL_PauseAudioDevice(device_, 1);
         SDL_LockAudioDevice(device_);
         pcm_.clear();
         cursor_ = 0;
         loop_ = false;
+        const bool effectPlaying = effectCursor_ < effectPcm_.size();
         SDL_UnlockAudioDevice(device_);
+        if (!effectPlaying) {
+            SDL_PauseAudioDevice(device_, 1);
+        }
     }
 
 private:
@@ -499,6 +589,8 @@ private:
     SDL_AudioSpec deviceSpec_{};
     std::vector<std::uint8_t> pcm_;
     std::size_t cursor_ = 0;
+    std::vector<std::uint8_t> effectPcm_;
+    std::size_t effectCursor_ = 0;
     bool loop_ = false;
     bool audioInitialized_ = false;
     std::string currentKey_;
@@ -550,11 +642,35 @@ private:
         return true;
     }
 
+    static bool decodeAudio(const std::filesystem::path& path, std::vector<std::uint8_t>& outPcm,
+        SDL_AudioSpec& outSpec, std::string* errorMessage)
+    {
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension == ".ogg") {
+            return decodeOgg(path, outPcm, outSpec, errorMessage);
+        }
+        if (extension == ".wav") {
+            Uint8* wavData = nullptr;
+            Uint32 wavLength = 0;
+            if (SDL_LoadWAV(path.string().c_str(), &outSpec, &wavData, &wavLength) == nullptr) {
+                setError(errorMessage, "Failed to open WAV sound: " + path.string());
+                return false;
+            }
+            outPcm.assign(wavData, wavData + wavLength);
+            SDL_FreeWAV(wavData);
+            return !outPcm.empty();
+        }
+        setError(errorMessage, "Unsupported sound format (expected .ogg or .wav): " + path.string());
+        return false;
+    }
+
     static void audioCallback(void* userdata, Uint8* stream, int len)
     {
         auto* player = static_cast<MusicPlayer*>(userdata);
         SDL_memset(stream, 0, len);
-        if (player == nullptr || player->pcm_.empty()) {
+        if (player == nullptr) {
             return;
         }
 
@@ -573,6 +689,18 @@ private:
             std::memcpy(stream + written, player->pcm_.data() + player->cursor_, chunk);
             player->cursor_ += chunk;
             written += static_cast<int>(chunk);
+        }
+
+        if (player->effectCursor_ < player->effectPcm_.size()) {
+            const std::size_t remaining = player->effectPcm_.size() - player->effectCursor_;
+            const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(len));
+            SDL_MixAudioFormat(stream, player->effectPcm_.data() + player->effectCursor_,
+                player->deviceSpec_.format, static_cast<Uint32>(chunk), SDL_MIX_MAXVOLUME);
+            player->effectCursor_ += chunk;
+            if (player->effectCursor_ >= player->effectPcm_.size()) {
+                player->effectPcm_.clear();
+                player->effectCursor_ = 0;
+            }
         }
     }
 };
@@ -955,8 +1083,25 @@ void Engine::loadItemEntities()
     for (const MapItemPlacement& placement : activeMap_.items) {
         RuntimeItemEntity entity;
         entity.placement = placement;
+        entity.collected = !placement.respawn &&
+            gameState_.getBool(itemStateId(placement), false);
         itemEntities_.push_back(entity);
     }
+}
+
+std::string Engine::itemStateId(const MapItemPlacement& item) const
+{
+    const auto safeToken = [](std::string value) {
+        for (char& c : value) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.') {
+                c = '_';
+            }
+        }
+        return value.empty() ? std::string{"unknown"} : value;
+    };
+    return "item_collected." + safeToken(chapter_.id) + "." +
+        safeToken(activeScreen_ == nullptr ? std::string{} : activeScreen_->id) + "." +
+        safeToken(item.id);
 }
 
 void Engine::loadPathEntities()
@@ -1012,12 +1157,14 @@ void Engine::loadPathEntities()
             entity.x = entity.path.waypoints.front().x;
             entity.y = entity.path.waypoints.front().y;
             entity.health = std::max(1, entity.path.combat.maxHealth);
-            entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+            entity.waypointIndex = 0;
+            entity.pathHidden = pathStartsHidden(entity.path.waypoints);
             entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
             if (activeScreen_ != nullptr &&
                 gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id)) {
                 continue;
             }
+            applyEnemyWaypointAction(entity, entity.path.waypoints.front());
             pathEntities_.push_back(std::move(entity));
         }
     }
@@ -1045,12 +1192,14 @@ void Engine::loadPathEntities()
         entity.x = entity.path.waypoints.front().x;
         entity.y = entity.path.waypoints.front().y;
         entity.health = std::max(1, entity.path.combat.maxHealth);
-        entity.waypointIndex = entity.path.waypoints.size() > 1 ? 1u : 0u;
+        entity.waypointIndex = 0;
+        entity.pathHidden = pathStartsHidden(entity.path.waypoints);
         entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
         if (activeScreen_ != nullptr &&
             gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id)) {
             continue;
         }
+        applyEnemyWaypointAction(entity, entity.path.waypoints.front());
         pathEntities_.push_back(std::move(entity));
     }
 }
@@ -1269,6 +1418,7 @@ void Engine::update(float dt)
 {
     runtimeSeconds_ += dt;
     playerInvulnerableSeconds_ = std::max(0.0f, playerInvulnerableSeconds_ - dt);
+    playerHitFlashSeconds_ = std::max(0.0f, playerHitFlashSeconds_ - dt);
     noticeSeconds_ = std::max(0.0f, noticeSeconds_ - dt);
 
     const bool inventoryInputDown = inputDown(InputAction::Inventory);
@@ -1288,6 +1438,8 @@ void Engine::update(float dt)
             transitionState_ = TransitionState::None;
             destroyTexture(prevFloorTexture_);
             destroyTexture(prevWallTexture_);
+            playSoundEffect(pendingDoorCloseSoundPath_);
+            pendingDoorCloseSoundPath_.clear();
         }
         return;
     }
@@ -1315,6 +1467,7 @@ void Engine::update(float dt)
     updateEnemyDeaths(dt);
     updatePaths(dt);
     updateNpcs(dt);
+    updateDoors();
     updateInteraction();
     updateItemPickups();
 }
@@ -1772,7 +1925,7 @@ void Engine::checkMeleeHits()
     }
     const float reach = meleeWeapon_->range;
     for (RuntimePathEntity& entity : pathEntities_) {
-        if (entity.health <= 0 || entity.deathSeconds >= 0.0f) {
+        if (entity.pathHidden || entity.health <= 0 || entity.deathSeconds >= 0.0f) {
             continue;
         }
         if (meleeHitEnemies_.count(entity.path.id) > 0) {
@@ -1907,7 +2060,7 @@ void Engine::updateProjectiles(float dt)
         }
 
         for (RuntimePathEntity& entity : pathEntities_) {
-            if (entity.health <= 0 || entity.deathSeconds >= 0.0f) {
+            if (entity.pathHidden || entity.health <= 0 || entity.deathSeconds >= 0.0f) {
                 continue;
             }
             const float halfW = entity.path.combat.hitboxWidth * 0.5f;
@@ -1949,19 +2102,48 @@ bool Engine::playerOverlapsItem(const RuntimeItemEntity& item) const
 
 bool Engine::playerOverlapsDoor(const MapDoorPlacement& door) const
 {
+    return playerOverlapsDoorAt(door, playerX_, playerY_);
+}
+
+bool Engine::playerOverlapsDoorAt(const MapDoorPlacement& door, float playerX, float playerY) const
+{
     const float x = static_cast<float>(door.x * kTileSize);
     const float y = static_cast<float>(door.y * kTileSize);
     const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
     const float h = static_cast<float>(std::max(1, door.heightTiles) * kTileSize);
     const float half = kPlayerCollisionSizePx * 0.5f;
-    return playerX_ + half >= x &&
-        playerX_ - half <= x + w &&
-        playerY_ + half >= y &&
-        playerY_ - half <= y + h;
+    return playerX + half >= x &&
+        playerX - half <= x + w &&
+        playerY + half >= y &&
+        playerY - half <= y + h;
+}
+
+bool Engine::doorBlocksPlayerAt(const MapDoorPlacement& door, float x, float y) const
+{
+    if (doorIsUnlocked(door) || !playerOverlapsDoorAt(door, x, y)) {
+        return false;
+    }
+    if (!playerOverlapsDoor(door)) {
+        return true;
+    }
+
+    // Let old saves or edited spawn points escape a blocking door, but never move farther into it.
+    const float centerX = static_cast<float>(door.x * kTileSize) +
+        static_cast<float>(std::max(1, door.widthTiles) * kTileSize) * 0.5f;
+    const float centerY = static_cast<float>(door.y * kTileSize) +
+        static_cast<float>(std::max(1, door.heightTiles) * kTileSize) * 0.5f;
+    const float currentDx = playerX_ - centerX;
+    const float currentDy = playerY_ - centerY;
+    const float nextDx = x - centerX;
+    const float nextDy = y - centerY;
+    return nextDx * nextDx + nextDy * nextDy <= currentDx * currentDx + currentDy * currentDy;
 }
 
 bool Engine::playerCanInteractWithDoor(const MapDoorPlacement& door) const
 {
+    if (doorIsUnlocked(door) && door.targetScreenId.empty()) {
+        return false;
+    }
     const float x = static_cast<float>(door.x * kTileSize);
     const float y = static_cast<float>(door.y * kTileSize);
     const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
@@ -2004,13 +2186,27 @@ void Engine::showNotice(const std::string& text, float seconds)
 bool Engine::activateDoor(const MapDoorPlacement& door)
 {
     if (door.lockMode == DoorLockMode::Locked) {
+        playSoundEffect(door.lockedSoundPath);
         showNotice("Locked");
         return false;
     }
     if (door.lockMode == DoorLockMode::RequiresItem) {
-        if (door.requiredItemId.empty() || !hasInventoryItem(door.requiredItemId)) {
+        if (!doorIsUnlocked(door) &&
+            (door.requiredItemId.empty() || !hasInventoryItem(door.requiredItemId))) {
+            playSoundEffect(door.lockedSoundPath);
             showNotice(door.requiredItemId.empty() ? "Needs a key" : "Needs " + door.requiredItemId);
             return false;
+        }
+        if (door.targetScreenId.empty()) {
+            gameState_.setBool(doorStateId(door, "unlocked"), true);
+            playSoundEffect(door.openSoundPath);
+            if (door.consumeKey) {
+                (void)removeInventoryItem(door.requiredItemId, 1);
+            }
+            saveRuntimeState();
+            showNotice("Unlocked");
+            endInteraction();
+            return true;
         }
     }
     if (door.targetScreenId.empty()) {
@@ -2032,6 +2228,8 @@ bool Engine::activateDoor(const MapDoorPlacement& door)
         showNotice("Door is blocked");
         return false;
     }
+    playSoundEffect(door.openSoundPath);
+    pendingDoorCloseSoundPath_ = door.closeSoundPath;
 
     if (door.lockMode == DoorLockMode::RequiresItem && door.consumeKey) {
         (void)removeInventoryItem(door.requiredItemId, 1);
@@ -2039,6 +2237,60 @@ bool Engine::activateDoor(const MapDoorPlacement& door)
     }
     endInteraction();
     return true;
+}
+
+std::string Engine::doorStateId(const MapDoorPlacement& door, const char* state) const
+{
+    const auto safeToken = [](std::string value) {
+        for (char& c : value) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.') {
+                c = '_';
+            }
+        }
+        return value.empty() ? std::string{"unknown"} : value;
+    };
+    return "door_" + safeToken(state == nullptr ? std::string{} : std::string{state}) + "." +
+        safeToken(chapter_.id) + "." +
+        safeToken(activeScreen_ == nullptr ? std::string{} : activeScreen_->id) + "." +
+        safeToken(door.id);
+}
+
+bool Engine::doorIsUnlocked(const MapDoorPlacement& door) const
+{
+    return door.lockMode == DoorLockMode::FreeUse ||
+        gameState_.getBool(doorStateId(door, "unlocked"), false);
+}
+
+bool Engine::doorIsHidden(const MapDoorPlacement& door) const
+{
+    return gameState_.getBool(doorStateId(door, "hidden"), false);
+}
+
+void Engine::updateDoors()
+{
+    for (const MapDoorPlacement& door : activeMap_.doors) {
+        if (door.lockMode != DoorLockMode::RequiresItem || !doorIsUnlocked(door) ||
+            !door.targetScreenId.empty() ||
+            !door.openingAnimation.empty() || doorIsHidden(door) ||
+            !playerOverlapsDoor(door)) {
+            continue;
+        }
+        gameState_.setBool(doorStateId(door, "hidden"), true);
+        saveRuntimeState();
+    }
+}
+
+void Engine::playSoundEffect(const std::string& configuredPath)
+{
+    if (configuredPath.empty() || musicPlayer_ == nullptr) {
+        return;
+    }
+    const std::filesystem::path path(configuredPath);
+    const std::filesystem::path fullPath = path.is_absolute() ? path : projectRoot_ / path;
+    std::string error;
+    if (!musicPlayer_->playEffect(fullPath, &error)) {
+        std::cerr << "Failed to play sound effect: " << error << "\n";
+    }
 }
 
 void Engine::collectItem(RuntimeItemEntity& item)
@@ -2139,6 +2391,10 @@ void Engine::collectItem(RuntimeItemEntity& item)
             break;
         }
     }
+    if (!item.placement.respawn) {
+        gameState_.setBool(itemStateId(item.placement), true);
+        saveRuntimeState();
+    }
 }
 
 void Engine::loadNpcEntities()
@@ -2165,6 +2421,11 @@ void Engine::loadNpcEntities()
         entity.placement = placement;
         entity.x = placement.x;
         entity.y = placement.y;
+        static constexpr float kFacingX[] = {0.0f, 0.0f, 1.0f, -1.0f};
+        static constexpr float kFacingY[] = {1.0f, -1.0f, 0.0f, 0.0f};
+        const int facing = std::clamp(placement.facing, 0, 3);
+        entity.facingX = kFacingX[facing];
+        entity.facingY = kFacingY[facing];
         entity.graphId = placement.graphOverride;
         if (const NpcTypeDef* type = typeForId(placement.typeId)) {
             entity.interactionMode = type->defaultInteraction;
@@ -2197,7 +2458,9 @@ void Engine::loadNpcEntities()
         if (!placement.waypoints.empty()) {
             entity.x = placement.waypoints.front().x;
             entity.y = placement.waypoints.front().y;
-            entity.waypointIndex = placement.waypoints.size() > 1 ? 1u : 0u;
+            entity.waypointIndex = 0;
+            entity.pathHidden = pathStartsHidden(placement.waypoints);
+            applyNpcWaypointAction(entity, placement.waypoints.front());
         }
         if (!entity.graphId.empty()) {
             std::filesystem::path graphPath = assetPath(projectRoot_, "assets/game/dialogue") / chapter_.id / (entity.graphId + ".addialogue");
@@ -2210,10 +2473,74 @@ void Engine::loadNpcEntities()
     }
 }
 
+void Engine::applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypoint& waypoint)
+{
+    entity.atWaypoint = true;
+    entity.waitRemainingSeconds = std::max(0.0f, waypoint.waitSeconds);
+    if (!waypoint.animState.empty() && entity.animState != waypoint.animState) {
+        entity.animState = waypoint.animState;
+        entity.animSeconds = 0.0f;
+    }
+    if (waypoint.facing >= 0) {
+        static constexpr float kFacingX[] = {0.0f, 0.0f, 1.0f, -1.0f};
+        static constexpr float kFacingY[] = {1.0f, -1.0f, 0.0f, 0.0f};
+        const int facing = std::clamp(waypoint.facing, 0, 3);
+        entity.facingX = kFacingX[facing];
+        entity.facingY = kFacingY[facing];
+    }
+    switch (waypoint.action) {
+        case PathWaypointAction::Enter:
+            entity.pathHidden = false;
+            break;
+        case PathWaypointAction::Speak:
+            entity.speechText = waypoint.speechText;
+            entity.speechRemainingSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+            entity.waitRemainingSeconds = std::max(entity.waitRemainingSeconds, entity.speechRemainingSeconds);
+            break;
+        case PathWaypointAction::Leave:
+            entity.pathHidden = true;
+            entity.pathFinished = true;
+            break;
+        case PathWaypointAction::None:
+            break;
+    }
+}
+
+void Engine::applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint)
+{
+    npc.atWaypoint = true;
+    npc.waitRemainingSeconds = std::max(0.0f, waypoint.waitSeconds);
+    npc.actionType = waypoint.animState.empty() ? "idle" : waypoint.animState;
+    if (waypoint.facing >= 0) {
+        static constexpr float kFacingX[] = {0.0f, 0.0f, 1.0f, -1.0f};
+        static constexpr float kFacingY[] = {1.0f, -1.0f, 0.0f, 0.0f};
+        const int facing = std::clamp(waypoint.facing, 0, 3);
+        npc.facingX = kFacingX[facing];
+        npc.facingY = kFacingY[facing];
+    }
+    switch (waypoint.action) {
+        case PathWaypointAction::Enter:
+            npc.pathHidden = false;
+            break;
+        case PathWaypointAction::Speak:
+            npc.speechText = waypoint.speechText;
+            npc.speechRemainingSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+            npc.waitRemainingSeconds = std::max(npc.waitRemainingSeconds, npc.speechRemainingSeconds);
+            break;
+        case PathWaypointAction::Leave:
+            npc.pathHidden = true;
+            npc.pathFinished = true;
+            break;
+        case PathWaypointAction::None:
+            break;
+    }
+}
+
 void Engine::updateNpcs(float dt)
 {
     updateNpcAwareness();
     for (RuntimeNpcEntity& npc : npcEntities_) {
+        npc.speechRemainingSeconds = std::max(0.0f, npc.speechRemainingSeconds - dt);
         if (npc.hidden) {
             continue;
         }
@@ -2231,6 +2558,10 @@ void Engine::updateNpcs(float dt)
             } else {
                 npc.actionType = "idle";
             }
+            continue;
+        }
+        if (npc.pathFinished) {
+            npc.actionType = "idle";
             continue;
         }
         if (npc.playerInAwareness) {
@@ -2252,7 +2583,9 @@ void Engine::updateNpcs(float dt)
                 ++npc.waypointIndex;
             } else if (npc.placement.loop) {
                 npc.waypointIndex = 0;
+                npc.pathDistance = 0.0f;
             } else {
+                npc.pathFinished = true;
                 npc.actionType = "idle";
                 continue;
             }
@@ -2260,15 +2593,45 @@ void Engine::updateNpcs(float dt)
 
         npc.actionType = "walk";
         const PathWaypoint& target = npc.placement.waypoints[npc.waypointIndex];
+        if (npc.placement.curveMode == PathCurveMode::Spline && npc.placement.waypoints.size() >= 3) {
+            EnemyPath path;
+            path.curveMode = npc.placement.curveMode;
+            path.loop = npc.placement.loop;
+            path.waypoints = npc.placement.waypoints;
+            const float length = approximatePathLength(path);
+            float targetDistance = pathDistanceToWaypoint(path, npc.waypointIndex);
+            if (npc.placement.loop && npc.waypointIndex == 0 && npc.pathDistance > 0.0f) {
+                targetDistance = length;
+            }
+            const float speed = target.speedOverride > 0.0f ? target.speedOverride
+                : (npc.placement.speedOverride > 0.0f ? npc.placement.speedOverride : 32.0f);
+            const float previousDistance = npc.pathDistance;
+            npc.pathDistance = std::min(targetDistance, npc.pathDistance + speed * dt);
+            const PathWaypoint point = pointAtDistance(path, npc.pathDistance >= length ? 0.0f : npc.pathDistance);
+            const PathWaypoint previous = pointAtDistance(path, previousDistance >= length ? 0.0f : previousDistance);
+            const float dx = point.x - previous.x;
+            const float dy = point.y - previous.y;
+            const float directionLength = std::sqrt(dx * dx + dy * dy);
+            if (directionLength > 0.001f) {
+                npc.facingX = dx / directionLength;
+                npc.facingY = dy / directionLength;
+            }
+            npc.x = point.x;
+            npc.y = point.y;
+            if (npc.pathDistance >= targetDistance - 0.001f) {
+                npc.x = target.x;
+                npc.y = target.y;
+                applyNpcWaypointAction(npc, target);
+            }
+            continue;
+        }
         const float dx = target.x - npc.x;
         const float dy = target.y - npc.y;
         const float dist = std::sqrt(dx * dx + dy * dy);
         if (dist <= 1.0f) {
             npc.x = target.x;
             npc.y = target.y;
-            npc.atWaypoint = true;
-            npc.waitRemainingSeconds = target.waitSeconds;
-            npc.actionType = target.animState.empty() ? "idle" : target.animState;
+            applyNpcWaypointAction(npc, target);
             continue;
         }
         const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride
@@ -2284,7 +2647,7 @@ void Engine::updateNpcs(float dt)
 void Engine::updateNpcAwareness()
 {
     for (RuntimeNpcEntity& npc : npcEntities_) {
-        if (npc.hidden) {
+        if (npc.hidden || npc.pathHidden) {
             npc.playerInAwareness = false;
             continue;
         }
@@ -2692,7 +3055,8 @@ void Engine::updateInteraction()
             float nearestDist = 99999.0f;
             for (int i = 0; i < static_cast<int>(npcEntities_.size()); ++i) {
                 const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(i)];
-                if (npc.hidden || (npc.interactionMode != NpcInteractionMode::Shop && !npc.hasGraph && npc.dialogue.empty())) {
+                if (npc.hidden || npc.pathHidden ||
+                    (npc.interactionMode != NpcInteractionMode::Shop && !npc.hasGraph && npc.dialogue.empty())) {
                     continue;
                 }
                 const float dx = playerX_ - npc.x;
@@ -2814,7 +3178,7 @@ void Engine::updateInteraction()
 void Engine::renderNpcs() const
 {
     for (const RuntimeNpcEntity& npc : npcEntities_) {
-        if (npc.hidden) {
+        if (npc.hidden || npc.pathHidden) {
             continue;
         }
         auto spriteIt = loadedSprites_.find(npc.spriteId);
@@ -2840,6 +3204,9 @@ void Engine::renderNpcs() const
 void Engine::renderDoors() const
 {
     for (const MapDoorPlacement& door : activeMap_.doors) {
+        if (doorIsHidden(door)) {
+            continue;
+        }
         const float x = static_cast<float>(door.x * kTileSize);
         const float y = static_cast<float>(door.y * kTileSize);
         const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
@@ -2860,7 +3227,7 @@ void Engine::renderDoors() const
 
         if (door.lockMode == DoorLockMode::Locked) {
             renderFilledRect(x, y, w, h, 0.72f, 0.12f, 0.10f, 0.38f);
-        } else if (door.lockMode == DoorLockMode::RequiresItem) {
+        } else if (door.lockMode == DoorLockMode::RequiresItem && !doorIsUnlocked(door)) {
             renderFilledRect(x, y, w, h, 0.15f, 0.34f, 0.86f, 0.34f);
         } else {
             renderFilledRect(x, y, w, h, 0.10f, 0.62f, 0.32f, 0.30f);
@@ -2952,6 +3319,49 @@ void Engine::renderSpeechBubble() const
     for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
         renderText(lines[static_cast<std::size_t>(i)], x + padX, y + padY + static_cast<float>(i) * lineH,
             kSpeechTextScale, 0.08f, 0.08f, 0.09f, 1.0f);
+    }
+}
+
+void Engine::renderPathSpeechBubbles() const
+{
+    const auto renderBubble = [this](float actorX, float actorY, const std::string& text) {
+        if (text.empty()) {
+            return;
+        }
+        const std::vector<std::string> lines = wrapText(text, 28, 3);
+        if (lines.empty()) {
+            return;
+        }
+        constexpr float scale = 1.0f;
+        constexpr float lineHeight = 12.0f;
+        constexpr float padX = 7.0f;
+        constexpr float padY = 5.0f;
+        float maxTextWidth = 0.0f;
+        for (const std::string& line : lines) {
+            maxTextWidth = std::max(maxTextWidth, textWidth(line, scale));
+        }
+        const float bubbleWidth = std::min(screenWidthPx() - 12.0f, maxTextWidth + padX * 2.0f);
+        const float bubbleHeight = static_cast<float>(lines.size()) * lineHeight + padY * 2.0f;
+        const float x = std::clamp(actorX - bubbleWidth * 0.5f, 6.0f, screenWidthPx() - bubbleWidth - 6.0f);
+        const float y = std::max(6.0f, actorY - 32.0f - bubbleHeight);
+        renderFilledRect(x + 1.0f, y + 1.0f, bubbleWidth, bubbleHeight, 0.0f, 0.0f, 0.0f, 0.35f);
+        renderFilledRect(x, y, bubbleWidth, bubbleHeight, 0.98f, 0.98f, 0.92f, 0.95f);
+        renderFilledRect(actorX - 4.0f, y + bubbleHeight - 1.0f, 8.0f, 7.0f, 0.98f, 0.98f, 0.92f, 0.95f);
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            renderText(lines[i], x + padX, y + padY + static_cast<float>(i) * lineHeight,
+                scale, 0.10f, 0.12f, 0.14f, 1.0f);
+        }
+    };
+
+    for (const RuntimePathEntity& entity : pathEntities_) {
+        if (!entity.pathHidden && entity.speechRemainingSeconds > 0.0f) {
+            renderBubble(entity.x, entity.y, entity.speechText);
+        }
+    }
+    for (const RuntimeNpcEntity& npc : npcEntities_) {
+        if (!npc.hidden && !npc.pathHidden && npc.speechRemainingSeconds > 0.0f) {
+            renderBubble(npc.x, npc.y, npc.speechText);
+        }
     }
 }
 
@@ -3050,10 +3460,10 @@ void Engine::renderDialogueBox() const
 void Engine::updatePaths(float dt)
 {
     for (RuntimePathEntity& entity : pathEntities_) {
+        entity.speechRemainingSeconds = std::max(0.0f, entity.speechRemainingSeconds - dt);
         if (entity.deathSeconds >= 0.0f) {
             continue;  // dying entities are frozen; updateEnemyDeaths handles removal
         }
-
         // Decay hit-reaction timers for all living entities.
         entity.hitFlashSeconds = std::max(0.0f, entity.hitFlashSeconds - dt);
         entity.hitstunSeconds = std::max(0.0f, entity.hitstunSeconds - dt);
@@ -3078,7 +3488,7 @@ void Engine::updatePaths(float dt)
 
         // Aggro: chase the player directly when within range (overrides waypoint following).
         const float aggroRange = entity.path.combat.aggroRange;
-        if (aggroRange > 0.0f) {
+        if (!entity.pathHidden && aggroRange > 0.0f) {
             const float dxp = playerX_ - entity.x;
             const float dyp = playerY_ - entity.y;
             const float distP = std::sqrt(dxp * dxp + dyp * dyp);
@@ -3148,7 +3558,7 @@ void Engine::updatePaths(float dt)
             }
         }
 
-        if (entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
+        if (entity.pathFinished || entity.path.behavior == PathBehavior::Idle || entity.path.waypoints.empty()) {
             if (entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
                 entity.animState = "idle";
                 entity.animSeconds = 0.0f;
@@ -3156,7 +3566,8 @@ void Engine::updatePaths(float dt)
             continue;
         }
         if (entity.atWaypoint) {
-            if (entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
+            if (entity.waitRemainingSeconds <= 0.0f &&
+                entity.animState != "idle" && entity.animState.find("attack") == std::string::npos) {
                 entity.animState = "idle";
                 entity.animSeconds = 0.0f;
             }
@@ -3169,7 +3580,9 @@ void Engine::updatePaths(float dt)
                 ++entity.waypointIndex;
             } else if (entity.path.loop) {
                 entity.waypointIndex = 0;
+                entity.pathDistance = 0.0f;
             } else {
+                entity.pathFinished = true;
                 continue;
             }
         }
@@ -3187,13 +3600,14 @@ void Engine::updatePaths(float dt)
             if (length <= 0.0f) {
                 continue;
             }
-            const float prevDistance = entity.pathDistance;
-            entity.pathDistance += entity.path.speed * dt;
-            if (entity.path.loop) {
-                entity.pathDistance = std::fmod(entity.pathDistance, length);
-            } else {
-                entity.pathDistance = std::min(entity.pathDistance, length);
+            const PathWaypoint& target = entity.path.waypoints[entity.waypointIndex];
+            float targetDistance = pathDistanceToWaypoint(entity.path, entity.waypointIndex);
+            if (entity.path.loop && entity.waypointIndex == 0 && entity.pathDistance > 0.0f) {
+                targetDistance = length;
             }
+            const float prevDistance = entity.pathDistance;
+            const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride : entity.path.speed;
+            entity.pathDistance = std::min(targetDistance, entity.pathDistance + segSpeed * dt);
             // Derive facing direction from spline tangent (sample slightly ahead)
             constexpr float kTangentDelta = 2.0f;
             const float d1 = std::min(prevDistance, length);
@@ -3209,9 +3623,15 @@ void Engine::updatePaths(float dt)
                     entity.facingY = tdy / tlen;
                 }
             }
-            const PathWaypoint point = pointAtDistance(entity.path, entity.pathDistance);
+            const PathWaypoint point = pointAtDistance(
+                entity.path, entity.pathDistance >= length ? 0.0f : entity.pathDistance);
             entity.x = point.x;
             entity.y = point.y;
+            if (entity.pathDistance >= targetDistance - 0.001f) {
+                entity.x = target.x;
+                entity.y = target.y;
+                applyEnemyWaypointAction(entity, target);
+            }
             continue;
         }
         const PathWaypoint& target = entity.path.waypoints[entity.waypointIndex];
@@ -3221,15 +3641,7 @@ void Engine::updatePaths(float dt)
         if (dist <= 1.0f) {
             entity.x = target.x;
             entity.y = target.y;
-            entity.atWaypoint = true;
-            entity.waitRemainingSeconds = target.waitSeconds;
-            // Apply waypoint animState override if set
-            if (!target.animState.empty()) {
-                if (entity.animState != target.animState) {
-                    entity.animState = target.animState;
-                    entity.animSeconds = 0.0f;
-                }
-            }
+            applyEnemyWaypointAction(entity, target);
             continue;
         }
         const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride : entity.path.speed;
@@ -3278,7 +3690,8 @@ void Engine::updateEnemyCombat(float dt)
         }
 
         // Staggered enemies cannot attack while in hitstun.
-        if (entity.health <= 0 || entity.deathSeconds >= 0.0f || entity.hitstunSeconds > 0.0f) continue;
+        if (entity.pathHidden || entity.health <= 0 ||
+            entity.deathSeconds >= 0.0f || entity.hitstunSeconds > 0.0f) continue;
 
         // Compute vector from entity to player
         const float ex = playerX_ - entity.x;
@@ -3439,10 +3852,17 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
 bool Engine::playerCanOccupy(float x, float y) const
 {
     const float half = kPlayerCollisionSizePx * 0.5f;
-    return !solidAtPixel(x - half, y - half) &&
+    const bool mapIsClear = !solidAtPixel(x - half, y - half) &&
         !solidAtPixel(x + half, y - half) &&
         !solidAtPixel(x - half, y + half) &&
         !solidAtPixel(x + half, y + half);
+    if (!mapIsClear) {
+        return false;
+    }
+    return std::none_of(activeMap_.doors.begin(), activeMap_.doors.end(),
+        [this, x, y](const MapDoorPlacement& door) {
+            return doorBlocksPlayerAt(door, x, y);
+        });
 }
 
 bool Engine::solidAtPixel(float x, float y) const
@@ -3527,6 +3947,7 @@ void Engine::damagePlayer(int amount, float sourceX, float sourceY)
     }
     playerHealth_ = std::max(0, playerHealth_ - amount);
     playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
+    playerHitFlashSeconds_ = kPlayerHitFlashSeconds;
 
     // Knockback away from the damage source (skipped when source == player position).
     const float dx = playerX_ - sourceX;
@@ -3632,7 +4053,7 @@ void Engine::render()
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
-        if (!entity.path.renderAboveWalls) {
+        if (!entity.pathHidden && !entity.path.renderAboveWalls) {
             renderEnemyEntity(entity);
         }
     }
@@ -3676,12 +4097,16 @@ void Engine::render()
         const float v1 = static_cast<float>(pf->y + pf->height) / th;
         const float drawW = static_cast<float>(pf->width);
         const float drawH = static_cast<float>(pf->height);
+        const bool hitFlash = playerHitFlashSeconds_ > 0.0f;
         renderTextureRegion(playerSprite_.texture,
             playerX_ - drawW * 0.5f, playerY_ - drawH * 0.5f, drawW, drawH,
-            flipH ? u1 : u0, v0, flipH ? u0 : u1, v1);
+            flipH ? u1 : u0, v0, flipH ? u0 : u1, v1,
+            1.0f, hitFlash ? 0.18f : 1.0f, hitFlash ? 0.18f : 1.0f);
     } else {
+        const bool hitFlash = playerHitFlashSeconds_ > 0.0f;
         renderFilledRect(playerX_ - kPlayerFallbackDrawSizePx * 0.5f, playerY_ - kPlayerFallbackDrawSizePx * 0.5f,
-            kPlayerFallbackDrawSizePx, kPlayerFallbackDrawSizePx, 0.20f, 0.62f, 1.0f, 1.0f);
+            kPlayerFallbackDrawSizePx, kPlayerFallbackDrawSizePx,
+            hitFlash ? 1.0f : 0.20f, hitFlash ? 0.18f : 0.62f, hitFlash ? 0.18f : 1.0f, 1.0f);
     }
 
     renderMeleeFlash();
@@ -3695,13 +4120,13 @@ void Engine::render()
     renderAnimatedTiles(1);
 
     for (const RuntimePathEntity& entity : pathEntities_) {
-        if (entity.path.renderAboveWalls) {
+        if (!entity.pathHidden && entity.path.renderAboveWalls) {
             renderEnemyEntity(entity);
         }
     }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
-        if (entity.path.combat.maxHealth <= 1 || entity.deathSeconds >= 0.0f) {
+        if (entity.pathHidden || entity.path.combat.maxHealth <= 1 || entity.deathSeconds >= 0.0f) {
             continue;
         }
         const float barW = std::max(8.0f, entity.path.combat.hitboxWidth);
@@ -3711,6 +4136,7 @@ void Engine::render()
         renderFilledRect(entity.x - barW * 0.5f, entity.y - entity.path.combat.hitboxHeight * 0.5f - 5.0f, barW * pct, barH, 0.95f, 0.20f, 0.16f, 0.95f);
     }
 
+    renderPathSpeechBubbles();
     renderSpeechBubble();
 
     renderHud();
@@ -3762,11 +4188,12 @@ void Engine::renderEnemyEntity(const RuntimePathEntity& entity) const
     renderFilledRect(entity.x - 4.0f, entity.y - 4.0f, 8.0f, 8.0f, 0.90f, 0.18f, 0.14f, dying ? deathAlpha : 1.0f);
 }
 
-void Engine::renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const
+void Engine::renderTextureRegion(const Texture& texture, float x, float y, float width, float height,
+    float u0, float v0, float u1, float v1, float r, float g, float b, float a) const
 {
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, texture.id);
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glColor4f(r, g, b, a);
     glBegin(GL_QUADS);
     glTexCoord2f(u0, v0); glVertex2f(x, y);
     glTexCoord2f(u1, v0); glVertex2f(x + width, y);

@@ -17,9 +17,11 @@ public:
     void draw(EditorContext& context);
     void drawTypes(EditorContext& context);
     void saveProjectNpcTypes(EditorContext& context);
+    void openForScreen(EditorContext& context);
 
 private:
     enum class CanvasMode { PlaceNpcs = 0, EditPath = 1 };
+    enum class CurveMode { Linear = 0, Spline = 1 };
 
     struct Waypoint {
         float x = 0.0f;
@@ -28,6 +30,9 @@ private:
         float waitSeconds = 0.0f;
         int facing = -1;
         std::string animState;
+        game::PathWaypointAction action = game::PathWaypointAction::None;
+        float speechDurationSeconds = 2.0f;
+        std::string speechText;
     };
 
     struct PixelLayer {
@@ -45,11 +50,13 @@ private:
     int selectedType_ = 0;
     bool projectLoaded_ = false;
     std::string lastLoadedProjectRoot_;
+    std::string loadedPlacementContextKey_;
 
     int facing_ = 0;
     float awarenessRadius_ = 64.0f;
     float interactionRadius_ = 24.0f;
     int movementMode_ = 0;
+    CurveMode curveMode_ = CurveMode::Linear;
     bool loop_ = true;
     float speed_ = 32.0f;
 
@@ -83,6 +90,7 @@ private:
     void drawPixelLayer(ImDrawList* dl, ImVec2 origin, const PixelLayer& layer, float targetW, float targetH, float opacity) const;
     [[nodiscard]] float snapValue(float v) const;
     [[nodiscard]] ImVec2 waypointToCanvas(ImVec2 origin, const Waypoint& waypoint) const;
+    [[nodiscard]] Waypoint splinePoint(int segment, float t) const;
 };
 
 } // namespace adventure::editor

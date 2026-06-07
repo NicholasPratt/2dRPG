@@ -1,4 +1,4 @@
-ADMAP 8
+ADMAP 10
 id screen_1_map
 size 48 32
 spawn 1 1
@@ -121,5 +121,5 @@ item item_15 3 coins 1 85.3333 414 0 coin
 item item_16 3 coins 1 148 390 0 coin
 item item_17 3 coins 1 158 318.667 0 coin
 doors 1
-door door_2 13 25 2 3 0 - 0 - 1 1 - -
+door door_2 13 25 2 3 2 key 1 - 1 1 door_2 - assets/game/sfx/doors/open1.wav assets/game/sfx/doors/close1.wav assets/game/sfx/doors/open1.wav
 end

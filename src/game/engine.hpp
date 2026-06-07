@@ -69,6 +69,10 @@ private:
         bool aggroActive = false;      // currently chasing the player
         bool returningToPath = false;  // walking back to its path after losing aggro
         float resumePathDistance = 0.0f;  // arc-distance of the nearest path point to resume at
+        bool pathHidden = false;
+        bool pathFinished = false;
+        std::string speechText;
+        float speechRemainingSeconds = 0.0f;
     };
 
     struct RuntimeSprite {
@@ -134,6 +138,10 @@ private:
         bool playerInAwareness = false;
         float waitRemainingSeconds = 0.0f;
         bool atWaypoint = false;
+        float speechRemainingSeconds = 0.0f;
+        std::string speechText;
+        bool pathHidden = false;
+        bool pathFinished = false;
         float facingX = 1.0f;  // unit vector — direction the NPC is facing
         float facingY = 0.0f;
     };
@@ -174,6 +182,7 @@ private:
     std::filesystem::path projectRoot_;
     GLFWwindow* window_ = nullptr;
     std::unique_ptr<MusicPlayer> musicPlayer_;
+    std::string pendingDoorCloseSoundPath_;
     Chapter chapter_;
     const ChapterScreen* activeScreen_ = nullptr;
     TileMap activeMap_;
@@ -223,6 +232,7 @@ private:
     std::unordered_set<std::string> meleeHitEnemies_;  // enemy instance ids hit by current swing
     float playerKnockbackVx_ = 0.0f;   // decaying player knockback velocity (px/s)
     float playerKnockbackVy_ = 0.0f;
+    float playerHitFlashSeconds_ = 0.0f;
     bool meleeInputWasDown_ = false;
     bool rangedInputWasDown_ = false;
     float runtimeSeconds_ = 0.0f;
@@ -274,6 +284,7 @@ private:
     void loadAllSprites();
     void loadSpriteById(const std::string& spriteId);
     void loadItemEntities();
+    [[nodiscard]] std::string itemStateId(const MapItemPlacement& item) const;
     void updateScreenMusic();
     [[nodiscard]] bool inputDown(InputAction action) const;
     [[nodiscard]] bool gamepadButtonDown(int button) const;
@@ -300,11 +311,18 @@ private:
     void updateEnemyDeaths(float dt);
     void updatePaths(float dt);
     void updateNpcs(float dt);
+    void updateDoors();
+    void applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypoint& waypoint);
+    void applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint);
     void updateNpcAwareness();
     void updateInteraction();
     [[nodiscard]] int nearestInteractableDoor() const;
     [[nodiscard]] bool playerCanInteractWithDoor(const MapDoorPlacement& door) const;
     [[nodiscard]] bool activateDoor(const MapDoorPlacement& door);
+    [[nodiscard]] std::string doorStateId(const MapDoorPlacement& door, const char* state) const;
+    [[nodiscard]] bool doorIsUnlocked(const MapDoorPlacement& door) const;
+    [[nodiscard]] bool doorIsHidden(const MapDoorPlacement& door) const;
+    void playSoundEffect(const std::string& configuredPath);
     void showNotice(const std::string& text, float seconds = 1.6f);
     void updateShopInput();
     [[nodiscard]] int maxShopBuyQuantity(const RuntimeNpcEntity& npc, int index) const;
@@ -330,6 +348,8 @@ private:
     [[nodiscard]] bool playerOverlapsEnemy(const RuntimePathEntity& entity) const;
     [[nodiscard]] bool playerOverlapsItem(const RuntimeItemEntity& item) const;
     [[nodiscard]] bool playerOverlapsDoor(const MapDoorPlacement& door) const;
+    [[nodiscard]] bool playerOverlapsDoorAt(const MapDoorPlacement& door, float x, float y) const;
+    [[nodiscard]] bool doorBlocksPlayerAt(const MapDoorPlacement& door, float x, float y) const;
     void collectItem(RuntimeItemEntity& item);
     void recordEnemyDefeated(const std::string& screenId, const RuntimePathEntity& entity);
     void applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, float dirY);
@@ -342,7 +362,9 @@ private:
     [[nodiscard]] float screenHeightPx() const;
     void render();
     void renderTexture(const Texture& texture, float x, float y, float width, float height) const;
-    void renderTextureRegion(const Texture& texture, float x, float y, float width, float height, float u0, float v0, float u1, float v1) const;
+    void renderTextureRegion(const Texture& texture, float x, float y, float width, float height,
+        float u0, float v0, float u1, float v1,
+        float r = 1.0f, float g = 1.0f, float b = 1.0f, float a = 1.0f) const;
     void renderEnemyEntity(const RuntimePathEntity& entity) const;
     void renderAnimatedTiles(int layer) const;
     // Ammo for ranged weapons is drawn from the inventory. These resolve the
@@ -361,6 +383,7 @@ private:
     void renderInteractionPrompt() const;
     void renderNotice() const;
     void renderSpeechBubble() const;
+    void renderPathSpeechBubbles() const;
     void renderDialogueBox() const;
     void renderShopMenu() const;
     void renderItems() const;

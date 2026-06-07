@@ -26,6 +26,7 @@ enum ToolIndex {
     kToolLine,
     kToolRect,
     kToolCircle,
+    kToolPolygon,
     kToolMove,
     kToolSelect,
     kToolPicker,
@@ -34,7 +35,7 @@ enum ToolIndex {
 
 constexpr const char* kToolNames[] = {
     "Pen", "Mirror", "Bucket", "Eraser", "Stroke", "Line",
-    "Rect", "Circle", "Move", "Select", "Picker", "Shade",
+    "Rect", "Circle", "Polygon", "Move", "Select", "Picker", "Shade",
 };
 
 constexpr int kMinCanvasSize = 1;
@@ -410,6 +411,13 @@ void drawToolGlyph(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, i
     case kToolCircle:
         drawList->AddCircle(center, std::min(width, height) * 0.28f, color, 0, thick);
         break;
+    case kToolPolygon:
+        drawList->AddTriangle({center.x, top + unit}, {left + unit, bottom - unit},
+            {right - unit, bottom - unit * 2.0f}, color, thick);
+        drawList->AddCircleFilled({center.x, top + unit}, unit, color);
+        drawList->AddCircleFilled({left + unit, bottom - unit}, unit, color);
+        drawList->AddCircleFilled({right - unit, bottom - unit * 2.0f}, unit, color);
+        break;
     case kToolMove:
         drawList->AddLine({center.x, top + unit}, {center.x, bottom - unit}, thick, color);
         drawList->AddLine({left + unit, center.y}, {right - unit, center.y}, thick, color);
@@ -489,6 +497,7 @@ void SpriteEditorPanel::openSpriteReference(const std::filesystem::path& spriteR
     if (spriteReference.empty()) {
         return;
     }
+    cancelPolygon();
 
     const std::filesystem::path filename = spriteReference.filename();
     std::string newId = filename.string();
@@ -657,6 +666,7 @@ void SpriteEditorPanel::resetDocumentBuffers()
     undoStack_.clear();
     selectedFrame_ = 0;
     selectedLayer_ = 0;
+    cancelPolygon();
     trackedCanvasSize_ = {kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
 }
 
@@ -793,7 +803,20 @@ void SpriteEditorPanel::drawLeftRail()
         ImGui::PushStyleColor(ImGuiCol_Button, selected ? IM_COL32(230, 199, 34, 255) : IM_COL32(47, 51, 56, 255));
         const std::string thumbId = "##FrameThumb" + std::to_string(i);
         if (ImGui::Button(thumbId.c_str(), ImVec2(86.0f, 86.0f))) {
+            cancelPolygon();
             selectedFrame_ = i;
+        }
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            ImGui::SetDragDropPayload("SPRITE_FRAME_INDEX", &i, sizeof(i));
+            ImGui::Text("Move frame %d", i + 1);
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE_FRAME_INDEX")) {
+                const int sourceIndex = *static_cast<const int*>(payload->Data);
+                reorderFrame(sourceIndex, i);
+            }
+            ImGui::EndDragDropTarget();
         }
         ImGui::PopStyleColor();
 
@@ -822,7 +845,24 @@ void SpriteEditorPanel::drawLeftRail()
         ImGui::PopID();
     }
 
+    const float halfButtonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    ImGui::BeginDisabled(selectedFrame_ <= 0);
+    if (ImGui::Button("< Earlier", ImVec2(halfButtonWidth, 28.0f))) {
+        reorderFrame(selectedFrame_, selectedFrame_ - 1);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(selectedFrame_ < 0 || selectedFrame_ + 1 >= static_cast<int>(document_.frames.size()));
+    if (ImGui::Button("Later >", ImVec2(halfButtonWidth, 28.0f))) {
+        reorderFrame(selectedFrame_, selectedFrame_ + 1);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Drag frame thumbnails to reorder, or use Earlier/Later");
+    }
+
     if (ImGui::Button("+ Add frame", ImVec2(-1.0f, 36.0f))) {
+        cancelPolygon();
         recordUndoState();
         document_.frames.push_back(document_.frames[selectedFrame_]);
         document_.cels.push_back(std::vector<SpriteCel>(
@@ -846,6 +886,9 @@ void SpriteEditorPanel::drawLeftRail()
         if (i % 2 != 1) {
             ImGui::SameLine();
         }
+    }
+    if (selectedTool_ == kToolPolygon) {
+        ImGui::TextWrapped("Left-click vertices. Double-click or Enter closes the polygon. Right-click or Esc cancels.");
     }
 
     sectionHeader("Brush");
@@ -906,6 +949,9 @@ void SpriteEditorPanel::drawToolButton(const char* label, const char* tooltip, i
     ImGui::PushStyleColor(ImGuiCol_Text, selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255));
     const std::string buttonId = std::string("##ToolButton") + label;
     if (ImGui::Button(buttonId.c_str(), buttonSize)) {
+        if (selectedTool_ != toolIndex) {
+            cancelPolygon();
+        }
         selectedTool_ = toolIndex;
     }
     ImGui::PopStyleColor(2);
@@ -1001,6 +1047,7 @@ void SpriteEditorPanel::drawCanvas(const ImVec2& availableSize)
     }
 
     drawSelectionOverlay(drawList, canvasOrigin, pixelSize);
+    drawPolygonOverlay(drawList, canvasOrigin, pixelSize);
 
     // Body guide: a user-defined rectangle to keep the body aligned across
     // frames. Authoring overlay only, never rendered in the game.
@@ -1274,18 +1321,12 @@ void SpriteEditorPanel::drawFrames()
     const int frameCount = static_cast<int>(document_.frames.size());
     ImGui::SameLine();
     if (ImGui::Button("Move up") && selectedFrame_ > 0) {
-        recordUndoState();
-        std::swap(document_.frames[selectedFrame_], document_.frames[selectedFrame_ - 1]);
-        std::swap(document_.cels[selectedFrame_], document_.cels[selectedFrame_ - 1]);
-        --selectedFrame_;
+        reorderFrame(selectedFrame_, selectedFrame_ - 1);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected frame earlier in the animation");
     ImGui::SameLine();
     if (ImGui::Button("Move down") && selectedFrame_ >= 0 && selectedFrame_ + 1 < frameCount) {
-        recordUndoState();
-        std::swap(document_.frames[selectedFrame_], document_.frames[selectedFrame_ + 1]);
-        std::swap(document_.cels[selectedFrame_], document_.cels[selectedFrame_ + 1]);
-        ++selectedFrame_;
+        reorderFrame(selectedFrame_, selectedFrame_ + 1);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the selected frame later in the animation");
 
@@ -1336,6 +1377,7 @@ void SpriteEditorPanel::drawFrames()
 void SpriteEditorPanel::drawLayers()
 {
     if (ImGui::Button("Add layer")) {
+        cancelPolygon();
         recordUndoState();
         document_.layers.push_back({"Layer " + std::to_string(document_.layers.size() + 1), true, 1.0f});
         for (auto& frame : document_.cels) {
@@ -1345,6 +1387,7 @@ void SpriteEditorPanel::drawLayers()
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete layer") && document_.layers.size() > 1) {
+        cancelPolygon();
         recordUndoState();
         document_.layers.erase(document_.layers.begin() + selectedLayer_);
         for (auto& frame : document_.cels) {
@@ -1358,6 +1401,7 @@ void SpriteEditorPanel::drawLayers()
         ui::checkbox("Visible", "##LayerVisible", &document_.layers[i].visible, 58.0f);
         ImGui::SameLine();
         if (ImGui::Selectable(document_.layers[i].name.c_str(), selectedLayer_ == i)) {
+            cancelPolygon();
             selectedLayer_ = i;
         }
         ui::sliderFloat("Opacity", "##LayerOpacity", &document_.layers[i].opacity, 0.0f, 1.0f, "%.2f", 120.0f, 62.0f);
@@ -1940,6 +1984,7 @@ void SpriteEditorPanel::undo()
     strokeUndoCaptured_ = false;
     lastPaintPixel_ = {-1, -1};
     moveSourcePixels_.clear();
+    cancelPolygon();
     ensureDocumentState();
 }
 
@@ -2018,6 +2063,7 @@ void SpriteEditorPanel::createBlankSprite(int width, int height)
     lastPaintPixel_ = {-1, -1};
     shapeDragActive_ = false;
     dragUsesSecondaryColor_ = false;
+    cancelPolygon();
     trackedCanvasSize_ = document_.canvasSize;
     newSpriteSize_ = document_.canvasSize;
     resizeSpriteSize_ = document_.canvasSize;
@@ -2032,6 +2078,7 @@ void SpriteEditorPanel::clearCurrentFrame()
         return;
     }
 
+    cancelPolygon();
     recordUndoState();
     for (SpriteCel& cel : document_.cels[selectedFrame_]) {
         std::fill(cel.pixels.begin(), cel.pixels.end(), 0u);
@@ -2132,6 +2179,27 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
     const bool hoveredPixel = canvasPixelAt(canvasOrigin, pixelSize, x, y);
     const bool leftClicked = hoveredPixel && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     const bool rightClicked = hoveredPixel && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+
+    if (selectedTool_ == kToolPolygon) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) || rightClicked) {
+            cancelPolygon();
+            return;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            finishPolygon();
+            return;
+        }
+        if (leftClicked) {
+            const std::array<int, 2> point{x, y};
+            if (polygonPoints_.empty() || polygonPoints_.back() != point) {
+                polygonPoints_.push_back(point);
+            }
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                finishPolygon();
+            }
+        }
+        return;
+    }
 
     if (selectedTool_ == kToolLine || selectedTool_ == kToolRect || selectedTool_ == kToolCircle) {
         if (leftClicked || rightClicked) {
@@ -2449,6 +2517,69 @@ void SpriteEditorPanel::drawCircle(SpriteCel& cel, int x0, int y0, int x1, int y
     }
 }
 
+void SpriteEditorPanel::drawPolygon(
+    SpriteCel& cel,
+    const std::vector<std::array<int, 2>>& points,
+    unsigned int color)
+{
+    if (points.size() < 3) {
+        return;
+    }
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const std::array<int, 2>& start = points[i];
+        const std::array<int, 2>& end = points[(i + 1) % points.size()];
+        drawLine(cel, start[0], start[1], end[0], end[1], color, false);
+    }
+}
+
+void SpriteEditorPanel::drawPolygonOverlay(
+    ImDrawList* drawList,
+    ImVec2 canvasOrigin,
+    float pixelSize) const
+{
+    if (selectedTool_ != kToolPolygon || polygonPoints_.empty()) {
+        return;
+    }
+    const auto screenPoint = [&](const std::array<int, 2>& point) {
+        return ImVec2{
+            canvasOrigin.x + (static_cast<float>(point[0]) + 0.5f) * pixelSize,
+            canvasOrigin.y + (static_cast<float>(point[1]) + 0.5f) * pixelSize,
+        };
+    };
+    const ImU32 color = IM_COL32(255, 224, 64, 235);
+    for (std::size_t i = 1; i < polygonPoints_.size(); ++i) {
+        drawList->AddLine(screenPoint(polygonPoints_[i - 1]), screenPoint(polygonPoints_[i]), color, 2.0f);
+    }
+    for (const std::array<int, 2>& point : polygonPoints_) {
+        drawList->AddCircleFilled(screenPoint(point), std::max(2.5f, pixelSize * 0.22f), color);
+    }
+
+    int hoverX = 0;
+    int hoverY = 0;
+    if (canvasPixelAt(canvasOrigin, pixelSize, hoverX, hoverY)) {
+        drawList->AddLine(screenPoint(polygonPoints_.back()), screenPoint({hoverX, hoverY}), color, 2.0f);
+        if (polygonPoints_.size() >= 2) {
+            drawList->AddLine(screenPoint({hoverX, hoverY}), screenPoint(polygonPoints_.front()),
+                IM_COL32(255, 224, 64, 120), 1.5f);
+        }
+    }
+}
+
+void SpriteEditorPanel::finishPolygon()
+{
+    if (polygonPoints_.size() >= 3) {
+        recordUndoState();
+        drawPolygon(activeCel(), polygonPoints_, currentPaletteColor(polygonUsesSecondaryColor_));
+    }
+    cancelPolygon();
+}
+
+void SpriteEditorPanel::cancelPolygon()
+{
+    polygonPoints_.clear();
+    polygonUsesSecondaryColor_ = false;
+}
+
 void SpriteEditorPanel::floodFill(SpriteCel& cel, int startX, int startY, unsigned int replacementColor)
 {
     const std::size_t startIndex = static_cast<std::size_t>(startY) * document_.canvasSize[0] + startX;
@@ -2647,6 +2778,7 @@ void SpriteEditorPanel::duplicateCurrentFrame()
         return;
     }
 
+    cancelPolygon();
     recordUndoState();
     const int insertIndex = selectedFrame_ + 1;
     document_.frames.insert(document_.frames.begin() + insertIndex, document_.frames[selectedFrame_]);
@@ -2660,14 +2792,46 @@ void SpriteEditorPanel::deleteCurrentFrame()
         return;
     }
 
+    const int deletedFrame = selectedFrame_;
     recordUndoState();
-    document_.frames.erase(document_.frames.begin() + selectedFrame_);
-    document_.cels.erase(document_.cels.begin() + selectedFrame_);
+    cancelPolygon();
+    document_.frames.erase(document_.frames.begin() + deletedFrame);
+    document_.cels.erase(document_.cels.begin() + deletedFrame);
     selectedFrame_ = std::clamp(selectedFrame_, 0, static_cast<int>(document_.frames.size()) - 1);
-    if (selectionFrame_ == selectedFrame_) {
+    if (selectionFrame_ == deletedFrame) {
         clearSelection();
-    } else if (selectionFrame_ > selectedFrame_) {
+    } else if (selectionFrame_ > deletedFrame) {
         --selectionFrame_;
+    }
+}
+
+void SpriteEditorPanel::reorderFrame(int fromIndex, int toIndex)
+{
+    const int frameCount = static_cast<int>(document_.frames.size());
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= frameCount || toIndex >= frameCount ||
+        fromIndex == toIndex || document_.cels.size() != document_.frames.size()) {
+        return;
+    }
+
+    recordUndoState();
+    cancelPolygon();
+
+    SpriteFrame movedFrame = std::move(document_.frames[static_cast<std::size_t>(fromIndex)]);
+    std::vector<SpriteCel> movedCels = std::move(document_.cels[static_cast<std::size_t>(fromIndex)]);
+    document_.frames.erase(document_.frames.begin() + fromIndex);
+    document_.cels.erase(document_.cels.begin() + fromIndex);
+    document_.frames.insert(document_.frames.begin() + toIndex, std::move(movedFrame));
+    document_.cels.insert(document_.cels.begin() + toIndex, std::move(movedCels));
+
+    selectedFrame_ = toIndex;
+    if (hasSelection_) {
+        if (selectionFrame_ == fromIndex) {
+            selectionFrame_ = toIndex;
+        } else if (fromIndex < toIndex && selectionFrame_ > fromIndex && selectionFrame_ <= toIndex) {
+            --selectionFrame_;
+        } else if (toIndex < fromIndex && selectionFrame_ >= toIndex && selectionFrame_ < fromIndex) {
+            ++selectionFrame_;
+        }
     }
 }
 

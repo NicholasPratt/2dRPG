@@ -36,6 +36,9 @@ int main(int argc, char** argv)
     smokeDoor.targetTileY = 7;
     smokeDoor.spriteId = "door_sprite";
     smokeDoor.openingAnimation = "open";
+    smokeDoor.openSoundPath = "assets/game/sfx/doors/door_open.ogg";
+    smokeDoor.closeSoundPath = "assets/game/sfx/doors/door_close.wav";
+    smokeDoor.lockedSoundPath = "assets/game/sfx/doors/door_locked.wav";
     adventure::game::MapObstacle smokeObstacle;
     smokeObstacle.id = "smoke_spike";
     smokeObstacle.type = adventure::game::ObstacleType::TimedSpike;
@@ -49,9 +52,24 @@ int main(int argc, char** argv)
     smokeObstacle.phaseSeconds = 0.25f;
     smokeObstacle.damage = 2;
     smokeObstacle.damageIntervalSeconds = 0.5f;
+    adventure::game::MapItemPlacement oneTimeItem;
+    oneTimeItem.id = "coin_once";
+    oneTimeItem.pickupType = adventure::game::ItemPickupType::ProjectItem;
+    oneTimeItem.targetId = "coins";
+    oneTimeItem.quantity = 1;
+    oneTimeItem.x = 32.0f;
+    oneTimeItem.y = 48.0f;
+    oneTimeItem.respawn = false;
+    oneTimeItem.spriteId = "coin";
+    adventure::game::MapItemPlacement respawningItem = oneTimeItem;
+    respawningItem.id = "flower_repeat";
+    respawningItem.targetId = "flower";
+    respawningItem.respawn = true;
+    respawningItem.spriteId = "flower";
     adventure::game::TileMap doorMap = map;
     doorMap.doors = {smokeDoor};
     doorMap.obstacles = {smokeObstacle};
+    doorMap.items = {oneTimeItem, respawningItem};
     const std::filesystem::path mapSmokePath = "build/smoke_map.admap";
     if (!adventure::game::saveTileMap(mapSmokePath, doorMap, &error)) {
         std::cerr << "Failed to save map smoke file: " << error << "\n";
@@ -72,7 +90,10 @@ int main(int argc, char** argv)
         loadedDoorMap.doors.front().targetTileX != 6 ||
         loadedDoorMap.doors.front().targetTileY != 7 ||
         loadedDoorMap.doors.front().spriteId != "door_sprite" ||
-        loadedDoorMap.doors.front().openingAnimation != "open") {
+        loadedDoorMap.doors.front().openingAnimation != "open" ||
+        loadedDoorMap.doors.front().openSoundPath != "assets/game/sfx/doors/door_open.ogg" ||
+        loadedDoorMap.doors.front().closeSoundPath != "assets/game/sfx/doors/door_close.wav" ||
+        loadedDoorMap.doors.front().lockedSoundPath != "assets/game/sfx/doors/door_locked.wav") {
         std::cerr << "Map door round-trip values did not match.\n";
         return 1;
     }
@@ -87,7 +108,15 @@ int main(int argc, char** argv)
         std::cerr << "Map obstacle round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped map doors and obstacles (ADMAP v8)\n";
+    if (loadedDoorMap.items.size() != 2 ||
+        loadedDoorMap.items[0].id != "coin_once" ||
+        loadedDoorMap.items[0].respawn ||
+        loadedDoorMap.items[1].id != "flower_repeat" ||
+        !loadedDoorMap.items[1].respawn) {
+        std::cerr << "Map item respawn round-trip values did not match.\n";
+        return 1;
+    }
+    std::cout << "Round-tripped map doors, obstacles, and item respawn flags (ADMAP v10)\n";
 
     const std::filesystem::path chapterPath = argc > 2 ? std::filesystem::path(argv[2]) : std::filesystem::path("assets/game/chapters/chapter_1.adchapter");
     adventure::game::Chapter chapter;
@@ -98,6 +127,61 @@ int main(int argc, char** argv)
 
     std::cout << "Loaded chapter " << chapter.id << " [" << chapter.screens.size()
               << " screen(s)] start [" << chapter.startScreenId << "]\n";
+
+    adventure::game::Chapter actionChapter = chapter;
+    adventure::game::EnemyPlacement actionEnemy;
+    actionEnemy.id = "action_enemy";
+    actionEnemy.typeId = "crow";
+    actionEnemy.curveMode = adventure::game::PathCurveMode::Spline;
+    adventure::game::PathWaypoint enemyEnter;
+    enemyEnter.x = -16.0f;
+    enemyEnter.y = 64.0f;
+    enemyEnter.action = adventure::game::PathWaypointAction::Enter;
+    adventure::game::PathWaypoint enemySpeak;
+    enemySpeak.x = 64.0f;
+    enemySpeak.y = 64.0f;
+    enemySpeak.action = adventure::game::PathWaypointAction::Speak;
+    enemySpeak.speechDurationSeconds = 1.5f;
+    enemySpeak.speechText = "You cannot escape!";
+    adventure::game::PathWaypoint enemyLeave;
+    enemyLeave.x = 784.0f;
+    enemyLeave.y = 64.0f;
+    enemyLeave.action = adventure::game::PathWaypointAction::Leave;
+    actionEnemy.waypoints = {enemyEnter, enemySpeak, enemyLeave};
+    actionChapter.screens.front().enemies.push_back(actionEnemy);
+
+    adventure::game::NpcPlacement actionNpc;
+    actionNpc.id = "action_npc";
+    actionNpc.typeId = "guide";
+    actionNpc.movementOverride = adventure::game::NpcMovementMode::Patrol;
+    actionNpc.curveMode = adventure::game::PathCurveMode::Spline;
+    actionNpc.waypoints = {enemyEnter, enemySpeak, enemyLeave};
+    actionChapter.screens.front().npcs.push_back(actionNpc);
+
+    const std::filesystem::path chapterSmokePath = "build/smoke_chapter.adchapter";
+    if (!adventure::game::saveChapter(chapterSmokePath, actionChapter, &error)) {
+        std::cerr << "Failed to save chapter action smoke file: " << error << "\n";
+        return 1;
+    }
+    adventure::game::Chapter loadedActionChapter;
+    if (!adventure::game::loadChapter(chapterSmokePath, loadedActionChapter, &error)) {
+        std::cerr << "Failed to load chapter action smoke file: " << error << "\n";
+        return 1;
+    }
+    const auto& loadedActionEnemy = loadedActionChapter.screens.front().enemies.back();
+    const auto& loadedActionNpc = loadedActionChapter.screens.front().npcs.back();
+    if (loadedActionEnemy.curveMode != adventure::game::PathCurveMode::Spline ||
+        loadedActionEnemy.waypoints.size() != 3 ||
+        loadedActionEnemy.waypoints.front().x != -16.0f ||
+        loadedActionEnemy.waypoints[1].action != adventure::game::PathWaypointAction::Speak ||
+        loadedActionEnemy.waypoints[1].speechDurationSeconds != 1.5f ||
+        loadedActionEnemy.waypoints[1].speechText != "You cannot escape!" ||
+        loadedActionEnemy.waypoints.back().action != adventure::game::PathWaypointAction::Leave ||
+        loadedActionNpc.curveMode != adventure::game::PathCurveMode::Spline) {
+        std::cerr << "Chapter waypoint action round-trip values did not match.\n";
+        return 1;
+    }
+    std::cout << "Round-tripped spline waypoint enter/speak/leave actions (ADCHAPTER v12)\n";
 
     adventure::game::SpriteMetadata sprite;
     const std::filesystem::path spritePath = "assets/game/sprites/new_sprite.sprite.json";
@@ -113,6 +197,9 @@ int main(int argc, char** argv)
     path.id = "smoke_path";
     path.mapId = map.id;
     path.waypoints = {{16.0f, 16.0f}, {32.0f, 16.0f}};
+    path.waypoints[1].action = adventure::game::PathWaypointAction::Speak;
+    path.waypoints[1].speechDurationSeconds = 2.5f;
+    path.waypoints[1].speechText = "Legacy path speech";
     const std::filesystem::path pathSmokePath = "build/smoke_path.adpath";
     if (!adventure::game::saveEnemyPath(pathSmokePath, path, &error)) {
         std::cerr << "Failed to save path smoke file: " << error << "\n";
@@ -121,6 +208,13 @@ int main(int argc, char** argv)
     adventure::game::EnemyPath loadedPath;
     if (!adventure::game::loadEnemyPath(pathSmokePath, loadedPath, &error)) {
         std::cerr << "Failed to load path smoke file: " << error << "\n";
+        return 1;
+    }
+    if (loadedPath.waypoints.size() != 2 ||
+        loadedPath.waypoints[1].action != adventure::game::PathWaypointAction::Speak ||
+        loadedPath.waypoints[1].speechDurationSeconds != 2.5f ||
+        loadedPath.waypoints[1].speechText != "Legacy path speech") {
+        std::cerr << "Path waypoint action round-trip values did not match.\n";
         return 1;
     }
     std::cout << "Round-tripped path " << loadedPath.id << " [" << loadedPath.waypoints.size() << " waypoint(s)]\n";
