@@ -3577,10 +3577,17 @@ void Engine::updatePaths(float dt)
             }
             entity.atWaypoint = false;
             if (entity.waypointIndex + 1 < entity.path.waypoints.size()) {
+                // Departing waypoint 0 to begin a new lap: restart the arc-length
+                // accumulator now that the closing segment has been travelled.
+                if (entity.path.loop && entity.waypointIndex == 0 && entity.pathDistance > 0.0f) {
+                    entity.pathDistance = 0.0f;
+                }
                 ++entity.waypointIndex;
             } else if (entity.path.loop) {
+                // Wrap onto the closing segment (last -> first). Keep pathDistance so
+                // the spline branch travels the closing arc at speed instead of
+                // snapping the enemy straight back to the start.
                 entity.waypointIndex = 0;
-                entity.pathDistance = 0.0f;
             } else {
                 entity.pathFinished = true;
                 continue;
