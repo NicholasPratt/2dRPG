@@ -148,8 +148,10 @@ respawn 0
 music "-" 1
 enemies 0
 npcs 1
-npc npc_1 grandma_spelling 488 344 3 64 24 0 0 1 32 grandma_spelling 1 0 0
+npc npc_1 grandma_spelling 488 344 3 64 24 0 0 1 32 grandma_spelling 1 2 0
 wp 488 344 0 0 -1 - 0 2 ""
+dl "" "Hello!"
+dl "" "Hello!"
 animtiles 0
 screen screen_6 screen_6_map 0 1
 links - - screen_4 -
