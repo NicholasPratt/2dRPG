@@ -1,5 +1,7 @@
 #include "editor/panels/wall_floor_paint_panel.hpp"
 
+#include "editor/atari_2600_palette.hpp"
+
 #include "editor/imgui_widgets.hpp"
 #include "game/sprite.hpp"
 #include "stb_image.h"
@@ -700,44 +702,8 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
 void WallFloorPaintPanel::drawPalette()
 {
     ImGui::Spacing();
-    ImGui::TextUnformatted("Colors");
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    constexpr float swatch = 26.0f;
-    constexpr int cols = 4;
-    for (int i = 0; i < static_cast<int>(palette_.size()); ++i) {
-        ImGui::PushID(i);
-        const ImVec2 min = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("swatch", {swatch, swatch});
-        const ImVec2 max{min.x + swatch, min.y + swatch};
-        drawList->AddRectFilled(min, max, packedColor(palette_[static_cast<std::size_t>(i)]));
-        drawList->AddRect(min, max, palette_[static_cast<std::size_t>(i)] == activeColor_ ? IM_COL32(255, 216, 64, 255) : IM_COL32(0, 0, 0, 180), 0.0f, 0, 2.0f);
-        if (ImGui::IsItemClicked()) {
-            activeColor_ = palette_[static_cast<std::size_t>(i)];
-        }
-        if ((i + 1) % cols != 0) {
-            ImGui::SameLine();
-        }
-        ImGui::PopID();
-    }
-
-    float color[4] = {
-        static_cast<float>((activeColor_ >> 0) & 0xffu) / 255.0f,
-        static_cast<float>((activeColor_ >> 8) & 0xffu) / 255.0f,
-        static_cast<float>((activeColor_ >> 16) & 0xffu) / 255.0f,
-        static_cast<float>((activeColor_ >> 24) & 0xffu) / 255.0f,
-    };
-    if (ImGui::ColorEdit4("Active", color, ImGuiColorEditFlags_NoInputs)) {
-        activeColor_ = (static_cast<std::uint32_t>(std::round(color[3] * 255.0f)) << 24u) |
-            (static_cast<std::uint32_t>(std::round(color[2] * 255.0f)) << 16u) |
-            (static_cast<std::uint32_t>(std::round(color[1] * 255.0f)) << 8u) |
-            static_cast<std::uint32_t>(std::round(color[0] * 255.0f));
-    }
-    if (ImGui::ColorPicker4("Picker", color, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf)) {
-        activeColor_ = (static_cast<std::uint32_t>(std::round(color[3] * 255.0f)) << 24u) |
-            (static_cast<std::uint32_t>(std::round(color[2] * 255.0f)) << 16u) |
-            (static_cast<std::uint32_t>(std::round(color[1] * 255.0f)) << 8u) |
-            static_cast<std::uint32_t>(std::round(color[0] * 255.0f));
-    }
+    ImGui::TextUnformatted("Atari 2600 NTSC colors");
+    atari2600::drawNtscPaletteSelector("ScreenGraphics", activeColor_, true);
 }
 
 void WallFloorPaintPanel::addToTilePalette(EditorContext& context)

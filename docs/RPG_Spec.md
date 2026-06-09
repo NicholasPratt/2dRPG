@@ -79,6 +79,7 @@ The editor is **state-dependent** and context-aware, tracking exactly what the u
 
 ### 4.3. Graphic & Sprite Editing
 - **Pixel Painting:** Integrated tools comparable to MS Paint or Piskel for tiles and sprites, including pen, line, rectangle, circle, and multi-point polygon outlines. The Polygon tool adds vertices with left-click, closes the outline with double-click or Enter, and cancels with right-click or Escape. [cite: 1]
+- **Atari 2600 NTSC Color Palette:** The screen graphics and sprite editors use the shared 128-color Atari 2600 NTSC palette based on Stella's standard palette instead of unrestricted RGB color pickers. Screen graphics also expose a transparent swatch for clearing/compositing layers. In the sprite palette editor, clicking an existing swatch replaces it with a selected NTSC color and **Add color** adds a selected NTSC color. Existing loaded colors are preserved until explicitly replaced so older project art is not rewritten on load.
 - **Screen Graphics Workspace:** The screen graphics editor may use the full available editor workspace; it is not confined to a half-height preview area.
 - **Wall/Floor Paint Layers:**
     - **Floor Layer:** Base walkable texture (`<mapId>_floor.png`).

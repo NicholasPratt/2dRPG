@@ -129,14 +129,14 @@ session, so all authored enemies always spawn. Progress is still written to <cod
 <h3>Scoped sub-editors (reached from Screens/Characters)</h3>
 <table>
   <tr><th>Sub-editor</th><th>Opened from</th><th>Does</th></tr>
-  <tr><td><strong>Edit Screen Graphics</strong> (Wall/Floor Paint)</td><td>Screens → selected screen</td><td>Pixel/tile paint the Floor and Wall layers for that screen; can switch to <strong>Map Logic</strong> for the same screen (tile layers, spawn, obstacles, hazards).</td></tr>
+  <tr><td><strong>Edit Screen Graphics</strong> (Wall/Floor Paint)</td><td>Screens → selected screen</td><td>Pixel/tile paint the Floor and Wall layers using the Atari 2600 NTSC palette; can switch to <strong>Map Logic</strong> for the same screen (tile layers, spawn, obstacles, hazards).</td></tr>
   <tr><td><strong>Edit Enemy Types</strong></td><td>Screens (enemy context)</td><td>Reusable <code>EnemyType</code> library: sprite, HP, hitbox, speed, contact damage, the <em>Hit Reaction &amp; AI</em> block, and per-type attacks.</td></tr>
   <tr><td><strong>Edit Enemies</strong> / <strong>Edit Splines</strong></td><td>Screens (enemy context)</td><td>Place enemy instances on the screen and draw their patrol/spline paths.</td></tr>
   <tr><td><strong>Edit NPC Types</strong></td><td>Screens (NPC context)</td><td>Reusable <code>NpcTypeDef</code>s: sprite/character, movement &amp; interaction mode, default dialogue, shop inventory.</td></tr>
   <tr><td><strong>Edit NPCs</strong></td><td>Screens (NPC context)</td><td>Place NPC instances, set awareness/interaction radius, patrol paths, and instance dialogue.</td></tr>
   <tr><td><strong>Edit Instance Dialogue</strong></td><td>NPC placement</td><td>Node/flow graph editor for that NPC instance’s conversation (Start/Dialogue/Choice/Condition/Action/End).</td></tr>
   <tr><td><strong>Edit Items</strong></td><td>Screens (item context)</td><td>Place item/ammo/health/weapon pickups on the screen.</td></tr>
-  <tr><td><strong>Sprite Editor</strong></td><td>Characters / enemy / NPC sprite ids</td><td>Pixel-paint frames; assign each frame an action type, facing direction, and duration.</td></tr>
+  <tr><td><strong>Sprite Editor</strong></td><td>Characters / enemy / NPC sprite ids</td><td>Pixel-paint frames with the Atari 2600 NTSC palette; assign each frame an action type, facing direction, and duration.</td></tr>
 </table>
 
 <!-- ============================================================ -->
@@ -167,6 +167,17 @@ animation. Two non-rendered authoring overlays help you keep poses aligned: the 
 sprite anchor (a crosshair), and the <strong>Body</strong> toggle shows a user-defined <em>body guide</em> rectangle
 (x, y, width, height in canvas pixels; the <code>= canvas</code> button fills the whole frame). Both are saved per
 sprite in the <code>.sprite.json</code> and are never drawn in the running game — they are alignment guides only.</p>
+
+<h3 id="atari-colors">Atari 2600 NTSC colors</h3>
+<p>The Screen Graphics and Sprite editors use a fixed set of 128 Atari 2600 NTSC colors based on Stella's standard
+palette. Hover a swatch to see its TIA color code and RGB value. In Screen Graphics, click a swatch to make it the
+active paint color; a separate transparent swatch is available for clearing and compositing the Floor and Wall
+layers.</p>
+<p>In the Sprite editor's palette panel, click an existing swatch and choose an Atari color to replace it, or use
+<code>Add color</code> and choose a swatch to append it. The canvas <code>Picker</code> tool samples colors already
+present in the artwork; it is separate from the fixed color chooser. Older sprites and screen art may contain colors
+outside the Atari table. Those colors remain visible and are not changed merely by opening or saving the project;
+replace them explicitly when converting older art.</p>
 
 <h3 id="state">Game state registry (quests)</h3>
 <p>A single runtime registry holds named <strong>integers</strong>, <strong>booleans</strong>, and

@@ -1,5 +1,6 @@
 #include "editor/panels/sprite_editor_panel.hpp"
 
+#include "editor/atari_2600_palette.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/sprite.hpp"
 
@@ -1412,22 +1413,24 @@ void SpriteEditorPanel::drawLayers()
 void SpriteEditorPanel::drawPalette(EditorContext& context)
 {
     ImGui::Text("Palette output: %s", context.assets.gamePalettePath().string().c_str());
+    ImGui::TextUnformatted("Click a swatch to replace it with an Atari 2600 NTSC color.");
 
     for (int i = 0; i < static_cast<int>(document_.palette.size()); ++i) {
         ImGui::PushID(i);
-        const unsigned int color = document_.palette[i];
-        float rgba[4] = {
-            static_cast<float>((color >> 0) & 0xff) / 255.0f,
-            static_cast<float>((color >> 8) & 0xff) / 255.0f,
-            static_cast<float>((color >> 16) & 0xff) / 255.0f,
-            static_cast<float>((color >> 24) & 0xff) / 255.0f,
-        };
-        if (ImGui::ColorEdit4("##Color", rgba, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
-            document_.palette[i] =
-                (static_cast<unsigned int>(rgba[3] * 255.0f) << 24) |
-                (static_cast<unsigned int>(rgba[2] * 255.0f) << 16) |
-                (static_cast<unsigned int>(rgba[1] * 255.0f) << 8) |
-                (static_cast<unsigned int>(rgba[0] * 255.0f) << 0);
+        if (ImGui::ColorButton(
+                "##Color",
+                atari2600::unpackColor(document_.palette[i]),
+                ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+                ImVec2(28.0f, 28.0f))) {
+            ImGui::OpenPopup("AtariColorPicker");
+        }
+        if (ImGui::BeginPopup("AtariColorPicker")) {
+            std::uint32_t selectedColor = document_.palette[i];
+            if (atari2600::drawNtscPaletteSelector("ReplaceColor", selectedColor, false, 16)) {
+                document_.palette[i] = selectedColor;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
         if ((i + 1) % 5 != 0) {
             ImGui::SameLine();
@@ -1436,7 +1439,16 @@ void SpriteEditorPanel::drawPalette(EditorContext& context)
     }
 
     if (ImGui::Button("Add color")) {
-        document_.palette.push_back(0xffffffffu);
+        ImGui::OpenPopup("AddAtariColor");
+    }
+    if (ImGui::BeginPopup("AddAtariColor")) {
+        std::uint32_t selectedColor = atari2600::kNtscPalette.front();
+        if (atari2600::drawNtscPaletteSelector("NewColor", selectedColor, false, 16)) {
+            document_.palette.push_back(selectedColor);
+            primaryColor_ = static_cast<int>(document_.palette.size()) - 1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 

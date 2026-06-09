@@ -85,7 +85,7 @@ private:
     std::array<int, 2> lastPaint_{-1, -1};
     bool strokeCaptured_ = false;
     std::vector<std::uint32_t> adjustmentStrokeBaseline_;
-    std::uint32_t activeColor_ = 0xff3b82f6u;
+    std::uint32_t activeColor_ = 0xff940000u;
     std::vector<std::uint32_t> palette_{
         0xff000000u, 0xffffffffu, 0xff3b82f6u, 0xff22c55eu,
         0xffef4444u, 0xfff59e0bu, 0xff8b5cf6u, 0xff64748bu,

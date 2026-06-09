@@ -688,6 +688,7 @@ Current limitations:
 Implemented in `src/editor/panels/sprite_editor_panel.*`.
 
 - Pixel editing with frames, layers, palette, preview, and animation playback.
+- Color authoring is constrained to the shared 128-color Atari 2600 NTSC table in `src/editor/atari_2600_palette.hpp`, derived from Stella's standard NTSC palette. Existing document colors remain displayable; clicking a palette swatch opens the constrained replacement popup, and **Add color** opens the same selector.
 - Tools: pen, mirror, bucket, eraser, stroke, line, rect, circle, polygon, move, select, picker, shade.
 - **Frame metadata section** (right inspector): action type (combo: idle/walk/run/attack/etc.), facing direction (combo: any/E/W/N/S/NE/NW/SE/SW), and duration in ms. The direction system is shared by all sprites: player, enemy, NPC alike.
 - **Polygon tool:** left-click adds vertices; double-click or Enter closes and rasterizes the outline with the current brush/color; right-click or Escape cancels. A live overlay previews committed edges and the closing edge.
@@ -763,6 +764,7 @@ public:
 Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 
 - Two-layer pixel painter (Floor + Wall). Canvas locked to `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (768 × 512 px).
+- The unrestricted RGBA picker is replaced by the shared Atari 2600 NTSC selector (`atari2600::drawNtscPaletteSelector`). It presents all 128 TIA colors plus a transparent swatch used by the layered paint workflow; tooltips show the TIA color code and RGB value.
 - Tools: Pencil, Eraser, Fill, Line, Rect, Select, Tile Draw, Tile Select, Tile Paste, Stamp, Tile Fill, Tile Erase.
 - Brush shapes: Square, Circle, Spray, Dither. Zoom 1–16.
 - Tile palette: `Tile Select` → Add to palette → Stamp / Tile Fill across all screens.

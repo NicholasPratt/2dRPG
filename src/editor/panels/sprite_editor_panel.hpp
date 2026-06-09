@@ -53,7 +53,7 @@ struct SpriteDocument {
     std::vector<SpriteFrame> frames{{}};
     std::vector<SpriteLayer> layers{{}};
     std::vector<std::string> tags{"idle"};
-    std::vector<unsigned int> palette{0xff000000u, 0xffffffffu, 0xff6abe30u, 0xff37946eu};
+    std::vector<unsigned int> palette{0xff000000u, 0xffecececu, 0xff90fc90u, 0xff004400u};
     std::vector<std::vector<SpriteCel>> cels;
 };
 

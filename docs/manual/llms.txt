@@ -35,6 +35,7 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Door behavior overview → Screens → Edit Doors; Free Use+target transfers, Locked is permanent, Requires Item+target transfers, Requires Item without target unlocks in place. Required Item uses the key item ID, not Target.  (R23)
 - NPC/enemy enters, speaks, or leaves on a path → edit its path/spline; use off-screen X/Y coordinates, Enter/Speak/Leave waypoint actions, and Speech time.  (R24)
 - Draw a polygon in a sprite → Sprite editor → Polygon; click vertices, double-click/Enter to close, right-click/Esc to cancel. Reorder frames by dragging thumbnails or Earlier/Later.  (R25)
+- Choose paint/sprite colors → Screen Graphics and Sprite editor use the fixed 128-color Atari 2600 NTSC palette. Screen Graphics also has Transparent; Sprite palette swatches can be replaced and Add color opens the same selector. Existing legacy colors are preserved until replaced.
 - Destination door → set Target screen ID and clear Target Tile X/Y; optionally require/consume a key.  (R26)
 - Same-screen key barrier → Requires Item + key item ID + empty Target screen; unlock persists and an unanimated door disappears when crossed.  (R27)
 - Door SFX → put `.wav`/`.ogg` under assets/game/sfx/doors and select Open, Close, Locked dropdowns.  (R28)
@@ -48,6 +49,7 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Persistence: defeated enemies + state tracked in-memory within a session and written to save.adstate, but every launch starts a NEW game (state initialized from project defaults); save.adstate is only re-loaded with the --continue launch flag. --fresh test launches also ignore it and don't write.
 - Ammo: stored in the inventory (not a separate pool); ranged weapons consume the matching Ammo item directly. Inventory has an AMMO section (sprite + count).
 - Tiles: Tile Palette entries can be linked to a sprite (Edit Sprite); a tile whose sprite has >=2 frames is "animated" and stamps as a runtime AnimatedTilePlacement instead of baking pixels.
+- Colors: screen graphics and sprite color authoring use the shared 128-color Stella-based Atari 2600 NTSC palette. The sprite canvas Picker can still sample colors already present in legacy art; loading/saving does not automatically remap old colors.
 - Combat: melee has windup→active→recovery; hits cause knockback + hitstun + flash; lethal → dead/fade.
   Projectiles are team-tagged (enemy shots hit the player). Aggro enemies chase then return to nearest path point.
 
