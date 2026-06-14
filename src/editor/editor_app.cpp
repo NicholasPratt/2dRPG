@@ -241,6 +241,21 @@ void EditorApp::draw()
 
     drawProjectManagerWindow();
 
+    if (context_.requestVariablePicker) {
+        context_.requestVariablePicker = false;
+        variablePickerActive_ = true;
+        selectedVariable_ = -1;
+        for (int i = 0; i < static_cast<int>(context_.stateVariables.size()); ++i) {
+            const game::StateVariableDef& variable = context_.stateVariables[static_cast<std::size_t>(i)];
+            if (variable.id == context_.requestedVariableId &&
+                variable.type == context_.requestedVariableType &&
+                variable.scope == context_.requestedVariableScope) {
+                selectedVariable_ = i;
+                break;
+            }
+        }
+    }
+
     if (context_.requestChapterSwitch) {
         context_.requestChapterSwitch = false;
         requestChapterSwitch(context_.requestedChapterSwitchId);
@@ -359,6 +374,12 @@ void EditorApp::draw()
         enterScreenMode(ScreenEditMode::Sprite);
         requestedTab_ = MainTab::Layout;
         hasRequestedTab_ = true;
+    }
+
+    if (variablePickerActive_) {
+        drawProjectStateTab(true);
+        ImGui::End();
+        return;
     }
 
     if (ImGui::BeginTabBar("EditorMainTabs")) {
@@ -584,37 +605,102 @@ void EditorApp::drawScreensTab()
     }
 }
 
-void EditorApp::drawProjectStateTab()
+void EditorApp::drawProjectStateTab(bool pickerMode)
 {
-    ImGui::TextUnformatted("State Variables");
-    ImGui::SameLine();
+    ImGui::TextUnformatted(pickerMode ? "Select Variable" : "State Variables");
+    if (pickerMode) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Choose or edit a variable, then save and return.");
+    }
+
     if (ImGui::Button("Add Variable")) {
         game::StateVariableDef variable;
         variable.id = "Variable_" + std::to_string(context_.stateVariables.size() + 1);
+        if (pickerMode) {
+            variable.type = context_.requestedVariableType;
+            variable.scope = variable.type == game::StateVariableType::Item
+                ? game::StateVariableScope::Universal
+                : context_.requestedVariableScope;
+            if (variable.scope == game::StateVariableScope::Chapter) {
+                variable.chapterId = context_.currentChapterId;
+            }
+        }
         context_.stateVariables.push_back(std::move(variable));
+        selectedVariable_ = static_cast<int>(context_.stateVariables.size()) - 1;
         context_.markDirty();
     }
 
-    if (context_.stateVariables.empty()) {
-        ImGui::TextDisabled("No variables defined.");
+    const float listWidth = 260.0f;
+    if (selectedVariable_ < 0) {
+        for (int i = 0; i < static_cast<int>(context_.stateVariables.size()); ++i) {
+            const game::StateVariableDef& variable = context_.stateVariables[static_cast<std::size_t>(i)];
+            const bool visibleInChapter = variable.scope != game::StateVariableScope::Chapter ||
+                variable.chapterId.empty() || variable.chapterId == context_.currentChapterId;
+            const bool matchesPicker = !pickerMode || variable.type == context_.requestedVariableType;
+            if (visibleInChapter && matchesPicker) {
+                selectedVariable_ = i;
+                break;
+            }
+        }
     }
+    ImGui::BeginChild("StateVariableList", ImVec2(listWidth, pickerMode ? -46.0f : 340.0f), true);
     for (int i = 0; i < static_cast<int>(context_.stateVariables.size()); ++i) {
         game::StateVariableDef& variable = context_.stateVariables[static_cast<std::size_t>(i)];
-        ImGui::PushID(i);
-        ImGui::Separator();
-        if (editString("ID", variable.id)) {
-            context_.markDirty();
+        if (variable.scope == game::StateVariableScope::Chapter &&
+            !variable.chapterId.empty() && variable.chapterId != context_.currentChapterId) {
+            continue;
         }
-        int type = static_cast<int>(variable.type);
-        if (ImGui::BeginCombo("Type", stateVariableTypeName(variable.type))) {
-            for (int t = 0; t < 3; ++t) {
-                const auto candidate = static_cast<game::StateVariableType>(t);
-                if (ImGui::Selectable(stateVariableTypeName(candidate), type == t)) {
-                    variable.type = candidate;
-                    context_.markDirty();
+        if (pickerMode && variable.type != context_.requestedVariableType) {
+            continue;
+        }
+        std::string label = variable.id;
+        label += variable.scope == game::StateVariableScope::Chapter ? "  [Chapter]" : "  [Universal]";
+        if (ImGui::Selectable(label.c_str(), selectedVariable_ == i)) {
+            selectedVariable_ = i;
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("StateVariableDetails", ImVec2(0.0f, pickerMode ? -46.0f : 340.0f), true);
+    if (selectedVariable_ < 0 || selectedVariable_ >= static_cast<int>(context_.stateVariables.size())) {
+        ImGui::TextDisabled("Select a variable to edit its details.");
+    } else {
+        game::StateVariableDef& variable = context_.stateVariables[static_cast<std::size_t>(selectedVariable_)];
+        if (editString("ID", variable.id)) { context_.markDirty(); }
+        if (pickerMode) {
+            ImGui::Text("Type: %s", stateVariableTypeName(variable.type));
+        } else {
+            int type = static_cast<int>(variable.type);
+            if (ImGui::BeginCombo("Type", stateVariableTypeName(variable.type))) {
+                for (int t = 0; t < 3; ++t) {
+                    const auto candidate = static_cast<game::StateVariableType>(t);
+                    if (ImGui::Selectable(stateVariableTypeName(candidate), type == t)) {
+                        variable.type = candidate;
+                        context_.markDirty();
+                    }
                 }
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
+        }
+        if (variable.type != game::StateVariableType::Item) {
+            int scope = static_cast<int>(variable.scope);
+            if (ImGui::Combo("Scope", &scope, "Universal\0Chapter\0")) {
+                variable.scope = static_cast<game::StateVariableScope>(scope);
+                variable.chapterId = variable.scope == game::StateVariableScope::Chapter
+                    ? context_.currentChapterId : std::string{};
+                context_.markDirty();
+            }
+            if (variable.scope == game::StateVariableScope::Chapter) {
+                if (variable.chapterId.empty()) {
+                    variable.chapterId = context_.currentChapterId;
+                }
+                ImGui::TextDisabled("Chapter: %s", variable.chapterId.c_str());
+            }
+        } else if (variable.scope != game::StateVariableScope::Universal) {
+            variable.scope = game::StateVariableScope::Universal;
+            variable.chapterId.clear();
+            context_.markDirty();
         }
         if (variable.type == game::StateVariableType::Integer) {
             if (ImGui::DragInt("Default", &variable.defaultInt, 0.2f)) {
@@ -626,12 +712,31 @@ void EditorApp::drawProjectStateTab()
             }
         }
         if (ImGui::Button("Delete Variable")) {
-            context_.stateVariables.erase(context_.stateVariables.begin() + i);
+            context_.stateVariables.erase(context_.stateVariables.begin() + selectedVariable_);
+            selectedVariable_ = std::min(selectedVariable_, static_cast<int>(context_.stateVariables.size()) - 1);
             context_.markDirty();
-            ImGui::PopID();
-            break;
         }
-        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    if (pickerMode) {
+        if (ImGui::Button("Save and Return", ImVec2(180.0f, 32.0f))) {
+            saveProjectMetadata();
+            if (selectedVariable_ >= 0 &&
+                selectedVariable_ < static_cast<int>(context_.stateVariables.size()) &&
+                context_.applyPickedVariable) {
+                context_.applyPickedVariable(context_.stateVariables[static_cast<std::size_t>(selectedVariable_)]);
+                context_.markDirty();
+            }
+            context_.applyPickedVariable = {};
+            variablePickerActive_ = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 32.0f))) {
+            context_.applyPickedVariable = {};
+            variablePickerActive_ = false;
+        }
+        return;
     }
 
     ImGui::Spacing();
@@ -671,6 +776,39 @@ void EditorApp::drawProjectStateTab()
         }
         if (editString("Target ID", effect.targetId)) {
             context_.markDirty();
+        }
+        const bool itemEffect =
+            effect.type == game::GameEffectType::GiveItem ||
+            effect.type == game::GameEffectType::TakeItem;
+        const game::StateVariableType effectVariableType =
+            itemEffect
+            ? game::StateVariableType::Item
+            : (effect.type == game::GameEffectType::SetBool)
+            ? game::StateVariableType::Boolean
+            : game::StateVariableType::Integer;
+        if (effect.type == game::GameEffectType::SetInt ||
+            effect.type == game::GameEffectType::AddInt ||
+            effect.type == game::GameEffectType::SetBool ||
+            itemEffect) {
+            if (ImGui::Button(itemEffect ? "Pick Item..." : "Pick Variable...",
+                    ImVec2(-1.0f, 0.0f))) {
+                const game::StateVariableScope scope = itemEffect
+                    ? game::StateVariableScope::Universal : effect.scope;
+                context_.openVariablePicker(effect.targetId, effectVariableType, scope,
+                    [&effect](const game::StateVariableDef& variable) {
+                        effect.targetId = variable.id;
+                        effect.scope = variable.scope;
+                    });
+            }
+        }
+        if (effect.type == game::GameEffectType::SetInt ||
+            effect.type == game::GameEffectType::AddInt ||
+            effect.type == game::GameEffectType::SetBool) {
+            int scope = static_cast<int>(effect.scope);
+            if (ImGui::Combo("Target Scope", &scope, "Universal\0Chapter\0")) {
+                effect.scope = static_cast<game::StateVariableScope>(scope);
+                context_.markDirty();
+            }
         }
         if (effect.type == game::GameEffectType::SetInt || effect.type == game::GameEffectType::AddInt) {
             if (ImGui::DragInt("Value", &effect.intValue, 0.2f)) {
@@ -789,6 +927,16 @@ void EditorApp::drawProjectItemsTab()
         else if (item.type == game::ItemDefType::Ammo) { targetLabel = "Ammo Type"; }
         else if (item.type == game::ItemDefType::Weapon) { targetLabel = "Weapon ID"; }
         if (editString(targetLabel, item.targetId)) { context_.markDirty(); }
+        if (item.type == game::ItemDefType::Currency || item.type == game::ItemDefType::Mana) {
+            ImGui::SameLine();
+            if (ImGui::Button("Pick Variable...")) {
+                context_.openVariablePicker(item.targetId, game::StateVariableType::Integer,
+                    game::StateVariableScope::Universal,
+                    [&item](const game::StateVariableDef& variable) {
+                        item.targetId = variable.id;
+                    });
+            }
+        }
         if (item.type == game::ItemDefType::Currency) {
             const bool numericTarget = !item.targetId.empty() &&
                 std::all_of(item.targetId.begin(), item.targetId.end(), [](unsigned char c) {
@@ -802,6 +950,32 @@ void EditorApp::drawProjectItemsTab()
         if (item.type == game::ItemDefType::Custom && editString("Custom Type", item.customType)) { context_.markDirty(); }
         if (ImGui::DragInt("Value", &item.value, 1.0f, 0, 999999)) { context_.markDirty(); }
         if (ImGui::Checkbox("Stackable", &item.stackable)) { context_.markDirty(); }
+        ImGui::TextUnformatted("On Acquire Effects");
+        for (int ei = 0; ei < static_cast<int>(item.acquireEffectIds.size()); ++ei) {
+            ImGui::PushID(20000 + ei);
+            std::string& effectId = item.acquireEffectIds[static_cast<std::size_t>(ei)];
+            if (ImGui::BeginCombo("Effect", effectId.empty() ? "(choose)" : effectId.c_str())) {
+                for (const game::GameEffectDef& effect : context_.effectDefs) {
+                    if (ImGui::Selectable(effect.id.c_str(), effect.id == effectId)) {
+                        effectId = effect.id;
+                        context_.markDirty();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X")) {
+                item.acquireEffectIds.erase(item.acquireEffectIds.begin() + ei);
+                context_.markDirty();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+        if (ImGui::SmallButton("+ Acquire Effect")) {
+            item.acquireEffectIds.push_back(context_.effectDefs.empty() ? std::string{} : context_.effectDefs.front().id);
+            context_.markDirty();
+        }
         if (ImGui::Button("Delete Item Def")) {
             context_.itemDefs.erase(context_.itemDefs.begin() + i);
             context_.markDirty();
@@ -1144,6 +1318,7 @@ void EditorApp::selectProject(const std::string& projectId)
 
 void EditorApp::loadProjectMetadata()
 {
+    selectedVariable_ = -1;
     game::GameProject project;
     if (game::loadGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr)) {
         context_.playableCharacterId = project.playableCharacterId;

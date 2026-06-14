@@ -1,4 +1,4 @@
-ADGAME 13
+ADGAME 16
 id game
 playable billy
 characters 2
@@ -7,28 +7,29 @@ character grandma_spelling
 chapters 1
 chapter Farm_House
 enemy_types 2
-enemy_type enemy_1 enemy_1 1 1 15 15 1 64 0 0.18 8 - 1 1
+enemy_type enemy_1 enemy_1 1 1 15 15 1 64 0 0.18 8 Crows_killed 1 1 0 1
 enemy_attack 1 1 32 1 120 attack_1 -
-enemy_type wevfer enemy_type_2 1 1 30 29 1 33 0 0.18 60 - 1 1
+enemy_type wevfer enemy_type_2 1 1 30 29 1 33 0 0.18 60 - 1 0 0 1
 enemy_attack 1 1 32 1 120 attack_1 -
-weapon_defs 2
-weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0
-weapon_def slingshot 1 9 293 0.59 200 slingshot ss_rock ss_rock 1 1
+weapon_defs 3
+weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 30 -
+weapon_def slingshot 1 9 293 0.59 200 slingshot ss_rock ss_rock 1 1 0 1 1 0 0 0 0 0 1 0 0 1 30 -
+weapon_def sword 0 25 32 0.31 200 sword - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 45 attack_3
 item_defs 3
-item_def coins "Coins" 4 coin Money 1 1 -
-item_def ss_rock "Slingshot Rock" 1 rock ss_rock 1 1 -
-item_def key "key" 5 key - 1 1 -
+item_def coins "Coins" 4 coin Money 1 1 - 0
+item_def ss_rock "Slingshot Rock" 1 rock ss_rock 1 1 - 0
+item_def key "key" 5 key - 1 1 - 0
 starting_weapon Pocketknife
 font "Roboto.ttf"
 state_defs 2
-state_def Crows_killed 0 0 0
-state_def player_coins 0 0 0
+state_def Crows_killed 0 0 0 1 Farm_House
+state_def player_coins 0 0 0 0 -
 effect_defs 1
-effect_def 5crowsdead 1 Crows_killed 5 1
+effect_def 5crowsdead 1 Crows_killed 5 1 0
 npc_types 3
-npc_type Fred Dhag - 0 1 15 - 1 0
+npc_type Fred Dhag - 0 1 15 - 1 0 0 0
 dl "" "Howzit going young fella!"
-npc_type Merchantile silas silas 0 2 32 - 0 1
+npc_type Merchantile silas silas 0 2 32 - 0 1 0 0
 shop_item ss_rock 1 1 1 1
-npc_type grandma_spelling grandma_spelling grandma_spelling 0 1 32 - 0 0
+npc_type grandma_spelling grandma_spelling grandma_spelling 0 1 32 - 0 0 0 0
 end

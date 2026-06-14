@@ -20,7 +20,9 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <numeric>
+#include <random>
 #include <system_error>
 
 namespace adventure::game {
@@ -54,6 +56,14 @@ constexpr float kProjectileReboundRestitution = 0.55f;  // velocity retained per
 constexpr int kProjectileMaxBounces = 2;
 constexpr float kProjectileMinReboundSpeed = 36.0f;     // below this, the projectile settles
 constexpr float kProjectileSettleSeconds = 0.6f;        // grounded rest before despawn
+constexpr float kPi = 3.14159265358979f;
+// Ranged hold-to-draw feel.
+constexpr float kWildShotSpreadDegreesPerSecond = 25.0f;  // overheld WildShot accuracy decay
+constexpr float kMisfireFizzleRangePx = 28.0f;            // a misfired shot drops just ahead of the player
+// Target lead: shots anticipate where a moving target will be. Full lead at
+// 0° spread, fading to none at/above kLeadMaxSpreadDegrees of current spread.
+constexpr float kLeadMaxSpreadDegrees = 12.0f;
+constexpr float kLeadMaxInterceptSeconds = 1.5f;          // cap so slow shots don't aim absurdly far ahead
 constexpr float kEnemyDeathVisualSeconds = 0.35f;
 constexpr float kSpeechTextScale = 1.5f;
 constexpr float kDialogueTextScale = 1.8f;
@@ -65,6 +75,13 @@ std::size_t dialogueWrapChars(float screenWidth)
     constexpr float margin = 10.0f;
     constexpr float padX = 10.0f;
     return std::max<std::size_t>(24, static_cast<std::size_t>((screenWidth - margin * 2.0f - padX * 2.0f) / (6.0f * kDialogueTextScale)));
+}
+
+float randomUniform(float minValue, float maxValue)
+{
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> dist(minValue, maxValue);
+    return dist(rng);
 }
 
 void setError(std::string* errorMessage, const std::string& message)
@@ -762,11 +779,21 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     {
         GameProject project;
         if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+            itemDefs_ = project.itemDefs;
+            effectDefs_ = project.effectDefs;
             for (const StateVariableDef& def : project.stateVariables) {
+                if (def.scope == StateVariableScope::Chapter &&
+                    !def.chapterId.empty() && def.chapterId != chapter_.id) {
+                    continue;
+                }
+                const std::string stateId = def.type != StateVariableType::Item &&
+                    def.scope == StateVariableScope::Chapter
+                    ? "chapter." + chapter_.id + "." + def.id
+                    : def.id;
                 switch (def.type) {
-                    case StateVariableType::Integer: gameState_.setInt(def.id, def.defaultInt); break;
-                    case StateVariableType::Boolean: gameState_.setBool(def.id, def.defaultBool); break;
-                    case StateVariableType::Item: if (def.defaultBool) gameState_.giveItem(def.id); break;
+                    case StateVariableType::Integer: gameState_.setInt(stateId, def.defaultInt); break;
+                    case StateVariableType::Boolean: gameState_.setBool(stateId, def.defaultBool); break;
+                    case StateVariableType::Item: if (def.defaultBool) gameState_.giveItem(stateId); break;
                 }
             }
         }
@@ -953,6 +980,7 @@ void Engine::loadWeapons()
         return;
     }
     itemDefs_ = project.itemDefs;
+    effectDefs_ = project.effectDefs;
     syncInventoryFromGameState();
 
     if (project.startingWeaponId.empty()) {
@@ -970,6 +998,57 @@ void Engine::loadWeapons()
                 loadSpriteById(w.ammoSpriteId);
             }
             break;
+        }
+    }
+}
+
+std::string Engine::scopedStateId(StateVariableScope scope, const std::string& id) const
+{
+    if (id.empty() || scope == StateVariableScope::Universal) {
+        return id;
+    }
+    return "chapter." + chapter_.id + "." + id;
+}
+
+int Engine::scopedInt(StateVariableScope scope, const std::string& id, int fallback) const
+{
+    return gameState_.getInt(scopedStateId(scope, id), fallback);
+}
+
+bool Engine::scopedBool(StateVariableScope scope, const std::string& id, bool fallback) const
+{
+    return gameState_.getBool(scopedStateId(scope, id), fallback);
+}
+
+void Engine::applyEffect(const GameEffectDef& effect)
+{
+    const std::string target = scopedStateId(effect.scope, effect.targetId);
+    switch (effect.type) {
+        case GameEffectType::SetInt:
+            gameState_.setInt(target, effect.intValue);
+            break;
+        case GameEffectType::AddInt:
+            gameState_.addInt(target, effect.intValue);
+            break;
+        case GameEffectType::SetBool:
+            gameState_.setBool(target, effect.boolValue);
+            break;
+        case GameEffectType::GiveItem:
+            addInventoryItem(effect.targetId, std::max(1, effect.intValue));
+            break;
+        case GameEffectType::TakeItem:
+            (void)removeInventoryItem(effect.targetId, std::max(1, effect.intValue));
+            break;
+    }
+}
+
+void Engine::applyEffects(const std::vector<std::string>& effectIds)
+{
+    for (const std::string& id : effectIds) {
+        const auto it = std::find_if(effectDefs_.begin(), effectDefs_.end(),
+            [&id](const GameEffectDef& effect) { return effect.id == id; });
+        if (it != effectDefs_.end()) {
+            applyEffect(*it);
         }
     }
 }
@@ -1148,6 +1227,8 @@ void Engine::loadPathEntities()
                 path.combat.aggroRange = type->aggroRange;
                 path.combat.killVariable = type->killVariable;
                 path.combat.killAmount = type->killAmount;
+                path.combat.killVariableScope = type->killVariableScope;
+                path.combat.defeatEffectIds = type->defeatEffectIds;
                 if (path.speed <= 0.0f) {
                     path.speed = type->speed;
                 }
@@ -1403,6 +1484,12 @@ bool Engine::inputDown(InputAction action) const
         case InputAction::Ranged:
             return glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS ||
                 gamepadButtonDown(GLFW_GAMEPAD_BUTTON_B);
+        case InputAction::AimCycleNext:
+            return glfwGetKey(window_, GLFW_KEY_TAB) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER);
+        case InputAction::AimCyclePrev:
+            return glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_LEFT_BUMPER);
         case InputAction::Inventory:
             return glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS ||
                 gamepadButtonDown(GLFW_GAMEPAD_BUTTON_Y) ||
@@ -1465,7 +1552,19 @@ void Engine::update(float dt)
     updateHazards(dt);
     updateEnemyCombat(dt);
     updateEnemyDeaths(dt);
+    // Bracket path movement so each enemy's measured velocity (used to lead
+    // ranged shots at moving targets) reflects its actual motion this frame.
+    for (RuntimePathEntity& entity : pathEntities_) {
+        entity.prevX = entity.x;
+        entity.prevY = entity.y;
+    }
     updatePaths(dt);
+    if (dt > 0.0f) {
+        for (RuntimePathEntity& entity : pathEntities_) {
+            entity.velocityX = (entity.x - entity.prevX) / dt;
+            entity.velocityY = (entity.y - entity.prevY) / dt;
+        }
+    }
     updateNpcs(dt);
     updateDoors();
     updateInteraction();
@@ -1722,6 +1821,19 @@ void Engine::updatePlayer(float dt)
     if (len > 0.0f) {
         dx /= len;
         dy /= len;
+    }
+    // While drawing with a locked target, the player turns to face the target
+    // and movement strafes; otherwise facing follows movement direction.
+    const RuntimePathEntity* lockTarget = rangedAiming_ ? aimTargetEntity() : nullptr;
+    if (lockTarget != nullptr) {
+        const float tx = lockTarget->x - playerX_;
+        const float ty = lockTarget->y - playerY_;
+        const float tlen = std::sqrt(tx * tx + ty * ty);
+        if (tlen > 0.0f) {
+            playerFacingX_ = tx / tlen;
+            playerFacingY_ = ty / tlen;
+        }
+    } else if (len > 0.0f) {
         playerFacingX_ = dx;
         playerFacingY_ = dy;
     }
@@ -1738,7 +1850,7 @@ void Engine::updatePlayer(float dt)
     playerAnimSeconds_ += dt;
     playerIsMoving_ = (len > 0.0f);
 
-    const float speedScale = playerActionLocksBaseMotion() ? kAttackMoveSpeedScale : 1.0f;
+    const float speedScale = (playerActionLocksBaseMotion() || rangedAiming_) ? kAttackMoveSpeedScale : 1.0f;
     const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * speedScale * dt;
     const float newY = playerY_ + dy * kPlayerSpeedPxPerSecond * speedScale * dt;
     if (playerCanOccupy(newX, playerY_)) {
@@ -1810,6 +1922,7 @@ void Engine::updatePlayer(float dt)
 void Engine::updateAttack(float dt)
 {
     if (interactionState_ == InteractionState::InDialogue) {
+        cancelRangedAim();
         return;
     }
     meleeCooldownSeconds_ = std::max(0.0f, meleeCooldownSeconds_ - dt);
@@ -1830,11 +1943,13 @@ void Engine::updateAttack(float dt)
     const bool rangedInputDown = inputDown(InputAction::Ranged);
     const bool meleePressed = meleeInputDown && !meleeInputWasDown_;
     const bool rangedPressed = rangedInputDown && !rangedInputWasDown_;
+    const bool rangedReleased = !rangedInputDown && rangedInputWasDown_;
     meleeInputWasDown_ = meleeInputDown;
     rangedInputWasDown_ = rangedInputDown;
 
     if (meleeWeapon_.has_value() && meleePressed && meleeCooldownSeconds_ <= 0.0f &&
-        !playerActionLocksBaseMotion()) {
+        !playerActionLocksBaseMotion() && !rangedAiming_) {
+        playerAttackAnimOverride_ = meleeWeapon_->attackAnimState;
         setPlayerActionState(PlayerActionState::MeleeAttack, kMeleeAttackSeconds);
         meleeCooldownSeconds_ = meleeWeapon_->attackCooldown;
         meleeActiveSeconds_ = kMeleeActiveSeconds;
@@ -1852,28 +1967,340 @@ void Engine::updateAttack(float dt)
         }
     }
 
-    if (rangedWeapon_.has_value() && rangedPressed && rangedCooldownSeconds_ <= 0.0f &&
-        !playerActionLocksBaseMotion()) {
-        const int available = ammoCountForWeapon(*rangedWeapon_);
-        if (available >= rangedWeapon_->ammoPerShot) {
-            setPlayerActionState(PlayerActionState::RangedAttack, kRangedAttackSeconds);
-            consumeAmmoForWeapon(*rangedWeapon_, rangedWeapon_->ammoPerShot);
-            rangedCooldownSeconds_ = rangedWeapon_->attackCooldown;
-            RuntimeProjectile proj;
-            const float offset = kPlayerCollisionSizePx * 0.5f + 2.0f;
-            proj.x = playerX_ + playerFacingX_ * offset;
-            proj.y = playerY_ + playerFacingY_ * offset;
-            proj.vx = playerFacingX_ * rangedWeapon_->projectileSpeed;
-            proj.vy = playerFacingY_ * rangedWeapon_->projectileSpeed;
-            proj.maxDistance = rangedWeapon_->range;
-            proj.damage = rangedWeapon_->damage;
-            proj.spriteId = rangedWeapon_->ammoSpriteId.empty() ? rangedWeapon_->spriteId : rangedWeapon_->ammoSpriteId;
-            proj.fromEnemy = false;
-            proj.wallBehavior = rangedWeapon_->wallBehavior;
-            proj.bouncesRemaining = kProjectileMaxBounces;
-            projectiles_.push_back(proj);
+    updateRangedAttack(dt, rangedPressed, rangedReleased);
+}
+
+void Engine::updateRangedAttack(float dt, bool pressed, bool released)
+{
+    if (!rangedWeapon_.has_value() || playerActionState_ == PlayerActionState::Dead) {
+        cancelRangedAim();
+        aimCandidates_.clear();
+        aimTargetId_.clear();
+        return;
+    }
+    const WeaponDef weapon = *rangedWeapon_;
+
+    // Keep the auto-aim candidate list live every frame so the reticle shows
+    // who a shot would hit before the press and while drawing.
+    updateAimTargets();
+
+    const bool cycleNextDown = inputDown(InputAction::AimCycleNext);
+    const bool cyclePrevDown = inputDown(InputAction::AimCyclePrev);
+    if (cycleNextDown && !aimCycleNextWasDown_) {
+        cycleAimTarget(1);
+    }
+    if (cyclePrevDown && !aimCyclePrevWasDown_) {
+        cycleAimTarget(-1);
+    }
+    aimCycleNextWasDown_ = cycleNextDown;
+    aimCyclePrevWasDown_ = cyclePrevDown;
+
+    const bool holdToFire = weapon.chargeTimeSeconds > 0.0f || weapon.steadyTimeSeconds > 0.0f;
+
+    if (!rangedAiming_) {
+        if (pressed && rangedCooldownSeconds_ <= 0.0f && !playerActionLocksBaseMotion() &&
+            ammoCountForWeapon(weapon) >= weapon.ammoPerShot) {
+            if (holdToFire) {
+                rangedAiming_ = true;
+                rangedHoldSeconds_ = 0.0f;
+                rangedMisfireLatched_ = false;
+            } else {
+                fireRangedWeapon(false);
+            }
+        }
+        return;
+    }
+
+    // Drawing: accumulate hold time; the cone keeps following player facing.
+    rangedHoldSeconds_ += dt;
+
+    // Overheld past full draw + grace window: apply the weapon's penalty.
+    const float overHeld = rangedHoldSeconds_ - rangedFullDrawSeconds() - weapon.overchargeTimeSeconds;
+    if (overHeld > 0.0f) {
+        switch (weapon.overchargeEffect) {
+            case OverchargeEffect::Break:
+                showNotice(weapon.id + " broke!");
+                rangedWeapon_.reset();
+                cancelRangedAim();
+                return;
+            case OverchargeEffect::Misfire:
+                rangedMisfireLatched_ = true;
+                break;
+            case OverchargeEffect::WildShot:  // handled in rangedSpreadDegrees()
+            case OverchargeEffect::None:
+                break;
         }
     }
+
+    if (released) {
+        fireRangedWeapon(rangedMisfireLatched_);
+        cancelRangedAim();
+    }
+}
+
+void Engine::cancelRangedAim()
+{
+    rangedAiming_ = false;
+    rangedHoldSeconds_ = 0.0f;
+    rangedMisfireLatched_ = false;
+}
+
+float Engine::rangedFullDrawSeconds() const
+{
+    if (!rangedWeapon_.has_value()) {
+        return 0.0f;
+    }
+    return std::max(rangedWeapon_->chargeTimeSeconds, rangedWeapon_->steadyTimeSeconds);
+}
+
+float Engine::rangedSpreadDegrees() const
+{
+    if (!rangedWeapon_.has_value()) {
+        return 0.0f;
+    }
+    const WeaponDef& weapon = *rangedWeapon_;
+    float spread = weapon.spreadStartDegrees;
+    if (weapon.steadyTimeSeconds > 0.0f) {
+        const float steady01 = std::clamp(rangedHoldSeconds_ / weapon.steadyTimeSeconds, 0.0f, 1.0f);
+        spread += (weapon.spreadEndDegrees - weapon.spreadStartDegrees) * steady01;
+    }
+    if (weapon.overchargeEffect == OverchargeEffect::WildShot) {
+        const float overHeld = rangedHoldSeconds_ - rangedFullDrawSeconds() - weapon.overchargeTimeSeconds;
+        if (overHeld > 0.0f) {
+            spread += overHeld * kWildShotSpreadDegreesPerSecond;
+        }
+    }
+    return std::max(0.0f, spread);
+}
+
+void Engine::fireRangedWeapon(bool misfire)
+{
+    if (!rangedWeapon_.has_value()) {
+        return;
+    }
+    const WeaponDef& weapon = *rangedWeapon_;
+    if (ammoCountForWeapon(weapon) < weapon.ammoPerShot) {
+        return;
+    }
+    consumeAmmoForWeapon(weapon, weapon.ammoPerShot);
+    rangedCooldownSeconds_ = weapon.attackCooldown;
+    playerAttackAnimOverride_ = weapon.attackAnimState;
+    setPlayerActionState(PlayerActionState::RangedAttack, kRangedAttackSeconds);
+
+    // Damage ramps with draw time (slingshot); a misfired shot does nothing.
+    float damageScale = 1.0f;
+    if (weapon.chargeTimeSeconds > 0.0f) {
+        const float charge01 = std::clamp(rangedHoldSeconds_ / weapon.chargeTimeSeconds, 0.0f, 1.0f);
+        damageScale = weapon.chargeDamageScaleMin +
+            (weapon.chargeDamageScaleMax - weapon.chargeDamageScaleMin) * charge01;
+    }
+    const int damage = misfire
+        ? 0
+        : std::max(1, static_cast<int>(std::lround(static_cast<float>(weapon.damage) * damageScale)));
+
+    // Shoot at the locked cone target when there is one, else straight ahead.
+    float dirX = playerFacingX_;
+    float dirY = playerFacingY_;
+    if (const RuntimePathEntity* target = aimTargetEntity()) {
+        float aimX = target->x;
+        float aimY = target->y;
+
+        // Lead the shot: solve for where projectile and target meet, then
+        // blend from the target's current position toward that intercept as
+        // accuracy sharpens (full anticipation only when highly accurate).
+        const float accuracy01 = std::clamp(1.0f - rangedSpreadDegrees() / kLeadMaxSpreadDegrees, 0.0f, 1.0f);
+        if (!misfire && accuracy01 > 0.0f && weapon.projectileSpeed > 0.0f) {
+            const float rx = target->x - playerX_;
+            const float ry = target->y - playerY_;
+            const float vx = target->velocityX;
+            const float vy = target->velocityY;
+            const float speed = weapon.projectileSpeed;
+            const float a = vx * vx + vy * vy - speed * speed;
+            const float b = 2.0f * (rx * vx + ry * vy);
+            const float c = rx * rx + ry * ry;
+            float interceptT = -1.0f;
+            if (std::abs(a) < 1e-3f) {
+                if (std::abs(b) > 1e-3f) {
+                    interceptT = -c / b;
+                }
+            } else {
+                const float disc = b * b - 4.0f * a * c;
+                if (disc >= 0.0f) {
+                    const float sq = std::sqrt(disc);
+                    const float t1 = (-b - sq) / (2.0f * a);
+                    const float t2 = (-b + sq) / (2.0f * a);
+                    interceptT = (t1 > 0.0f && (t1 < t2 || t2 <= 0.0f)) ? t1 : t2;
+                }
+            }
+            if (interceptT > 0.0f) {
+                interceptT = std::min(interceptT, kLeadMaxInterceptSeconds);
+                aimX += vx * interceptT * accuracy01;
+                aimY += vy * interceptT * accuracy01;
+            }
+        }
+
+        const float tx = aimX - playerX_;
+        const float ty = aimY - playerY_;
+        const float len = std::sqrt(tx * tx + ty * ty);
+        if (len > 0.0f) {
+            dirX = tx / len;
+            dirY = ty / len;
+        }
+    }
+    // Turn the player toward the shot so the fire animation faces the target
+    // even for instant weapons that never enter the drawing state.
+    playerFacingX_ = dirX;
+    playerFacingY_ = dirY;
+
+    const float baseAngle = std::atan2(dirY, dirX);
+    const float spreadDegrees = misfire ? 0.0f : rangedSpreadDegrees();
+
+    const int pellets = std::max(1, weapon.pelletCount);
+    const float muzzleOffset = kPlayerCollisionSizePx * 0.5f + 2.0f;
+    for (int i = 0; i < pellets; ++i) {
+        float angle = baseAngle;
+        if (spreadDegrees > 0.0f) {
+            angle += randomUniform(-spreadDegrees * 0.5f, spreadDegrees * 0.5f) * (kPi / 180.0f);
+        }
+        const float ax = std::cos(angle);
+        const float ay = std::sin(angle);
+        RuntimeProjectile proj;
+        proj.x = playerX_ + ax * muzzleOffset;
+        proj.y = playerY_ + ay * muzzleOffset;
+        proj.vx = ax * weapon.projectileSpeed;
+        proj.vy = ay * weapon.projectileSpeed;
+        proj.maxDistance = misfire ? std::min(weapon.range, kMisfireFizzleRangePx) : weapon.range;
+        proj.damage = damage;
+        proj.spriteId = weapon.ammoSpriteId.empty() ? weapon.spriteId : weapon.ammoSpriteId;
+        proj.fromEnemy = false;
+        proj.wallBehavior = weapon.wallBehavior;
+        proj.bouncesRemaining = kProjectileMaxBounces;
+        proj.falloffStartPx = weapon.falloffStartPx;
+        proj.falloffEndPx = weapon.falloffEndPx;
+        proj.falloffMinScale = weapon.falloffMinDamageScale;
+        projectiles_.push_back(proj);
+    }
+    if (misfire) {
+        showNotice("Misfire!");
+    }
+}
+
+void Engine::updateAimTargets()
+{
+    aimCandidates_.clear();
+    if (!rangedWeapon_.has_value() || rangedWeapon_->aimConeDegrees <= 0.0f) {
+        aimTargetId_.clear();
+        return;
+    }
+    const WeaponDef& weapon = *rangedWeapon_;
+    const float halfConeRadians = std::min(weapon.aimConeDegrees, 360.0f) * 0.5f * (kPi / 180.0f);
+    const float facingAngle = std::atan2(playerFacingY_, playerFacingX_);
+
+    struct Candidate {
+        std::size_t index;
+        float signedOffset;  // radians left (-) / right (+) of player facing
+    };
+    std::vector<Candidate> candidates;
+    for (std::size_t i = 0; i < pathEntities_.size(); ++i) {
+        const RuntimePathEntity& entity = pathEntities_[i];
+        if (entity.pathHidden || entity.health <= 0 || entity.deathSeconds >= 0.0f) {
+            continue;
+        }
+        const float dx = entity.x - playerX_;
+        const float dy = entity.y - playerY_;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist > weapon.range) {
+            continue;
+        }
+        float offset = 0.0f;
+        if (dist > 0.0f) {
+            offset = std::atan2(dy, dx) - facingAngle;
+            while (offset > kPi) { offset -= 2.0f * kPi; }
+            while (offset < -kPi) { offset += 2.0f * kPi; }
+            if (std::abs(offset) > halfConeRadians) {
+                continue;
+            }
+        }
+        candidates.push_back({i, offset});
+    }
+    // Sort left-to-right across the cone so cycling sweeps in a stable order.
+    std::sort(candidates.begin(), candidates.end(),
+        [](const Candidate& a, const Candidate& b) { return a.signedOffset < b.signedOffset; });
+
+    aimCandidates_.reserve(candidates.size());
+    bool currentStillValid = false;
+    std::size_t mostCentral = 0;
+    float bestAbsOffset = std::numeric_limits<float>::max();
+    for (const Candidate& candidate : candidates) {
+        aimCandidates_.push_back(candidate.index);
+        if (pathEntities_[candidate.index].path.id == aimTargetId_) {
+            currentStillValid = true;
+        }
+        if (std::abs(candidate.signedOffset) < bestAbsOffset) {
+            bestAbsOffset = std::abs(candidate.signedOffset);
+            mostCentral = candidate.index;
+        }
+    }
+    // While drawing, a locked target stays locked as long as it is alive and
+    // in range, even if it briefly slips outside the cone between frames.
+    if (!currentStillValid && rangedAiming_ && !aimTargetId_.empty()) {
+        for (std::size_t i = 0; i < pathEntities_.size(); ++i) {
+            const RuntimePathEntity& entity = pathEntities_[i];
+            if (entity.path.id != aimTargetId_ || entity.pathHidden ||
+                entity.health <= 0 || entity.deathSeconds >= 0.0f) {
+                continue;
+            }
+            const float dx = entity.x - playerX_;
+            const float dy = entity.y - playerY_;
+            if (std::sqrt(dx * dx + dy * dy) <= weapon.range) {
+                aimCandidates_.push_back(i);
+                currentStillValid = true;
+            }
+            break;
+        }
+    }
+
+    if (aimCandidates_.empty()) {
+        aimTargetId_.clear();
+    } else if (!currentStillValid) {
+        aimTargetId_ = pathEntities_[mostCentral].path.id;
+    }
+}
+
+void Engine::cycleAimTarget(int direction)
+{
+    if (aimCandidates_.empty()) {
+        return;
+    }
+    int current = -1;
+    for (std::size_t c = 0; c < aimCandidates_.size(); ++c) {
+        if (pathEntities_[aimCandidates_[c]].path.id == aimTargetId_) {
+            current = static_cast<int>(c);
+            break;
+        }
+    }
+    const int count = static_cast<int>(aimCandidates_.size());
+    const int next = (current < 0)
+        ? (direction > 0 ? 0 : count - 1)
+        : (((current + direction) % count) + count) % count;
+    aimTargetId_ = pathEntities_[aimCandidates_[static_cast<std::size_t>(next)]].path.id;
+}
+
+const Engine::RuntimePathEntity* Engine::aimTargetEntity() const
+{
+    if (aimTargetId_.empty()) {
+        return nullptr;
+    }
+    for (const RuntimePathEntity& entity : pathEntities_) {
+        if (entity.path.id != aimTargetId_) {
+            continue;
+        }
+        if (entity.pathHidden || entity.health <= 0 || entity.deathSeconds >= 0.0f) {
+            return nullptr;
+        }
+        return &entity;
+    }
+    return nullptr;
 }
 
 void Engine::setPlayerActionState(PlayerActionState state, float durationSeconds)
@@ -1905,9 +2332,9 @@ std::string Engine::playerActionName() const
         case PlayerActionState::Walk:
             return "walk";
         case PlayerActionState::MeleeAttack:
-            return "attack_1";
+            return playerAttackAnimOverride_.empty() ? "attack_1" : playerAttackAnimOverride_;
         case PlayerActionState::RangedAttack:
-            return "cast";
+            return playerAttackAnimOverride_.empty() ? "cast" : playerAttackAnimOverride_;
         case PlayerActionState::Hurt:
             return "hit_react";
         case PlayerActionState::Dead:
@@ -1977,6 +2404,23 @@ void Engine::applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, fl
         }
     }
 }
+
+namespace {
+
+// Damage delivered on impact after distance falloff (shotgun pellets hit hard
+// up close and taper off toward the end of their flight).
+int projectileImpactDamage(int damage, float distanceTraveled,
+    float falloffStartPx, float falloffEndPx, float falloffMinScale)
+{
+    if (falloffStartPx <= 0.0f || falloffEndPx <= falloffStartPx) {
+        return damage;
+    }
+    const float t = std::clamp((distanceTraveled - falloffStartPx) / (falloffEndPx - falloffStartPx), 0.0f, 1.0f);
+    const float scale = 1.0f + (falloffMinScale - 1.0f) * t;
+    return static_cast<int>(std::lround(static_cast<float>(damage) * scale));
+}
+
+} // namespace
 
 void Engine::updateProjectiles(float dt)
 {
@@ -2053,7 +2497,11 @@ void Engine::updateProjectiles(float dt)
                 proj.x - kProjectileHalfSize < playerX_ + playerHalf &&
                 proj.y + kProjectileHalfSize > playerY_ - playerHalf &&
                 proj.y - kProjectileHalfSize < playerY_ + playerHalf) {
-                damagePlayer(proj.damage, proj.x, proj.y);
+                const int impactDamage = projectileImpactDamage(proj.damage, proj.distanceTraveled,
+                    proj.falloffStartPx, proj.falloffEndPx, proj.falloffMinScale);
+                if (impactDamage > 0) {
+                    damagePlayer(impactDamage, proj.x, proj.y);
+                }
                 proj.dead = true;
             }
             continue;
@@ -2069,7 +2517,11 @@ void Engine::updateProjectiles(float dt)
                 proj.x - kProjectileHalfSize < entity.x + halfW &&
                 proj.y + kProjectileHalfSize > entity.y - halfH &&
                 proj.y - kProjectileHalfSize < entity.y + halfH) {
-                applyEnemyHit(entity, proj.damage, dirX, dirY);
+                const int impactDamage = projectileImpactDamage(proj.damage, proj.distanceTraveled,
+                    proj.falloffStartPx, proj.falloffEndPx, proj.falloffMinScale);
+                if (impactDamage > 0) {
+                    applyEnemyHit(entity, impactDamage, dirX, dirY);
+                }
                 proj.dead = true;
                 break;
             }
@@ -2314,6 +2766,13 @@ void Engine::collectItem(RuntimeItemEntity& item)
                     }
                 }
             }
+            const auto itemDef = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&item](const ItemDef& def) {
+                return def.type == ItemDefType::Weapon &&
+                    (def.id == item.placement.targetId || def.targetId == item.placement.targetId);
+            });
+            if (itemDef != itemDefs_.end()) {
+                applyEffects(itemDef->acquireEffectIds);
+            }
             break;
         }
         case ItemPickupType::Ammo: {
@@ -2329,6 +2788,12 @@ void Engine::collectItem(RuntimeItemEntity& item)
                     }
                 }
                 addInventoryItem(invKey, std::max(1, item.placement.quantity));
+                const auto itemDef = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&invKey](const ItemDef& def) {
+                    return def.type == ItemDefType::Ammo && def.id == invKey;
+                });
+                if (itemDef != itemDefs_.end()) {
+                    applyEffects(itemDef->acquireEffectIds);
+                }
             }
             break;
         }
@@ -2349,6 +2814,7 @@ void Engine::collectItem(RuntimeItemEntity& item)
 
             const ItemDef& def = *defIt;
             addInventoryItem(def.id, def.stackable ? amount : 1);
+            applyEffects(def.acquireEffectIds);
             switch (def.type) {
                 case ItemDefType::Weapon: {
                     GameProject project;
@@ -2430,6 +2896,8 @@ void Engine::loadNpcEntities()
         if (const NpcTypeDef* type = typeForId(placement.typeId)) {
             entity.interactionMode = type->defaultInteraction;
             entity.shopInventory = type->shopInventory;
+            entity.talkEffectIds = type->talkEffectIds;
+            entity.stateRules = type->stateRules;
             if (!placement.shopInventoryOverride.empty()) {
                 entity.shopInventory = placement.shopInventoryOverride;
             }
@@ -2455,6 +2923,8 @@ void Engine::loadNpcEntities()
         } else if (!placement.dialogueOverride.empty()) {
             entity.dialogue = placement.dialogueOverride;
         }
+        entity.baseGraphId = entity.graphId;
+        entity.baseMovement = entity.placement.movementOverride;
         if (!placement.waypoints.empty()) {
             entity.x = placement.waypoints.front().x;
             entity.y = placement.waypoints.front().y;
@@ -2462,15 +2932,26 @@ void Engine::loadNpcEntities()
             entity.pathHidden = pathStartsHidden(placement.waypoints);
             applyNpcWaypointAction(entity, placement.waypoints.front());
         }
-        if (!entity.graphId.empty()) {
-            std::filesystem::path graphPath = assetPath(projectRoot_, "assets/game/dialogue") / chapter_.id / (entity.graphId + ".addialogue");
-            if (!std::filesystem::exists(graphPath)) {
-                graphPath = assetPath(projectRoot_, "assets/game/dialogue") / (entity.graphId + ".addialogue");
-            }
-            entity.hasGraph = loadDialogueGraph(graphPath, entity.graph, nullptr);
-        }
+        loadNpcGraph(entity, entity.graphId);
+        updateNpcStateRules(entity);
         npcEntities_.push_back(std::move(entity));
     }
+}
+
+void Engine::loadNpcGraph(RuntimeNpcEntity& npc, const std::string& graphId)
+{
+    npc.graphId = graphId;
+    npc.graph = {};
+    npc.hasGraph = false;
+    if (graphId.empty()) {
+        return;
+    }
+    std::filesystem::path graphPath =
+        assetPath(projectRoot_, "assets/game/dialogue") / chapter_.id / (graphId + ".addialogue");
+    if (!std::filesystem::exists(graphPath)) {
+        graphPath = assetPath(projectRoot_, "assets/game/dialogue") / (graphId + ".addialogue");
+    }
+    npc.hasGraph = loadDialogueGraph(graphPath, npc.graph, nullptr);
 }
 
 void Engine::applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypoint& waypoint)
@@ -2540,6 +3021,7 @@ void Engine::updateNpcs(float dt)
 {
     updateNpcAwareness();
     for (RuntimeNpcEntity& npc : npcEntities_) {
+        updateNpcStateRules(npc);
         npc.speechRemainingSeconds = std::max(0.0f, npc.speechRemainingSeconds - dt);
         if (npc.hidden) {
             continue;
@@ -2642,6 +3124,58 @@ void Engine::updateNpcs(float dt)
         npc.facingX = dx / dist;
         npc.facingY = dy / dist;
     }
+    for (RuntimeNpcEntity& npc : npcEntities_) {
+        if (!npc.ruleAnimation.empty()) {
+            npc.actionType = npc.ruleAnimation;
+        }
+    }
+}
+
+void Engine::updateNpcStateRules(RuntimeNpcEntity& npc)
+{
+    int matched = -1;
+    for (int i = 0; i < static_cast<int>(npc.stateRules.size()); ++i) {
+        if (dialogueConditionPasses(npc.stateRules[static_cast<std::size_t>(i)].condition)) {
+            matched = i;
+            break;
+        }
+    }
+    if (matched == npc.activeStateRule) {
+        return;
+    }
+
+    npc.activeStateRule = matched;
+    if (matched < 0) {
+        npc.placement.movementOverride = npc.baseMovement;
+        npc.hidden = false;
+        npc.followingPlayer = false;
+        npc.ruleAnimation.clear();
+        if (npc.graphId != npc.baseGraphId) {
+            loadNpcGraph(npc, npc.baseGraphId);
+        }
+        return;
+    }
+
+    const NpcStateRule& rule = npc.stateRules[static_cast<std::size_t>(matched)];
+    const std::string desiredGraph = rule.graphId.empty() ? npc.baseGraphId : rule.graphId;
+    if (npc.graphId != desiredGraph) {
+        loadNpcGraph(npc, desiredGraph);
+    }
+    npc.placement.movementOverride = npc.baseMovement;
+    npc.hidden = false;
+    npc.followingPlayer = false;
+    if (rule.movementOverride >= 0) {
+        npc.placement.movementOverride =
+            static_cast<NpcMovementMode>(std::clamp(rule.movementOverride, 0, 2));
+    }
+    npc.ruleAnimation = rule.animation;
+    if (rule.visibility >= 0) {
+        npc.hidden = rule.visibility == 0;
+    }
+    if (rule.following >= 0) {
+        npc.followingPlayer = rule.following != 0;
+    }
+    applyEffects(rule.activateEffectIds);
 }
 
 void Engine::updateNpcAwareness()
@@ -2674,7 +3208,7 @@ bool Engine::dialogueConditionPasses(const DialogueCondition& condition) const
         case DialogueConditionType::Always:
             return true;
         case DialogueConditionType::IntCompare: {
-            const int value = gameState_.getInt(condition.variableId, 0);
+            const int value = scopedInt(condition.scope, condition.variableId, 0);
             switch (condition.op) {
                 case DialogueCompareOp::Equal: return value == condition.intValue;
                 case DialogueCompareOp::NotEqual: return value != condition.intValue;
@@ -2686,7 +3220,7 @@ bool Engine::dialogueConditionPasses(const DialogueCondition& condition) const
             return false;
         }
         case DialogueConditionType::BoolEquals:
-            return gameState_.getBool(condition.variableId, false) == condition.boolValue;
+            return scopedBool(condition.scope, condition.variableId, false) == condition.boolValue;
         case DialogueConditionType::HasItem:
             return gameState_.hasItem(condition.variableId) == condition.boolValue;
         case DialogueConditionType::HasMoney:
@@ -2700,13 +3234,13 @@ void Engine::executeDialogueActions(const std::vector<DialogueAction>& actions, 
     for (const DialogueAction& action : actions) {
         switch (action.type) {
             case DialogueActionType::SetInt:
-                gameState_.setInt(action.targetId, action.intValue);
+                gameState_.setInt(scopedStateId(action.scope, action.targetId), action.intValue);
                 break;
             case DialogueActionType::AddInt:
-                gameState_.addInt(action.targetId, action.intValue);
+                gameState_.addInt(scopedStateId(action.scope, action.targetId), action.intValue);
                 break;
             case DialogueActionType::SetBool:
-                gameState_.setBool(action.targetId, action.boolValue);
+                gameState_.setBool(scopedStateId(action.scope, action.targetId), action.boolValue);
                 break;
             case DialogueActionType::GiveItem:
                 addInventoryItem(action.targetId, std::max(1, action.intValue));
@@ -2750,10 +3284,12 @@ void Engine::executeDialogueActions(const std::vector<DialogueAction>& actions, 
                 npc.actionType = action.textValue.empty() ? "idle" : action.textValue;
                 break;
             case DialogueActionType::StartQuest:
-                gameState_.setBool(action.targetId.empty() ? action.textValue : action.targetId, true);
+                gameState_.setBool(scopedStateId(action.scope,
+                    action.targetId.empty() ? action.textValue : action.targetId), true);
                 break;
             case DialogueActionType::CompleteQuest:
-                gameState_.setBool(action.targetId.empty() ? action.textValue : action.targetId, true);
+                gameState_.setBool(scopedStateId(action.scope,
+                    action.targetId.empty() ? action.textValue : action.targetId), true);
                 break;
         }
     }
@@ -3105,7 +3641,7 @@ void Engine::updateInteraction()
                     interactionState_ = InteractionState::None;
                     break;
                 }
-                const RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
+                RuntimeNpcEntity& npc = npcEntities_[static_cast<std::size_t>(interactingNpcIndex_)];
                 const float dx = playerX_ - npc.x;
                 const float dy = playerY_ - npc.y;
                 if (std::sqrt(dx * dx + dy * dy) > npc.placement.interactionRadius) {
@@ -3113,6 +3649,8 @@ void Engine::updateInteraction()
                     break;
                 }
                 if (interactPressed) {
+                    applyEffects(npc.talkEffectIds);
+                    updateNpcStateRules(npc);
                     if (npc.interactionMode == NpcInteractionMode::Shop) {
                         interactionState_ = InteractionState::InShop;
                         shopPanel_ = 0;
@@ -3760,8 +4298,10 @@ void Engine::updateEnemyDeaths(float dt)
         if (entity.deathSeconds >= kEnemyDeathVisualSeconds && activeScreen_ != nullptr) {
             // Quest hook fires on every kill, regardless of respawn/persistence.
             if (!entity.path.combat.killVariable.empty()) {
-                gameState_.addInt(entity.path.combat.killVariable, entity.path.combat.killAmount);
+                gameState_.addInt(scopedStateId(entity.path.combat.killVariableScope,
+                    entity.path.combat.killVariable), entity.path.combat.killAmount);
             }
+            applyEffects(entity.path.combat.defeatEffectIds);
             // Persist the defeat only when the enemy is not configured to respawn.
             if (!entity.path.respawn && !activeScreen_->respawnEnemies) {
                 recordEnemyDefeated(activeScreen_->id, entity);
@@ -4143,6 +4683,9 @@ void Engine::render()
         renderFilledRect(entity.x - barW * 0.5f, entity.y - entity.path.combat.hitboxHeight * 0.5f - 5.0f, barW * pct, barH, 0.95f, 0.20f, 0.16f, 0.95f);
     }
 
+    renderAimTargets();
+    renderChargeMeter();
+
     renderPathSpeechBubbles();
     renderSpeechBubble();
 
@@ -4438,6 +4981,25 @@ void Engine::renderFilledRect(float x, float y, float width, float height, float
     glEnd();
 }
 
+void Engine::renderArc(float cx, float cy, float radius, float thickness,
+    float startRadians, float spanRadians, float r, float g, float b, float a) const
+{
+    const int segments = std::max(4, static_cast<int>(std::abs(spanRadians) * radius * 0.35f));
+    const float inner = std::max(0.0f, radius - thickness * 0.5f);
+    const float outer = radius + thickness * 0.5f;
+    glDisable(GL_TEXTURE_2D);
+    glColor4f(r, g, b, a);
+    glBegin(GL_TRIANGLE_STRIP);
+    for (int i = 0; i <= segments; ++i) {
+        const float angle = startRadians + spanRadians * (static_cast<float>(i) / static_cast<float>(segments));
+        const float ca = std::cos(angle);
+        const float sa = std::sin(angle);
+        glVertex2f(cx + ca * inner, cy + sa * inner);
+        glVertex2f(cx + ca * outer, cy + sa * outer);
+    }
+    glEnd();
+}
+
 float Engine::textWidth(const std::string& text, float scale) const
 {
     if (font_.loaded) {
@@ -4606,6 +5168,88 @@ void Engine::renderMeleeFlash() const
     const float cy = playerY_ + playerFacingY_ * (kPlayerCollisionSizePx * 0.5f + hw);
     const float alpha = std::clamp(meleeActiveSeconds_ / kMeleeActiveSeconds, 0.0f, 1.0f) * 0.55f;
     renderFilledRect(cx - hw, cy - hw, reach, reach, 1.0f, 0.95f, 0.2f, alpha);
+}
+
+void Engine::renderAimTargets() const
+{
+    if (!rangedWeapon_.has_value() || aimCandidates_.empty()) {
+        return;
+    }
+    const float pulse = 0.70f + 0.30f * std::sin(runtimeSeconds_ * 8.0f);
+    // Scope-style reticle whose size tracks current accuracy: wide when spread
+    // is high, closing onto the enemy as the shot steadies. Two segmented
+    // circles spin in counter directions — fast while unfocused, settling as
+    // aim sharpens — for a classic locking-on feel.
+    const float spreadDegrees = rangedSpreadDegrees();
+    const float spinSpeed = 1.2f + spreadDegrees * 0.30f;  // radians/s
+    const float spin = runtimeSeconds_ * spinSpeed;
+    for (std::size_t index : aimCandidates_) {
+        if (index >= pathEntities_.size()) {
+            continue;
+        }
+        const RuntimePathEntity& entity = pathEntities_[index];
+        const bool selected = (entity.path.id == aimTargetId_);
+        const float radius = std::max(entity.path.combat.hitboxWidth, entity.path.combat.hitboxHeight) * 0.5f +
+            5.0f + spreadDegrees * 0.45f;
+        const float thickness = selected ? 1.8f : 1.2f;
+        const float r = selected ? 1.0f : 1.0f;
+        const float g = selected ? 0.85f : 1.0f;
+        const float b = selected ? 0.20f : 1.0f;
+        const float a = selected ? pulse : 0.35f;
+
+        // Outer ring: four arcs spinning clockwise; inner ring spins counter.
+        constexpr float kArcSpan = 55.0f * (kPi / 180.0f);
+        for (int arc = 0; arc < 4; ++arc) {
+            const float base = static_cast<float>(arc) * (kPi * 0.5f);
+            renderArc(entity.x, entity.y, radius, thickness, base + spin, kArcSpan, r, g, b, a);
+            renderArc(entity.x, entity.y, radius - 4.0f, thickness, base - spin + kArcSpan * 0.5f, kArcSpan, r, g, b, a * 0.8f);
+        }
+
+        // Crosshair ticks at the cardinal points plus a centre dot.
+        const float tickLen = 4.0f;
+        const float tickThick = selected ? 1.6f : 1.2f;
+        renderFilledRect(entity.x - tickThick * 0.5f, entity.y - radius - tickLen * 0.5f, tickThick, tickLen, r, g, b, a);
+        renderFilledRect(entity.x - tickThick * 0.5f, entity.y + radius - tickLen * 0.5f, tickThick, tickLen, r, g, b, a);
+        renderFilledRect(entity.x - radius - tickLen * 0.5f, entity.y - tickThick * 0.5f, tickLen, tickThick, r, g, b, a);
+        renderFilledRect(entity.x + radius - tickLen * 0.5f, entity.y - tickThick * 0.5f, tickLen, tickThick, r, g, b, a);
+        if (selected) {
+            renderFilledRect(entity.x - 1.0f, entity.y - 1.0f, 2.0f, 2.0f, r, g, b, a);
+        }
+    }
+}
+
+void Engine::renderChargeMeter() const
+{
+    if (!rangedAiming_ || !rangedWeapon_.has_value()) {
+        return;
+    }
+    const WeaponDef& weapon = *rangedWeapon_;
+    const float fullDraw = rangedFullDrawSeconds();
+    if (fullDraw <= 0.0f) {
+        return;
+    }
+    const float charge01 = std::clamp(rangedHoldSeconds_ / fullDraw, 0.0f, 1.0f);
+    const float overHeld = rangedHoldSeconds_ - fullDraw - weapon.overchargeTimeSeconds;
+    const bool danger = weapon.overchargeEffect != OverchargeEffect::None && overHeld > 0.0f;
+
+    const float barW = 22.0f;
+    const float barH = 3.0f;
+    const float x = playerX_ - barW * 0.5f;
+    const float y = playerY_ - kPlayerFallbackDrawSizePx * 0.5f - 7.0f;
+    renderFilledRect(x - 1.0f, y - 1.0f, barW + 2.0f, barH + 2.0f, 0.05f, 0.05f, 0.05f, 0.85f);
+    // Green while drawing, gold at full draw, flashing red once overheld.
+    float r = 0.35f, g = 0.90f, b = 0.30f;
+    if (danger) {
+        const float flash = 0.6f + 0.4f * std::sin(runtimeSeconds_ * 16.0f);
+        r = 0.95f * flash + 0.05f;
+        g = 0.12f;
+        b = 0.10f;
+    } else if (charge01 >= 1.0f) {
+        r = 0.95f;
+        g = 0.80f;
+        b = 0.20f;
+    }
+    renderFilledRect(x, y, barW * charge01, barH, r, g, b, 0.95f);
 }
 
 void Engine::renderHud() const

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/dialogue_graph.hpp"
+#include "game/state_types.hpp"
 #include "game/weapon.hpp"
 
 #include <filesystem>
@@ -19,6 +21,8 @@ struct StateVariableDef {
     StateVariableType type = StateVariableType::Integer;
     int defaultInt = 0;
     bool defaultBool = false;
+    StateVariableScope scope = StateVariableScope::Universal;
+    std::string chapterId;
 };
 
 enum class GameEffectType {
@@ -35,6 +39,7 @@ struct GameEffectDef {
     std::string targetId;
     int intValue = 1;
     bool boolValue = true;
+    StateVariableScope scope = StateVariableScope::Universal;
 };
 
 enum class ItemDefType {
@@ -60,6 +65,7 @@ struct ItemDef {
     int value = 1;
     bool stackable = true;
     std::string customType;
+    std::vector<std::string> acquireEffectIds;
 };
 
 struct ShopItemDef {
@@ -102,6 +108,8 @@ struct EnemyType {
     float aggroRange = 0.0f;            // 0 = never chase; >0 = chase player within this radius (px)
     std::string killVariable;           // GameState int incremented on death (quest hook)
     int killAmount = 1;                 // amount added to killVariable on death
+    StateVariableScope killVariableScope = StateVariableScope::Universal;
+    std::vector<std::string> defeatEffectIds;
 };
 
 enum class NpcMovementMode {
@@ -122,6 +130,16 @@ struct DialogueLine {
     std::string text;
 };
 
+struct NpcStateRule {
+    DialogueCondition condition;
+    std::string graphId;
+    int movementOverride = -1; // -1 keeps the NPC type/placement movement
+    std::string animation;
+    int visibility = -1;       // -1 unchanged, 0 hidden, 1 visible
+    int following = -1;        // -1 unchanged, 0 stop, 1 follow player
+    std::vector<std::string> activateEffectIds;
+};
+
 struct NpcTypeDef {
     std::string id = "npc_1";
     std::string spriteId;
@@ -132,6 +150,8 @@ struct NpcTypeDef {
     std::string defaultGraphId;
     std::vector<DialogueLine> defaultDialogue;
     std::vector<ShopItemDef> shopInventory;
+    std::vector<std::string> talkEffectIds;
+    std::vector<NpcStateRule> stateRules;
 };
 
 struct GameProject {

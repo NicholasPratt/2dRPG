@@ -2,11 +2,11 @@ ADDIALOGUE 1
 id screen_1_npc_2_dialogue
 start start
 nodes 3
-node start 0 40 80 "" "" dialogue_1 -
+node start 3 40 80 "" "" dialogue_1 start
 condition 0 5 - 0 1
 choices 0
 actions 0
-node dialogue_1 1 280 80 "NPC" "Hello." end -
+node dialogue_1 3 280 80 "NPC" "Hello." end -
 condition 0 5 - 0 1
 choices 0
 actions 0

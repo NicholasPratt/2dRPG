@@ -48,16 +48,22 @@ void writeCondition(std::ostream& output, const DialogueCondition& condition)
            << static_cast<int>(condition.op) << ' '
            << writeToken(condition.variableId) << ' '
            << condition.intValue << ' '
-           << (condition.boolValue ? 1 : 0);
+           << (condition.boolValue ? 1 : 0) << ' '
+           << static_cast<int>(condition.scope);
 }
 
-bool readCondition(std::istream& input, DialogueCondition& condition)
+bool readCondition(std::istream& input, DialogueCondition& condition, int version)
 {
     int type = 0;
     int op = 0;
     std::string variableId;
     int boolValue = 0;
     input >> type >> op >> variableId >> condition.intValue >> boolValue;
+    if (version >= 2) {
+        int scope = 0;
+        input >> scope;
+        condition.scope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+    }
     if (!input || !validOptionalToken(variableId)) {
         return false;
     }
@@ -98,7 +104,7 @@ bool saveDialogueGraph(const std::filesystem::path& path, const DialogueGraph& g
         return false;
     }
 
-    output << "ADDIALOGUE 1\n";
+    output << "ADDIALOGUE 2\n";
     output << "id " << graph.id << "\n";
     output << "start " << graph.startNodeId << "\n";
     output << "nodes " << graph.nodes.size() << "\n";
@@ -126,7 +132,8 @@ bool saveDialogueGraph(const std::filesystem::path& path, const DialogueGraph& g
                    << std::quoted(action.textValue) << ' '
                    << action.intValue << ' '
                    << (action.boolValue ? 1 : 0) << ' '
-                   << action.x << ' ' << action.y << "\n";
+                   << action.x << ' ' << action.y << ' '
+                   << static_cast<int>(action.scope) << "\n";
         }
     }
     output << "end\n";
@@ -144,7 +151,7 @@ bool loadDialogueGraph(const std::filesystem::path& path, DialogueGraph& graph, 
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADDIALOGUE" || version != 1) {
+    if (magic != "ADDIALOGUE" || version < 1 || version > 2) {
         setError(errorMessage, "Unsupported dialogue graph file.");
         return false;
     }
@@ -185,7 +192,7 @@ bool loadDialogueGraph(const std::filesystem::path& path, DialogueGraph& graph, 
             node.falseNodeId = readTokenValue(falseNodeId);
 
             input >> key;
-            if (key != "condition" || !readCondition(input, node.condition)) {
+            if (key != "condition" || !readCondition(input, node.condition, version)) {
                 setError(errorMessage, "Expected dialogue node condition.");
                 return false;
             }
@@ -201,7 +208,7 @@ bool loadDialogueGraph(const std::filesystem::path& path, DialogueGraph& graph, 
                 DialogueChoice choice;
                 std::string targetNodeId;
                 input >> key >> std::quoted(choice.text) >> targetNodeId;
-                if (key != "choice" || !validOptionalToken(targetNodeId) || !readCondition(input, choice.condition)) {
+                if (key != "choice" || !validOptionalToken(targetNodeId) || !readCondition(input, choice.condition, version)) {
                     setError(errorMessage, "Invalid dialogue choice.");
                     return false;
                 }
@@ -223,6 +230,11 @@ bool loadDialogueGraph(const std::filesystem::path& path, DialogueGraph& graph, 
                 int boolValue = 0;
                 input >> key >> typeValue >> targetId >> std::quoted(action.textValue)
                       >> action.intValue >> boolValue >> action.x >> action.y;
+                if (version >= 2) {
+                    int scope = 0;
+                    input >> scope;
+                    action.scope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+                }
                 if (key != "action" || !validOptionalToken(targetId) || !input) {
                     setError(errorMessage, "Invalid dialogue action.");
                     return false;

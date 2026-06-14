@@ -13,6 +13,9 @@ tile-based, screen-to-screen games. The repository includes the
 - Linear/spline actor paths with enter, timed speech, and leave waypoint actions
 - Sprite polygon drawing, frame drag-reordering, and repeatable/one-time pickup placement
 - Melee and ranged combat, enemy paths and aggro, inventory, shops, and saves
+- Ranged weapon feel stats: hold-to-draw charge, overcharge penalties, spread/steady
+  accuracy, pellet spreads, distance damage falloff, and cone auto-aim with
+  target cycling (keyboard + gamepad)
 - Project-local assets under `projects/<project>/assets/`
 
 ## Build

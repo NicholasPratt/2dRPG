@@ -1,4 +1,4 @@
-ADMAP 5
+ADMAP 10
 id screen_3_map
 size 48 32
 spawn 1 1
@@ -102,7 +102,7 @@ layer 2
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 obstacles 0
-items 9
+items 10
 item item_1 3 coins 1 213.333 104 0 coin
 item item_2 3 coins 1 573.333 86 0 coin
 item item_3 3 coins 1 602.667 188 0 coin
@@ -112,4 +112,6 @@ item item_6 3 coins 1 248 257.333 0 coin
 item item_7 3 coins 1 338 263.333 0 coin
 item item_8 3 coins 1 558 246 0 coin
 item item_9 3 coins 1 722 28 0 coin
+item item_10 0 sword 5 239.333 186.667 0 sword
+doors 0
 end

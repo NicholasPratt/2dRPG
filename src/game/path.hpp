@@ -21,6 +21,8 @@ struct EnemyCombatStats {
     float aggroRange = 0.0f;
     std::string killVariable;
     int killAmount = 1;
+    StateVariableScope killVariableScope = StateVariableScope::Universal;
+    std::vector<std::string> defeatEffectIds;
 };
 
 struct EnemyPath {

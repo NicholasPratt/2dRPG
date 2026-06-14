@@ -1,4 +1,5 @@
 #include "game/chapter.hpp"
+#include "game/dialogue_graph.hpp"
 #include "game/map.hpp"
 #include "game/path.hpp"
 #include "game/project.hpp"
@@ -245,17 +246,55 @@ int main(int argc, char** argv)
     std::cout << "Round-tripped game state Example_Count=" << loadedState.getInt("Example_Count")
               << " defeated=" << loadedState.defeatedEnemies().size() << "\n";
 
+    adventure::game::DialogueGraph graph;
+    graph.id = "scope_smoke";
+    graph.startNodeId = "start";
+    adventure::game::DialogueNode startNode;
+    startNode.id = "start";
+    startNode.type = adventure::game::DialogueNodeType::Condition;
+    startNode.nextNodeId = "end";
+    startNode.falseNodeId = "end";
+    startNode.condition.type = adventure::game::DialogueConditionType::BoolEquals;
+    startNode.condition.variableId = "Spoke_To_Grandma";
+    startNode.condition.scope = adventure::game::StateVariableScope::Chapter;
+    adventure::game::DialogueAction scopedAction;
+    scopedAction.type = adventure::game::DialogueActionType::SetBool;
+    scopedAction.targetId = "Spoke_To_Grandma";
+    scopedAction.scope = adventure::game::StateVariableScope::Chapter;
+    startNode.actions.push_back(scopedAction);
+    adventure::game::DialogueNode endNode;
+    endNode.id = "end";
+    endNode.type = adventure::game::DialogueNodeType::End;
+    graph.nodes = {startNode, endNode};
+    const std::filesystem::path graphSmokePath = "build/scope_smoke.addialogue";
+    if (!adventure::game::saveDialogueGraph(graphSmokePath, graph, &error)) {
+        std::cerr << "Failed to save dialogue scope smoke file: " << error << "\n";
+        return 1;
+    }
+    adventure::game::DialogueGraph loadedGraph;
+    if (!adventure::game::loadDialogueGraph(graphSmokePath, loadedGraph, &error) ||
+        loadedGraph.nodes.empty() ||
+        loadedGraph.nodes.front().condition.scope != adventure::game::StateVariableScope::Chapter ||
+        loadedGraph.nodes.front().actions.empty() ||
+        loadedGraph.nodes.front().actions.front().scope != adventure::game::StateVariableScope::Chapter) {
+        std::cerr << "Dialogue scoped condition/action round-trip values did not match.\n";
+        return 1;
+    }
+
     adventure::game::GameProject project;
     project.id = "smoke_project";
     adventure::game::StateVariableDef stateVariable;
     stateVariable.id = "Example_Count";
     stateVariable.type = adventure::game::StateVariableType::Integer;
+    stateVariable.scope = adventure::game::StateVariableScope::Chapter;
+    stateVariable.chapterId = "chapter_smoke";
     project.stateVariables.push_back(stateVariable);
     adventure::game::GameEffectDef effectDef;
     effectDef.id = "increment_example";
     effectDef.type = adventure::game::GameEffectType::AddInt;
     effectDef.targetId = "Example_Count";
     effectDef.intValue = 1;
+    effectDef.scope = adventure::game::StateVariableScope::Chapter;
     project.effectDefs.push_back(effectDef);
     adventure::game::EnemyType enemyType;
     enemyType.id = "crow";
@@ -264,11 +303,48 @@ int main(int argc, char** argv)
     enemyType.aggroRange = 120.0f;
     enemyType.killVariable = "Crows_Killed";
     enemyType.killAmount = 1;
+    enemyType.killVariableScope = adventure::game::StateVariableScope::Chapter;
+    enemyType.defeatEffectIds = {"increment_example"};
     project.enemyTypes.push_back(enemyType);
+    adventure::game::ItemDef itemDef;
+    itemDef.id = "crow_feather";
+    itemDef.name = "Crow Feather";
+    itemDef.type = adventure::game::ItemDefType::Quest;
+    itemDef.acquireEffectIds = {"increment_example"};
+    project.itemDefs.push_back(itemDef);
+    adventure::game::NpcTypeDef npcDef;
+    npcDef.id = "grandma";
+    npcDef.talkEffectIds = {"increment_example"};
+    adventure::game::NpcStateRule npcRule;
+    npcRule.condition.type = adventure::game::DialogueConditionType::IntCompare;
+    npcRule.condition.variableId = "Example_Count";
+    npcRule.condition.scope = adventure::game::StateVariableScope::Chapter;
+    npcRule.condition.intValue = 3;
+    npcRule.graphId = "quest_complete";
+    npcRule.movementOverride = static_cast<int>(adventure::game::NpcMovementMode::Patrol);
+    npcRule.animation = "victory";
+    npcRule.visibility = 1;
+    npcRule.activateEffectIds = {"increment_example"};
+    npcDef.stateRules.push_back(npcRule);
+    project.npcTypes.push_back(npcDef);
     adventure::game::WeaponDef weaponDef;
     weaponDef.id = "slingshot";
     weaponDef.type = adventure::game::WeaponType::Ranged;
     weaponDef.wallBehavior = adventure::game::ProjectileWallBehavior::Rebound;
+    weaponDef.chargeTimeSeconds = 1.2f;
+    weaponDef.chargeDamageScaleMin = 0.5f;
+    weaponDef.chargeDamageScaleMax = 2.0f;
+    weaponDef.overchargeTimeSeconds = 2.0f;
+    weaponDef.overchargeEffect = adventure::game::OverchargeEffect::WildShot;
+    weaponDef.spreadStartDegrees = 4.0f;
+    weaponDef.spreadEndDegrees = 1.0f;
+    weaponDef.steadyTimeSeconds = 1.2f;
+    weaponDef.pelletCount = 1;
+    weaponDef.falloffStartPx = 48.0f;
+    weaponDef.falloffEndPx = 160.0f;
+    weaponDef.falloffMinDamageScale = 0.25f;
+    weaponDef.aimConeDegrees = 40.0f;
+    weaponDef.attackAnimState = "attack_20";
     project.weaponDefs.push_back(weaponDef);
     const std::filesystem::path projectSmokePath = "build/smoke_project.adgame";
     if (!adventure::game::saveGameProject(projectSmokePath, project, &error)) {
@@ -282,15 +358,31 @@ int main(int argc, char** argv)
     }
     if (loadedProject.stateVariables.size() != 1 ||
         loadedProject.effectDefs.size() != 1 ||
-        loadedProject.effectDefs.front().targetId != "Example_Count") {
+        loadedProject.effectDefs.front().targetId != "Example_Count" ||
+        loadedProject.effectDefs.front().scope != adventure::game::StateVariableScope::Chapter ||
+        loadedProject.stateVariables.front().scope != adventure::game::StateVariableScope::Chapter ||
+        loadedProject.stateVariables.front().chapterId != "chapter_smoke") {
         std::cerr << "Project state/effect definition round-trip values did not match.\n";
         return 1;
     }
     if (loadedProject.enemyTypes.size() != 1 ||
         loadedProject.enemyTypes.front().killVariable != "Crows_Killed" ||
+        loadedProject.enemyTypes.front().killVariableScope != adventure::game::StateVariableScope::Chapter ||
+        loadedProject.enemyTypes.front().defeatEffectIds != std::vector<std::string>{"increment_example"} ||
         loadedProject.enemyTypes.front().aggroRange != 120.0f ||
         loadedProject.enemyTypes.front().knockbackResistance != 0.25f) {
         std::cerr << "Enemy type combat-feel field round-trip values did not match.\n";
+        return 1;
+    }
+    if (loadedProject.itemDefs.size() != 1 ||
+        loadedProject.itemDefs.front().acquireEffectIds != std::vector<std::string>{"increment_example"} ||
+        loadedProject.npcTypes.size() != 1 ||
+        loadedProject.npcTypes.front().talkEffectIds != std::vector<std::string>{"increment_example"} ||
+        loadedProject.npcTypes.front().stateRules.size() != 1 ||
+        loadedProject.npcTypes.front().stateRules.front().condition.scope != adventure::game::StateVariableScope::Chapter ||
+        loadedProject.npcTypes.front().stateRules.front().graphId != "quest_complete" ||
+        loadedProject.npcTypes.front().stateRules.front().animation != "victory") {
+        std::cerr << "Item/NPC variable event and rule round-trip values did not match.\n";
         return 1;
     }
     if (loadedProject.weaponDefs.size() != 1 ||
@@ -298,6 +390,24 @@ int main(int argc, char** argv)
         std::cerr << "Weapon projectile wall-behavior round-trip did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped project state/effect/enemy-type/weapon definitions (ADGAME v13)\n";
+    const adventure::game::WeaponDef& loadedWeapon = loadedProject.weaponDefs.front();
+    if (loadedWeapon.chargeTimeSeconds != 1.2f ||
+        loadedWeapon.chargeDamageScaleMin != 0.5f ||
+        loadedWeapon.chargeDamageScaleMax != 2.0f ||
+        loadedWeapon.overchargeTimeSeconds != 2.0f ||
+        loadedWeapon.overchargeEffect != adventure::game::OverchargeEffect::WildShot ||
+        loadedWeapon.spreadStartDegrees != 4.0f ||
+        loadedWeapon.spreadEndDegrees != 1.0f ||
+        loadedWeapon.steadyTimeSeconds != 1.2f ||
+        loadedWeapon.pelletCount != 1 ||
+        loadedWeapon.falloffStartPx != 48.0f ||
+        loadedWeapon.falloffEndPx != 160.0f ||
+        loadedWeapon.falloffMinDamageScale != 0.25f ||
+        loadedWeapon.aimConeDegrees != 40.0f ||
+        loadedWeapon.attackAnimState != "attack_20") {
+        std::cerr << "Weapon ranged-feel stat round-trip values did not match.\n";
+        return 1;
+    }
+    std::cout << "Round-tripped scoped state/event/NPC rule definitions (ADGAME v16)\n";
     return 0;
 }

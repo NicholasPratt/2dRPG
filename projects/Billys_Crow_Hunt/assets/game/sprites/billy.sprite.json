@@ -1,18 +1,19 @@
 {
   "id": "billy",
   "source": "assets/raw/sprites/billy_sheet.png",
-  "canvasSize": [32, 32],
+  "canvasSize": [64, 64],
   "gridSize": [32, 32],
-  "pivot": [16, 16],
+  "pivot": [32, 32],
+  "bodyGuide": [16, 16, 32, 32],
   "frames": [
-    {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle", "direction": "E"},
-    {"rect": [32, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "E"},
-    {"rect": [64, 0, 32, 32], "durationMs": 100, "type": "attack_1", "direction": "E"},
-    {"rect": [96, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "E"},
-    {"rect": [128, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "N"},
-    {"rect": [160, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "N"},
-    {"rect": [192, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "S"},
-    {"rect": [224, 0, 32, 32], "durationMs": 100, "type": "walk", "direction": "S"}
+    {"rect": [0, 0, 64, 64], "durationMs": 100, "type": "idle", "direction": "E"},
+    {"rect": [64, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "E"},
+    {"rect": [128, 0, 64, 64], "durationMs": 100, "type": "attack_1", "direction": "E"},
+    {"rect": [192, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "E"},
+    {"rect": [256, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "N"},
+    {"rect": [320, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "N"},
+    {"rect": [384, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "S"},
+    {"rect": [448, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "S"}
   ],
   "tags": ["idle"]
 }

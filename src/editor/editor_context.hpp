@@ -6,6 +6,7 @@
 #include "game/project.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -99,8 +100,25 @@ struct EditorContext {
     bool requestEditDoors = false;
     bool requestEditNpcs = false;
     bool requestEditNpcTypes = false;
+    bool requestVariablePicker = false;
+    std::string requestedVariableId;
+    game::StateVariableType requestedVariableType = game::StateVariableType::Integer;
+    game::StateVariableScope requestedVariableScope = game::StateVariableScope::Universal;
+    std::function<void(const game::StateVariableDef&)> applyPickedVariable;
 
     void markDirty() { dirty = true; }
+    void openVariablePicker(
+        const std::string& currentId,
+        game::StateVariableType type,
+        game::StateVariableScope scope,
+        std::function<void(const game::StateVariableDef&)> apply)
+    {
+        requestedVariableId = currentId;
+        requestedVariableType = type;
+        requestedVariableScope = scope;
+        applyPickedVariable = std::move(apply);
+        requestVariablePicker = true;
+    }
 };
 
 } // namespace adventure::editor

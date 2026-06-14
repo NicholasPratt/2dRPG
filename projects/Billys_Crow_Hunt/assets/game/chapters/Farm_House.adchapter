@@ -33,7 +33,7 @@ wp 704 192 0 0 -1 - 0 2 ""
 wp 704 256 0 0 -1 - 0 2 ""
 wp 224 320 0 0 -1 - 0 2 ""
 wp 384 112 0 0 -1 - 0 2 ""
-npcs 3
+npcs 4
 npc npc_1 Fred 64 64 0 64 24 1 0 1 32 - 4 1 0
 wp 64 64 0 0 -1 - 0 2 ""
 wp 248 72 0 0 -1 - 0 2 ""
@@ -46,6 +46,9 @@ dl "" "You Should Find Grandma Spelling, She'll know what to do!"
 npc Dhag1 Fred 424 344 0 64 24 0 0 1 15 - 1 1 0
 wp 424 344 0 0 -1 - 0 2 ""
 dl "" "I find crows a bit scary..."
+npc npc_4 Fred 136 472 0 64 24 0 0 1 15 screen_1_npc_4_dialogue 1 1 0
+wp 136 472 0 0 -1 - 0 2 ""
+dl "" "How many crows you got?"
 animtiles 2
 animtile anim_tile_screen_1_map 11 14 1
 animtile tile_screen_1_map_6 11 13 1
@@ -54,11 +57,12 @@ links - - screen_1 -
 respawn 0
 music "-" 1
 enemies 1
-enemy enemy_1 wevfer 1 1 33 1 0 0 4
+enemy enemy_1 wevfer 1 1 33 1 0 0 5
 wp 80 320 0 0 -1 - 0 2 ""
 wp 192 400 0 0 -1 - 0 2 ""
 wp 400 416 0 0 -1 - 0 2 ""
 wp 224 400 0 0 -1 - 0 2 ""
+wp 96 320 0 0 -1 - 0 2 ""
 npcs 1
 npc npc_1 Fred -20 63 2 64 24 1 0 0 173 - 4 0 0
 wp -20 63 2 0 -1 - 0 2 ""

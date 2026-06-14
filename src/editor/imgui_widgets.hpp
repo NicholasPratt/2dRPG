@@ -13,6 +13,9 @@ inline std::string stringFieldLabel(const char* label)
     const char* source = label == nullptr ? "" : label;
     const char* idPart = std::strstr(source, "##");
     if (idPart != nullptr) {
+        if (idPart == source) {
+            return source;
+        }
         std::string result = "$ ";
         result.append(source, static_cast<std::size_t>(idPart - source));
         result += idPart;

@@ -28,6 +28,8 @@ constexpr float kHitRadius = 12.0f;
 const char* kFacingNames[] = {"South", "North", "East", "West"};
 const char* kMovementNames[] = {"Stationary", "Patrol", "Wander"};
 const char* kInteractionNames[] = {"None", "Talk", "Shop", "Quest"};
+const char* kConditionNames[] = {"Always", "Int Compare", "Bool Equals", "Has Item", "Has Money"};
+const char* kCompareNames[] = {"==", "!=", "<", "<=", ">", ">="};
 
 void copyToBuffer(std::array<char, 64>& buffer, const std::string& value)
 {
@@ -827,6 +829,155 @@ void NpcEditorPanel::drawTypes(EditorContext& context)
     if (!npc.defaultGraphId.empty() && ImGui::Button("Open Default Graph")) {
         context.requestedDialogueGraphId = npc.defaultGraphId;
         context.requestEditDialogueGraph = true;
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("On Talk Effects");
+    for (int i = 0; i < static_cast<int>(npc.talkEffectIds.size()); ++i) {
+        ImGui::PushID(7000 + i);
+        std::string& effectId = npc.talkEffectIds[static_cast<std::size_t>(i)];
+        if (ImGui::BeginCombo("Effect", effectId.empty() ? "(choose)" : effectId.c_str())) {
+            for (const game::GameEffectDef& effect : context.effectDefs) {
+                if (ImGui::Selectable(effect.id.c_str(), effect.id == effectId)) {
+                    effectId = effect.id;
+                    context.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) {
+            npc.talkEffectIds.erase(npc.talkEffectIds.begin() + i);
+            context.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    if (ImGui::SmallButton("+ Talk Effect")) {
+        npc.talkEffectIds.push_back(context.effectDefs.empty() ? std::string{} : context.effectDefs.front().id);
+        context.markDirty();
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Conditional State Rules");
+    ImGui::TextDisabled("First matching rule controls dialogue, movement, visibility, following, and animation.");
+    for (int i = 0; i < static_cast<int>(npc.stateRules.size()); ++i) {
+        ImGui::PushID(8000 + i);
+        game::NpcStateRule& rule = npc.stateRules[static_cast<std::size_t>(i)];
+        if (ImGui::TreeNode((std::string("Rule ") + std::to_string(i + 1)).c_str())) {
+            int conditionType = static_cast<int>(rule.condition.type);
+            if (ImGui::Combo("Condition", &conditionType, kConditionNames, 5)) {
+                rule.condition.type = static_cast<game::DialogueConditionType>(conditionType);
+                context.markDirty();
+            }
+            if (rule.condition.type != game::DialogueConditionType::Always &&
+                rule.condition.type != game::DialogueConditionType::HasMoney &&
+                editString("Variable / Item", rule.condition.variableId)) {
+                context.markDirty();
+            }
+            if (rule.condition.type == game::DialogueConditionType::IntCompare ||
+                rule.condition.type == game::DialogueConditionType::BoolEquals ||
+                rule.condition.type == game::DialogueConditionType::HasItem) {
+                const bool itemCondition =
+                    rule.condition.type == game::DialogueConditionType::HasItem;
+                if (ImGui::Button(itemCondition ? "Pick Item..." : "Pick Variable...",
+                        ImVec2(-1.0f, 0.0f))) {
+                    const game::StateVariableType variableType =
+                        itemCondition
+                        ? game::StateVariableType::Item
+                        : rule.condition.type == game::DialogueConditionType::BoolEquals
+                        ? game::StateVariableType::Boolean
+                        : game::StateVariableType::Integer;
+                    const game::StateVariableScope scope = itemCondition
+                        ? game::StateVariableScope::Universal
+                        : rule.condition.scope;
+                    context.openVariablePicker(rule.condition.variableId, variableType,
+                        scope,
+                        [&rule](const game::StateVariableDef& variable) {
+                            rule.condition.variableId = variable.id;
+                            rule.condition.scope = variable.scope;
+                        });
+                }
+            }
+            if (rule.condition.type == game::DialogueConditionType::IntCompare ||
+                rule.condition.type == game::DialogueConditionType::BoolEquals) {
+                int scope = static_cast<int>(rule.condition.scope);
+                if (ImGui::Combo("Scope", &scope, "Universal\0Chapter\0")) {
+                    rule.condition.scope = static_cast<game::StateVariableScope>(scope);
+                    context.markDirty();
+                }
+            }
+            if (rule.condition.type == game::DialogueConditionType::IntCompare) {
+                int op = static_cast<int>(rule.condition.op);
+                if (ImGui::Combo("Compare", &op, kCompareNames, 6)) {
+                    rule.condition.op = static_cast<game::DialogueCompareOp>(op);
+                    context.markDirty();
+                }
+                if (ImGui::DragInt("Value", &rule.condition.intValue)) { context.markDirty(); }
+            } else if (rule.condition.type == game::DialogueConditionType::BoolEquals ||
+                       rule.condition.type == game::DialogueConditionType::HasItem) {
+                if (ImGui::Checkbox("Expected", &rule.condition.boolValue)) { context.markDirty(); }
+            } else if (rule.condition.type == game::DialogueConditionType::HasMoney) {
+                if (ImGui::DragInt("Money", &rule.condition.intValue, 1.0f, 0, 999999)) { context.markDirty(); }
+            }
+            if (editString("Dialogue Graph Override", rule.graphId)) { context.markDirty(); }
+            int movementOverride = rule.movementOverride + 1;
+            if (ImGui::Combo("Movement", &movementOverride, "Unchanged\0Stationary\0Patrol\0Wander\0")) {
+                rule.movementOverride = movementOverride - 1;
+                context.markDirty();
+            }
+            if (editString("Animation", rule.animation)) { context.markDirty(); }
+            int visibility = rule.visibility + 1;
+            if (ImGui::Combo("Visibility", &visibility, "Unchanged\0Hidden\0Visible\0")) {
+                rule.visibility = visibility - 1;
+                context.markDirty();
+            }
+            int following = rule.following + 1;
+            if (ImGui::Combo("Following", &following, "Unchanged\0Stop Following\0Follow Player\0")) {
+                rule.following = following - 1;
+                context.markDirty();
+            }
+            ImGui::TextUnformatted("On Rule Activation");
+            for (int ei = 0; ei < static_cast<int>(rule.activateEffectIds.size()); ++ei) {
+                ImGui::PushID(9000 + ei);
+                std::string& effectId = rule.activateEffectIds[static_cast<std::size_t>(ei)];
+                if (ImGui::BeginCombo("Effect", effectId.empty() ? "(choose)" : effectId.c_str())) {
+                    for (const game::GameEffectDef& effect : context.effectDefs) {
+                        if (ImGui::Selectable(effect.id.c_str(), effect.id == effectId)) {
+                            effectId = effect.id;
+                            context.markDirty();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) {
+                    rule.activateEffectIds.erase(rule.activateEffectIds.begin() + ei);
+                    context.markDirty();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("+ Activation Effect")) {
+                rule.activateEffectIds.push_back(context.effectDefs.empty() ? std::string{} : context.effectDefs.front().id);
+                context.markDirty();
+            }
+            if (ImGui::Button("Delete Rule")) {
+                npc.stateRules.erase(npc.stateRules.begin() + i);
+                context.markDirty();
+                ImGui::TreePop();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (ImGui::Button("+ State Rule")) {
+        npc.stateRules.push_back({});
+        context.markDirty();
     }
 
     ImGui::Separator();

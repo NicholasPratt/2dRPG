@@ -1,0 +1,25 @@
+ADDIALOGUE 2
+id screen_1_npc_4_dialogue
+start start
+nodes 5
+node start 0 40 80 "" "" dialogue_1 -
+condition 0 5 - 0 1 0
+choices 0
+actions 0
+node dialogue_1 3 280 80 "NPC" "Hello." dialogue_2 dialogue_3
+condition 1 2 Crows_killed 2 1 1
+choices 0
+actions 0
+node end 5 520 80 "" "" - -
+condition 0 5 - 0 1 0
+choices 0
+actions 0
+node dialogue_2 1 710 120 "NPC" "Get more son!" end -
+condition 0 5 - 0 1 0
+choices 0
+actions 0
+node dialogue_3 1 920 120 "NPC" "you'll go far!" end -
+condition 0 5 - 0 1 0
+choices 0
+actions 0
+end

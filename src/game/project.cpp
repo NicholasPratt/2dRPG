@@ -26,6 +26,37 @@ bool validToken(const std::string& value)
     });
 }
 
+std::string tokenOrDash(const std::string& value)
+{
+    return value.empty() ? "-" : value;
+}
+
+void writeCondition(std::ostream& output, const DialogueCondition& condition)
+{
+    output << static_cast<int>(condition.type) << ' '
+           << static_cast<int>(condition.op) << ' '
+           << tokenOrDash(condition.variableId) << ' '
+           << condition.intValue << ' '
+           << (condition.boolValue ? 1 : 0) << ' '
+           << static_cast<int>(condition.scope);
+}
+
+bool readCondition(std::istream& input, DialogueCondition& condition)
+{
+    int type = 0;
+    int op = 0;
+    int boolValue = 0;
+    int scope = 0;
+    std::string variableId;
+    input >> type >> op >> variableId >> condition.intValue >> boolValue >> scope;
+    condition.type = static_cast<DialogueConditionType>(std::clamp(type, 0, 4));
+    condition.op = static_cast<DialogueCompareOp>(std::clamp(op, 0, 5));
+    condition.variableId = variableId == "-" ? std::string{} : variableId;
+    condition.boolValue = boolValue != 0;
+    condition.scope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+    return static_cast<bool>(input);
+}
+
 } // namespace
 
 bool saveGameProject(const std::filesystem::path& path, const GameProject& project, std::string* errorMessage)
@@ -56,7 +87,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 13\n";
+    output << "ADGAME 16\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -77,6 +108,8 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << type.aggroRange
                << ' ' << (type.killVariable.empty() ? "-" : type.killVariable)
                << ' ' << type.killAmount
+               << ' ' << static_cast<int>(type.killVariableScope)
+               << ' ' << type.defeatEffectIds.size()
                << ' ' << type.attacks.size() << "\n";
         for (const EnemyAttackDef& atk : type.attacks) {
             output << "enemy_attack"
@@ -88,6 +121,9 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                    << ' ' << (atk.animState.empty() ? "-" : atk.animState)
                    << ' ' << (atk.ammoSpriteId.empty() ? "-" : atk.ammoSpriteId)
                    << "\n";
+        }
+        for (const std::string& effectId : type.defeatEffectIds) {
+            output << "enemy_defeat_effect " << effectId << "\n";
         }
     }
     output << "weapon_defs " << project.weaponDefs.size() << "\n";
@@ -102,7 +138,21 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << (w.ammoTypeId.empty() ? "-" : w.ammoTypeId)
                << ' ' << (w.ammoSpriteId.empty() ? "-" : w.ammoSpriteId)
                << ' ' << w.ammoPerShot
-               << ' ' << static_cast<int>(w.wallBehavior) << "\n";
+               << ' ' << static_cast<int>(w.wallBehavior)
+               << ' ' << w.chargeTimeSeconds
+               << ' ' << w.chargeDamageScaleMin
+               << ' ' << w.chargeDamageScaleMax
+               << ' ' << w.overchargeTimeSeconds
+               << ' ' << static_cast<int>(w.overchargeEffect)
+               << ' ' << w.spreadStartDegrees
+               << ' ' << w.spreadEndDegrees
+               << ' ' << w.steadyTimeSeconds
+               << ' ' << w.pelletCount
+               << ' ' << w.falloffStartPx
+               << ' ' << w.falloffEndPx
+               << ' ' << w.falloffMinDamageScale
+               << ' ' << w.aimConeDegrees
+               << ' ' << (w.attackAnimState.empty() ? "-" : w.attackAnimState) << "\n";
     }
     output << "item_defs " << project.itemDefs.size() << "\n";
     for (const ItemDef& item : project.itemDefs) {
@@ -114,7 +164,11 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << item.value
                << ' ' << (item.stackable ? 1 : 0)
                << ' ' << (item.customType.empty() ? "-" : item.customType)
+               << ' ' << item.acquireEffectIds.size()
                << "\n";
+        for (const std::string& effectId : item.acquireEffectIds) {
+            output << "item_acquire_effect " << effectId << "\n";
+        }
     }
     output << "starting_weapon " << (project.startingWeaponId.empty() ? "-" : project.startingWeaponId) << "\n";
     output << "font " << std::quoted(project.fontPath.empty() ? std::string{"-"} : project.fontPath) << "\n";
@@ -123,7 +177,9 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         output << "state_def " << variable.id
                << ' ' << static_cast<int>(variable.type)
                << ' ' << variable.defaultInt
-               << ' ' << (variable.defaultBool ? 1 : 0) << "\n";
+               << ' ' << (variable.defaultBool ? 1 : 0)
+               << ' ' << static_cast<int>(variable.scope)
+               << ' ' << tokenOrDash(variable.chapterId) << "\n";
     }
     output << "effect_defs " << project.effectDefs.size() << "\n";
     for (const GameEffectDef& effect : project.effectDefs) {
@@ -131,7 +187,8 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << static_cast<int>(effect.type)
                << ' ' << effect.targetId
                << ' ' << effect.intValue
-               << ' ' << (effect.boolValue ? 1 : 0) << "\n";
+               << ' ' << (effect.boolValue ? 1 : 0)
+               << ' ' << static_cast<int>(effect.scope) << "\n";
     }
     output << "npc_types " << project.npcTypes.size() << "\n";
     for (const NpcTypeDef& npc : project.npcTypes) {
@@ -143,7 +200,9 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << npc.defaultSpeed
                << ' ' << (npc.defaultGraphId.empty() ? "-" : npc.defaultGraphId)
                << ' ' << npc.defaultDialogue.size()
-               << ' ' << npc.shopInventory.size() << "\n";
+               << ' ' << npc.shopInventory.size()
+               << ' ' << npc.talkEffectIds.size()
+               << ' ' << npc.stateRules.size() << "\n";
         for (const DialogueLine& dl : npc.defaultDialogue) {
             output << "dl " << std::quoted(dl.speaker) << ' ' << std::quoted(dl.text) << "\n";
         }
@@ -154,6 +213,22 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                    << ' ' << item.quantity
                    << ' ' << (item.unlimited ? 1 : 0)
                    << "\n";
+        }
+        for (const std::string& effectId : npc.talkEffectIds) {
+            output << "npc_talk_effect " << effectId << "\n";
+        }
+        for (const NpcStateRule& rule : npc.stateRules) {
+            output << "npc_rule ";
+            writeCondition(output, rule.condition);
+            output << ' ' << tokenOrDash(rule.graphId)
+                   << ' ' << rule.movementOverride
+                   << ' ' << tokenOrDash(rule.animation)
+                   << ' ' << rule.visibility
+                   << ' ' << rule.following
+                   << ' ' << rule.activateEffectIds.size() << "\n";
+            for (const std::string& effectId : rule.activateEffectIds) {
+                output << "npc_rule_effect " << effectId << "\n";
+            }
         }
     }
     output << "end\n";
@@ -171,7 +246,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 13) {
+    if (magic != "ADGAME" || version < 1 || version > 16) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -223,6 +298,12 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                       >> killVar >> type.killAmount;
                 type.killVariable = (killVar == "-") ? "" : killVar;
             }
+            int defeatEffectCount = 0;
+            if (version >= 16) {
+                int scope = 0;
+                input >> scope >> defeatEffectCount;
+                type.killVariableScope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+            }
             int numAttacks = 0;
             if (version >= 8) {
                 input >> numAttacks;
@@ -240,6 +321,14 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                         atk.ammoSpriteId = (ammoSprite == "-") ? "" : ammoSprite;
                         type.attacks.push_back(std::move(atk));
                     }
+                }
+            }
+            for (int ei = 0; ei < defeatEffectCount && input; ++ei) {
+                std::string effectKey;
+                std::string effectId;
+                input >> effectKey >> effectId;
+                if (effectKey == "enemy_defeat_effect") {
+                    type.defeatEffectIds.push_back(effectId);
                 }
             }
             if (!type.id.empty()) {
@@ -266,6 +355,21 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                 input >> wallBehavior;
                 w.wallBehavior = static_cast<ProjectileWallBehavior>(std::clamp(wallBehavior, 0, 1));
             }
+            if (version >= 14) {
+                int overchargeEffect = 0;
+                input >> w.chargeTimeSeconds >> w.chargeDamageScaleMin >> w.chargeDamageScaleMax
+                      >> w.overchargeTimeSeconds >> overchargeEffect
+                      >> w.spreadStartDegrees >> w.spreadEndDegrees >> w.steadyTimeSeconds
+                      >> w.pelletCount
+                      >> w.falloffStartPx >> w.falloffEndPx >> w.falloffMinDamageScale
+                      >> w.aimConeDegrees;
+                w.overchargeEffect = static_cast<OverchargeEffect>(std::clamp(overchargeEffect, 0, 3));
+            }
+            if (version >= 15) {
+                std::string attackAnim;
+                input >> attackAnim;
+                w.attackAnimState = (attackAnim == "-") ? "" : attackAnim;
+            }
             w.type = (weaponType == 1) ? WeaponType::Ranged : WeaponType::Melee;
             w.spriteId = (spriteId == "-") ? std::string{} : spriteId;
             w.ammoTypeId = (ammoTypeId == "-") ? std::string{} : ammoTypeId;
@@ -290,11 +394,23 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             std::string customType;
             int stackable = 1;
             input >> item.id >> std::quoted(item.name) >> type >> spriteId >> targetId >> item.value >> stackable >> customType;
+            int acquireEffectCount = 0;
+            if (version >= 16) {
+                input >> acquireEffectCount;
+            }
             item.type = static_cast<ItemDefType>(std::clamp(type, 0, 10));
             item.spriteId = (spriteId == "-") ? std::string{} : spriteId;
             item.targetId = (targetId == "-") ? std::string{} : targetId;
             item.stackable = stackable != 0;
             item.customType = (customType == "-") ? std::string{} : customType;
+            for (int ei = 0; ei < acquireEffectCount && input; ++ei) {
+                std::string effectKey;
+                std::string effectId;
+                input >> effectKey >> effectId;
+                if (effectKey == "item_acquire_effect") {
+                    item.acquireEffectIds.push_back(effectId);
+                }
+            }
             if (!item.id.empty()) {
                 loaded.itemDefs.push_back(std::move(item));
             }
@@ -312,6 +428,13 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             int type = 0;
             int defaultBool = 0;
             input >> variable.id >> type >> variable.defaultInt >> defaultBool;
+            if (version >= 16) {
+                int scope = 0;
+                std::string chapterId;
+                input >> scope >> chapterId;
+                variable.scope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+                variable.chapterId = chapterId == "-" ? std::string{} : chapterId;
+            }
             variable.type = static_cast<StateVariableType>(std::clamp(type, 0, 2));
             variable.defaultBool = defaultBool != 0;
             if (!variable.id.empty()) {
@@ -326,6 +449,11 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             int type = 0;
             int boolValue = 0;
             input >> effect.id >> type >> effect.targetId >> effect.intValue >> boolValue;
+            if (version >= 16) {
+                int scope = 0;
+                input >> scope;
+                effect.scope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+            }
             effect.type = static_cast<GameEffectType>(std::clamp(type, 0, 4));
             effect.boolValue = boolValue != 0;
             if (!effect.id.empty()) {
@@ -355,6 +483,11 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                 if (version >= 11) {
                     input >> shopCount;
                 }
+                int talkEffectCount = 0;
+                int ruleCount = 0;
+                if (version >= 16) {
+                    input >> talkEffectCount >> ruleCount;
+                }
                 for (int di = 0; di < dlCount && input; ++di) {
                     std::string dlKey;
                     DialogueLine dl;
@@ -377,6 +510,38 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                         shopItem.sellPrice = std::max(0, shopItem.sellPrice);
                         npc.shopInventory.push_back(std::move(shopItem));
                     }
+                }
+                for (int ei = 0; ei < talkEffectCount && input; ++ei) {
+                    std::string effectKey;
+                    std::string effectId;
+                    input >> effectKey >> effectId;
+                    if (effectKey == "npc_talk_effect") {
+                        npc.talkEffectIds.push_back(effectId);
+                    }
+                }
+                for (int ri = 0; ri < ruleCount && input; ++ri) {
+                    std::string ruleKey;
+                    NpcStateRule rule;
+                    std::string graphId;
+                    std::string animation;
+                    int effectCount = 0;
+                    input >> ruleKey;
+                    if (ruleKey != "npc_rule" || !readCondition(input, rule.condition)) {
+                        break;
+                    }
+                    input >> graphId >> rule.movementOverride >> animation
+                          >> rule.visibility >> rule.following >> effectCount;
+                    rule.graphId = graphId == "-" ? std::string{} : graphId;
+                    rule.animation = animation == "-" ? std::string{} : animation;
+                    for (int ei = 0; ei < effectCount && input; ++ei) {
+                        std::string effectKey;
+                        std::string effectId;
+                        input >> effectKey >> effectId;
+                        if (effectKey == "npc_rule_effect") {
+                            rule.activateEffectIds.push_back(effectId);
+                        }
+                    }
+                    npc.stateRules.push_back(std::move(rule));
                 }
             }
             if (!npc.id.empty()) {

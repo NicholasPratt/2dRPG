@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/state_types.hpp"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -56,6 +58,7 @@ struct DialogueCondition {
     DialogueConditionType type = DialogueConditionType::Always;
     DialogueCompareOp op = DialogueCompareOp::GreaterOrEqual;
     std::string variableId;
+    StateVariableScope scope = StateVariableScope::Universal;
     int intValue = 0;
     bool boolValue = true;
 };
@@ -63,6 +66,7 @@ struct DialogueCondition {
 struct DialogueAction {
     DialogueActionType type = DialogueActionType::AddInt;
     std::string targetId;
+    StateVariableScope scope = StateVariableScope::Universal;
     std::string textValue;
     int intValue = 1;
     bool boolValue = true;

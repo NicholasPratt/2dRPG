@@ -111,6 +111,39 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
         if (ImGui::DragFloat("Range (px)", &range_, 1.0f, 8.0f, 1000.0f)) { context.markDirty(); }
         if (ImGui::DragFloat("Cooldown (s)", &attackCooldown_, 0.01f, 0.05f, 5.0f)) { context.markDirty(); }
 
+        // Player animation action played when attacking with this weapon.
+        {
+            const std::string current(attackAnim_.data());
+            const char* defaultLabel = "Default (attack_1 melee / cast ranged)";
+            const char* preview = current.empty() ? defaultLabel : attackAnim_.data();
+            if (ImGui::BeginCombo("Attack animation", preview)) {
+                if (ImGui::Selectable(defaultLabel, current.empty())) {
+                    copyToBuffer(attackAnim_, "");
+                    context.markDirty();
+                }
+                static const char* kAttackAnimOptions[] = {
+                    "attack_1", "attack_2", "attack_3", "attack_4", "attack_5",
+                    "attack_6", "attack_7", "attack_8", "attack_9", "attack_10",
+                    "attack_11", "attack_12", "attack_13", "attack_14", "attack_15",
+                    "attack_16", "attack_17", "attack_18", "attack_19", "attack_20",
+                    "cast",
+                };
+                bool currentListed = current.empty();
+                for (const char* option : kAttackAnimOptions) {
+                    if (ImGui::Selectable(option, current == option)) {
+                        copyToBuffer(attackAnim_, option);
+                        context.markDirty();
+                    }
+                    if (current == option) { currentListed = true; }
+                }
+                if (!currentListed) {
+                    ImGui::Selectable(current.c_str(), true);  // keep an unknown custom value visible
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which player sprite animation plays when attacking with this weapon.\nMust match a frame action type authored in the Sprite editor (attack_1 through attack_20, or cast).");
+        }
+
         if (weaponType_ == 1) {
             ImGui::Separator();
             ImGui::TextDisabled("Ranged");
@@ -120,6 +153,46 @@ std::optional<std::filesystem::path> WeaponEditorPanel::draw(EditorContext& cont
             const char* wallItems[] = { "Break (arrow/bullet)", "Rebound (slingshot stone)" };
             if (ImGui::Combo("On wall hit", &wallBehavior_, wallItems, 2)) { context.markDirty(); }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Break: projectile vanishes on a wall.\nRebound: bounces, loses energy, then settles on the ground.");
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Draw / Charge");
+            ImGui::TextDisabled("Charge or steady time > 0 makes this a hold-to-draw weapon: hold fire to draw, release to shoot.");
+            if (ImGui::DragFloat("Charge time (s)", &chargeTime_, 0.01f, 0.0f, 10.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to reach full draw. 0 = fires instantly on press.");
+            if (ImGui::DragFloat("Damage scale (tap)", &chargeDamageMin_, 0.01f, 0.0f, 10.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage multiplier for an instant tap shot.");
+            if (ImGui::DragFloat("Damage scale (full draw)", &chargeDamageMax_, 0.01f, 0.0f, 10.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage multiplier at full draw (slingshot: e.g. 2.0).");
+            if (ImGui::DragFloat("Overhold grace (s)", &overchargeTime_, 0.01f, 0.0f, 10.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the weapon can be held past full draw before the overhold effect kicks in.");
+            const char* overItems[] = { "None (hold forever)", "Wild shot (accuracy decays)", "Misfire (shot fizzles)", "Break (weapon breaks)" };
+            if (ImGui::Combo("Overhold effect", &overchargeEffect_, overItems, 4)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("What happens when held past full draw + grace.\nWild shot: spread keeps growing.\nMisfire: ammo spent, shot does nothing.\nBreak: the weapon is destroyed and unequipped.");
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Accuracy");
+            if (ImGui::DragFloat("Spread start (deg)", &spreadStart_, 0.1f, 0.0f, 180.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shot direction error when fired immediately. Shotgun: high. 0 = perfectly straight.");
+            if (ImGui::DragFloat("Spread end (deg)", &spreadEnd_, 0.1f, 0.0f, 180.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spread after holding steady for the full steady time. Sniper: start high, end 0.");
+            if (ImGui::DragFloat("Steady time (s)", &steadyTime_, 0.01f, 0.0f, 10.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold time for spread to move from start to end. 0 = spread stays at start value.");
+            if (ImGui::DragInt("Pellets per shot", &pelletCount_, 0.1f, 1, 24)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Projectiles per shot, each with its own spread roll (shotgun: 6+). Ammo cost is per shot, not per pellet.");
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Damage falloff");
+            if (ImGui::DragFloat("Falloff start (px)", &falloffStart_, 1.0f, 0.0f, 1000.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Full damage up to this flight distance. 0 = no falloff.");
+            if (ImGui::DragFloat("Falloff end (px)", &falloffEnd_, 1.0f, 0.0f, 1000.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance where damage bottoms out at the minimum scale.");
+            if (ImGui::DragFloat("Min damage scale", &falloffMinScale_, 0.01f, 0.0f, 1.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage multiplier at and beyond falloff end (shotgun: e.g. 0.2).");
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Auto-aim");
+            if (ImGui::DragFloat("Aim cone (deg)", &aimCone_, 0.5f, 0.0f, 360.0f)) { context.markDirty(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enemies inside this cone (centred on player facing, out to weapon range) are selectable targets.\nTab/Q or controller bumpers cycle targets. 0 disables auto-aim.");
         }
 
         ImGui::Separator();
@@ -204,8 +277,22 @@ void WeaponEditorPanel::syncInspectorFromSelected(const EditorContext& context)
     copyToBuffer(spriteId_, w.spriteId);
     copyToBuffer(ammoTypeId_, w.ammoTypeId);
     copyToBuffer(ammoSpriteId_, w.ammoSpriteId);
+    copyToBuffer(attackAnim_, w.attackAnimState);
     ammoPerShot_ = w.ammoPerShot;
     wallBehavior_ = (w.wallBehavior == game::ProjectileWallBehavior::Rebound) ? 1 : 0;
+    chargeTime_ = w.chargeTimeSeconds;
+    chargeDamageMin_ = w.chargeDamageScaleMin;
+    chargeDamageMax_ = w.chargeDamageScaleMax;
+    overchargeTime_ = w.overchargeTimeSeconds;
+    overchargeEffect_ = static_cast<int>(w.overchargeEffect);
+    spreadStart_ = w.spreadStartDegrees;
+    spreadEnd_ = w.spreadEndDegrees;
+    steadyTime_ = w.steadyTimeSeconds;
+    pelletCount_ = w.pelletCount;
+    falloffStart_ = w.falloffStartPx;
+    falloffEnd_ = w.falloffEndPx;
+    falloffMinScale_ = w.falloffMinDamageScale;
+    aimCone_ = w.aimConeDegrees;
 }
 
 void WeaponEditorPanel::writeInspectorToSelected(EditorContext& context)
@@ -223,8 +310,22 @@ void WeaponEditorPanel::writeInspectorToSelected(EditorContext& context)
     w.spriteId = spriteId_.data();
     w.ammoTypeId = ammoTypeId_.data();
     w.ammoSpriteId = ammoSpriteId_.data();
+    w.attackAnimState = attackAnim_.data();
     w.ammoPerShot = ammoPerShot_;
     w.wallBehavior = (wallBehavior_ == 1) ? game::ProjectileWallBehavior::Rebound : game::ProjectileWallBehavior::Break;
+    w.chargeTimeSeconds = std::max(0.0f, chargeTime_);
+    w.chargeDamageScaleMin = std::max(0.0f, chargeDamageMin_);
+    w.chargeDamageScaleMax = std::max(0.0f, chargeDamageMax_);
+    w.overchargeTimeSeconds = std::max(0.0f, overchargeTime_);
+    w.overchargeEffect = static_cast<game::OverchargeEffect>(std::clamp(overchargeEffect_, 0, 3));
+    w.spreadStartDegrees = std::max(0.0f, spreadStart_);
+    w.spreadEndDegrees = std::max(0.0f, spreadEnd_);
+    w.steadyTimeSeconds = std::max(0.0f, steadyTime_);
+    w.pelletCount = std::max(1, pelletCount_);
+    w.falloffStartPx = std::max(0.0f, falloffStart_);
+    w.falloffEndPx = std::max(0.0f, falloffEnd_);
+    w.falloffMinDamageScale = std::clamp(falloffMinScale_, 0.0f, 1.0f);
+    w.aimConeDegrees = std::clamp(aimCone_, 0.0f, 360.0f);
 }
 
 } // namespace adventure::editor

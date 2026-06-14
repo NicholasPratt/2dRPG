@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "imgui.h"
+#include "stb_image.h"
 
 namespace adventure::editor {
 namespace {
@@ -37,6 +38,26 @@ enum ToolIndex {
 constexpr const char* kToolNames[] = {
     "Pen", "Mirror", "Bucket", "Eraser", "Stroke", "Line",
     "Rect", "Circle", "Polygon", "Move", "Select", "Picker", "Shade",
+};
+
+constexpr const char* kToolShortcuts[] = {
+    "P", "Y", "B", "E", "D", "L", "R", "C", "G", "M", "S", "I", "H",
+};
+
+constexpr const char* kToolIconFiles[] = {
+    "tool_pen.png",
+    "tool_mirror.png",
+    "tool_bucket.png",
+    "tool_eraser.png",
+    "tool_stroke.png",
+    "tool_line.png",
+    "tool_rect.png",
+    "tool_circle.png",
+    "tool_polygon.png",
+    "tool_move.png",
+    "tool_select.png",
+    "tool_picker.png",
+    "tool_shade.png",
 };
 
 constexpr int kMinCanvasSize = 1;
@@ -449,6 +470,84 @@ void drawToolGlyph(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, i
     }
 }
 
+struct ToolIcon {
+    int width = 0;
+    int height = 0;
+    std::vector<unsigned char> alpha;
+};
+
+const ToolIcon& toolIcon(int toolIndex)
+{
+    static const std::array<ToolIcon, std::size(kToolIconFiles)> icons = [] {
+        std::array<ToolIcon, std::size(kToolIconFiles)> loadedIcons;
+        for (int i = 0; i < static_cast<int>(loadedIcons.size()); ++i) {
+            const std::filesystem::path relativePath =
+                std::filesystem::path("assets/editor") / kToolIconFiles[i];
+            std::filesystem::path iconPath = relativePath;
+            if (!std::filesystem::exists(iconPath)) {
+                iconPath = std::filesystem::path(ADVENTURE_SOURCE_ROOT) / relativePath;
+            }
+
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            unsigned char* rgba =
+                stbi_load(iconPath.string().c_str(), &width, &height, &channels, 4);
+            if (rgba == nullptr || width <= 0 || height <= 0) {
+                stbi_image_free(rgba);
+                continue;
+            }
+
+            ToolIcon& icon = loadedIcons[static_cast<std::size_t>(i)];
+            icon.width = width;
+            icon.height = height;
+            icon.alpha.resize(static_cast<std::size_t>(width * height));
+            for (int pixel = 0; pixel < width * height; ++pixel) {
+                icon.alpha[static_cast<std::size_t>(pixel)] = rgba[pixel * 4 + 3];
+            }
+            stbi_image_free(rgba);
+        }
+        return loadedIcons;
+    }();
+
+    return icons[static_cast<std::size_t>(toolIndex)];
+}
+
+bool drawToolIcon(ImDrawList* drawList, const ImVec2& min, int toolIndex, ImU32 color)
+{
+    const ToolIcon& icon = toolIcon(toolIndex);
+    if (icon.alpha.empty()) {
+        return false;
+    }
+
+    const unsigned int tintAlpha = (color >> IM_COL32_A_SHIFT) & 0xffu;
+    for (int y = 0; y < icon.height; ++y) {
+        int x = 0;
+        while (x < icon.width) {
+            const unsigned char alpha =
+                icon.alpha[static_cast<std::size_t>(y * icon.width + x)];
+            if (alpha == 0) {
+                ++x;
+                continue;
+            }
+
+            const int runStart = x;
+            while (x < icon.width &&
+                   icon.alpha[static_cast<std::size_t>(y * icon.width + x)] == alpha) {
+                ++x;
+            }
+            const ImU32 pixelColor =
+                (color & ~IM_COL32_A_MASK) |
+                ((static_cast<unsigned int>(alpha) * tintAlpha / 255u) << IM_COL32_A_SHIFT);
+            drawList->AddRectFilled(
+                {min.x + static_cast<float>(runStart), min.y + static_cast<float>(y)},
+                {min.x + static_cast<float>(x), min.y + static_cast<float>(y + 1)},
+                pixelColor);
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 void SpriteEditorPanel::draw(EditorContext& context)
@@ -752,11 +851,18 @@ void SpriteEditorPanel::drawTopBar()
             ImGui::SameLine();
         }
         ImGui::NewLine();
-        ImGui::TextUnformatted("Resizes all frames and layers using nearest-neighbor scaling.");
+        ImGui::RadioButton("Keep pixels (art stays centred)", &resizeMode_, 0);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels keep their size. Growing adds blank space around the art\n(room for sword swings etc.); shrinking crops the edges evenly.");
+        ImGui::RadioButton("Scale pixels (stretch art)", &resizeMode_, 1);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescales all frames and layers to the new size with nearest-neighbor sampling.");
 
         if (ImGui::Button("Resize", ImVec2(120.0f, 0.0f))) {
             recordUndoState();
-            resizeSprite(resizeSpriteSize_[0], resizeSpriteSize_[1]);
+            if (resizeMode_ == 0) {
+                resizeSpriteCanvas(resizeSpriteSize_[0], resizeSpriteSize_[1]);
+            } else {
+                resizeSprite(resizeSpriteSize_[0], resizeSpriteSize_[1]);
+            }
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -946,8 +1052,20 @@ void SpriteEditorPanel::drawToolButton(const char* label, const char* tooltip, i
 {
     const bool selected = selectedTool_ == toolIndex;
     const ImVec2 buttonSize(42.0f, 38.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, selected ? IM_COL32(236, 203, 49, 255) : IM_COL32(56, 61, 67, 255));
-    ImGui::PushStyleColor(ImGuiCol_Text, selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255));
+    const ImU32 selectedColor = IM_COL32(236, 203, 49, 255);
+    const ImU32 normalColor = IM_COL32(50, 55, 61, 255);
+    const ImU32 hoveredColor = IM_COL32(67, 73, 81, 255);
+    const ImU32 activeColor = IM_COL32(78, 85, 94, 255);
+    const ImU32 foregroundColor =
+        selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, selected ? selectedColor : normalColor);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, selected ? selectedColor : hoveredColor);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, selected ? selectedColor : activeColor);
+    ImGui::PushStyleColor(ImGuiCol_Border,
+        selected ? IM_COL32(255, 226, 92, 255) : IM_COL32(85, 92, 101, 255));
     const std::string buttonId = std::string("##ToolButton") + label;
     if (ImGui::Button(buttonId.c_str(), buttonSize)) {
         if (selectedTool_ != toolIndex) {
@@ -955,16 +1073,20 @@ void SpriteEditorPanel::drawToolButton(const char* label, const char* tooltip, i
         }
         selectedTool_ = toolIndex;
     }
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(2);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
-    const ImU32 iconColor = selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255);
-    drawToolGlyph(drawList, min, max, toolIndex, iconColor);
+    const ImVec2 iconMin(min.x + 5.0f, min.y + 3.0f);
+    if (!drawToolIcon(drawList, iconMin, toolIndex, foregroundColor)) {
+        const ImVec2 iconMax(max.x - 5.0f, max.y - 3.0f);
+        drawToolGlyph(drawList, iconMin, iconMax, toolIndex, foregroundColor);
+    }
 
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", tooltip);
+        ImGui::SetTooltip("%s tool (%s)", tooltip, kToolShortcuts[toolIndex]);
     }
 }
 
@@ -1140,7 +1262,11 @@ void SpriteEditorPanel::drawRightInspector(EditorContext& context)
         ImGui::PushID(selectedFrame_);
 
         constexpr const char* kFrameTypes[] = {
-            "idle", "walk", "run", "attack_1", "attack_2", "attack_3",
+            "idle", "walk", "run",
+            "attack_1", "attack_2", "attack_3", "attack_4", "attack_5",
+            "attack_6", "attack_7", "attack_8", "attack_9", "attack_10",
+            "attack_11", "attack_12", "attack_13", "attack_14", "attack_15",
+            "attack_16", "attack_17", "attack_18", "attack_19", "attack_20",
             "cast", "hit_react", "guard", "interact", "conversation", "death",
             "fall", "sleep", "jump", "land", "pickup", "use_item",
             "hurt_loop", "stunned", "victory", "emote", "climb", "swim",
@@ -1273,6 +1399,23 @@ void SpriteEditorPanel::drawFrames()
         "attack_1",
         "attack_2",
         "attack_3",
+        "attack_4",
+        "attack_5",
+        "attack_6",
+        "attack_7",
+        "attack_8",
+        "attack_9",
+        "attack_10",
+        "attack_11",
+        "attack_12",
+        "attack_13",
+        "attack_14",
+        "attack_15",
+        "attack_16",
+        "attack_17",
+        "attack_18",
+        "attack_19",
+        "attack_20",
         "cast",
         "hit_react",
         "guard",
@@ -1919,19 +2062,39 @@ void SpriteEditorPanel::handleShortcuts()
         return;
     }
 
-    if (!primaryShortcutDown()) {
+    if (primaryShortcutDown()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Z)) {
+            undo();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_C)) {
+            copySelection();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_V)) {
+            pasteSelection();
+        }
         return;
     }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        undo();
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_C)) {
-        copySelection();
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_V)) {
-        pasteSelection();
-    }
+    auto selectTool = [&](int tool) {
+        if (selectedTool_ != tool) {
+            cancelPolygon();
+            selectedTool_ = tool;
+        }
+    };
+
+    if (ImGui::IsKeyPressed(ImGuiKey_P)) { selectTool(kToolPen); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_Y)) { selectTool(kToolMirror); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_B)) { selectTool(kToolBucket); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_E)) { selectTool(kToolEraser); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_D)) { selectTool(kToolStroke); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_L)) { selectTool(kToolLine); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_R)) { selectTool(kToolRect); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_C)) { selectTool(kToolCircle); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_G)) { selectTool(kToolPolygon); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_M)) { selectTool(kToolMove); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_S)) { selectTool(kToolSelect); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_I)) { selectTool(kToolPicker); }
+    else if (ImGui::IsKeyPressed(ImGuiKey_H)) { selectTool(kToolShade); }
 }
 
 bool SpriteEditorPanel::primaryShortcutDown() const
@@ -2154,6 +2317,76 @@ void SpriteEditorPanel::resizeSprite(int newWidth, int newHeight)
     clearSelection();
 }
 
+void SpriteEditorPanel::resizeSpriteCanvas(int newWidth, int newHeight)
+{
+    newWidth = clampDimension(newWidth);
+    newHeight = clampDimension(newHeight);
+
+    const int oldWidth = document_.canvasSize[0];
+    const int oldHeight = document_.canvasSize[1];
+    if (oldWidth == newWidth && oldHeight == newHeight) {
+        return;
+    }
+
+    // Pixels keep their size: growing adds equal blank margins around the
+    // existing art, shrinking crops the edges evenly, so the sprite stays
+    // centred on the new canvas.
+    const int offsetX = (newWidth - oldWidth) / 2;
+    const int offsetY = (newHeight - oldHeight) / 2;
+
+    const auto oldCels = std::move(document_.cels);
+    document_.canvasSize = {newWidth, newHeight};
+    document_.gridSize[0] = std::min(document_.gridSize[0], newWidth);
+    document_.gridSize[1] = std::min(document_.gridSize[1], newHeight);
+    document_.pivot[0] = std::clamp(document_.pivot[0] + offsetX, 0, newWidth - 1);
+    document_.pivot[1] = std::clamp(document_.pivot[1] + offsetY, 0, newHeight - 1);
+
+    if (document_.bodyGuide[2] > 0 && document_.bodyGuide[3] > 0) {
+        document_.bodyGuide[0] = std::clamp(document_.bodyGuide[0] + offsetX, 0, newWidth);
+        document_.bodyGuide[1] = std::clamp(document_.bodyGuide[1] + offsetY, 0, newHeight);
+        document_.bodyGuide[2] = std::clamp(document_.bodyGuide[2], 0, newWidth - document_.bodyGuide[0]);
+        document_.bodyGuide[3] = std::clamp(document_.bodyGuide[3], 0, newHeight - document_.bodyGuide[1]);
+    }
+
+    document_.cels.assign(document_.frames.size(), std::vector<SpriteCel>(document_.layers.size()));
+    for (int frameIndex = 0; frameIndex < static_cast<int>(document_.frames.size()); ++frameIndex) {
+        SpriteFrame& frame = document_.frames[frameIndex];
+        frame.x = std::clamp(frame.x + offsetX, 0, newWidth - 1);
+        frame.y = std::clamp(frame.y + offsetY, 0, newHeight - 1);
+        frame.width = std::clamp(frame.width, 1, newWidth - frame.x);
+        frame.height = std::clamp(frame.height, 1, newHeight - frame.y);
+
+        for (int layerIndex = 0; layerIndex < static_cast<int>(document_.layers.size()); ++layerIndex) {
+            SpriteCel& newCel = document_.cels[frameIndex][layerIndex];
+            newCel.pixels.assign(static_cast<std::size_t>(newWidth * newHeight), 0u);
+            if (frameIndex >= static_cast<int>(oldCels.size()) ||
+                layerIndex >= static_cast<int>(oldCels[frameIndex].size())) {
+                continue;
+            }
+            const SpriteCel& oldCel = oldCels[frameIndex][layerIndex];
+
+            for (int y = 0; y < oldHeight; ++y) {
+                const int destY = y + offsetY;
+                if (destY < 0 || destY >= newHeight) {
+                    continue;
+                }
+                for (int x = 0; x < oldWidth; ++x) {
+                    const int destX = x + offsetX;
+                    if (destX < 0 || destX >= newWidth) {
+                        continue;
+                    }
+                    newCel.pixels[static_cast<std::size_t>(destY) * newWidth + destX] =
+                        oldCel.pixels[static_cast<std::size_t>(y) * oldWidth + x];
+                }
+            }
+        }
+    }
+
+    trackedCanvasSize_ = document_.canvasSize;
+    resizeSpriteSize_ = document_.canvasSize;
+    clearSelection();
+}
+
 void SpriteEditorPanel::resizeCanvasStorage(int oldWidth, int oldHeight, int newWidth, int newHeight)
 {
     const auto oldCels = std::move(document_.cels);
@@ -2228,7 +2461,8 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
             if (hoveredPixel) {
                 recordUndoState();
                 SpriteCel& cel = activeCel();
-                const unsigned int color = currentPaletteColor(dragUsesSecondaryColor_);
+                const unsigned int color =
+                    dragUsesSecondaryColor_ ? 0u : currentPaletteColor(false);
                 if (selectedTool_ == kToolLine) {
                     drawLine(cel, dragStartPixel_[0], dragStartPixel_[1], x, y, color, false);
                 } else if (selectedTool_ == kToolRect) {
@@ -2249,7 +2483,18 @@ void SpriteEditorPanel::handleCanvasInput(const ImVec2& canvasOrigin, float pixe
         }
         if (rightClicked) {
             recordUndoState();
-            applyClickTool(x, y, true);
+            if (selectedTool_ == kToolPicker) {
+                applyClickTool(x, y, true);
+            } else if (selectedTool_ == kToolBucket) {
+                floodFill(activeCel(), x, y, 0u);
+            } else {
+                const int size = std::clamp(brushSize_, 1, 4);
+                for (int offsetY = 0; offsetY < size; ++offsetY) {
+                    for (int offsetX = 0; offsetX < size; ++offsetX) {
+                        setPixel(activeCel(), x + offsetX, y + offsetY, 0u);
+                    }
+                }
+            }
         }
         return;
     }
@@ -2419,7 +2664,10 @@ void SpriteEditorPanel::paintStroke(int x0, int y0, int x1, int y1, bool useSeco
 {
     SpriteCel& cel = activeCel();
     const bool mirror = selectedTool_ == kToolMirror;
-    const unsigned int color = selectedTool_ == kToolEraser ? 0u : currentPaletteColor(useSecondaryColor);
+    const unsigned int color =
+        selectedTool_ == kToolEraser || useSecondaryColor
+        ? 0u
+        : currentPaletteColor(false);
     drawLine(cel, x0, y0, x1, y1, color, mirror);
 }
 

@@ -61,6 +61,8 @@ target_compile_definitions(adventure_editor PRIVATE
     ADVENTURE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 
+file(COPY assets/editor DESTINATION ${CMAKE_BINARY_DIR}/assets)
+
 target_link_libraries(adventure_editor PUBLIC
     imgui
     adventure_game

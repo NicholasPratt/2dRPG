@@ -62,7 +62,7 @@ The asset architecture separates reusable game-library assets from chapter usage
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
       map.hpp/.cpp                  # TileMap type and .admap load/save (v10 adds door locked SFX)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
-      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v13)
+      project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v15)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
       state.hpp/.cpp                # GameState runtime store and .adstate save/load
       tileset.hpp/.cpp              # TilesetDef / TileDef types and .tileset.json load/save
@@ -76,7 +76,7 @@ imgui                    Static Dear ImGui library.
 adventure_game           Runtime-facing game/data code (chapter, dialogue graph, project, map, path, sprite metadata, state, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate (v2, incl. defeated enemies), and project state/effect/enemy-type/weapon definitions (ADGAME v13) through runtime code.
+adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate, scoped dialogue conditions/actions, and project state/event/NPC-rule definitions (ADGAME v16).
 adventure_game_window    GLFW/OpenGL runtime game window with SDL2/Vorbis music (built when OpenGL, GLFW, SDL2, and Vorbisfile are found).
 adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
@@ -151,7 +151,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 
 Implemented in `src/game/project.hpp/.cpp`.
 
-`assets/game/project.adgame` (current version: **13**) is the project-level game-library manifest. It stores:
+`assets/game/project.adgame` (current version: **16**) is the project-level game-library manifest. It stores:
 
 ```cpp
 enum class EnemyAttackType { Contact = 0, Melee = 1, Ranged = 2 };
@@ -248,10 +248,10 @@ struct GameProject {
 };
 ```
 
-Format (ADGAME 13):
+Format (ADGAME 16):
 
 ```text
-ADGAME 13
+ADGAME 16
 id game
 playable hero
 characters 1
@@ -262,7 +262,7 @@ enemy_types 1
 enemy_type crow enemy_1 3 1 12.0 12.0 1.0 64.0 0.25 0.2 120.0 Crows_Killed 1 1
 enemy_attack 2 1 200.0 2.0 120.0 attack_1 ammo_stone
 weapon_defs 1
-weapon_def slingshot 1 1 96.0 0.35 240.0 slingshot ammo_stone ammo_stone 1 1
+weapon_def slingshot 1 1 96.0 0.35 240.0 slingshot ammo_stone ammo_stone 1 1 1.2 0.5 2.0 2.0 1 4.0 1.0 1.2 1 0 0 1.0 40.0 attack_2
 item_defs 1
 item_def gold "Gold" 4 gold Money 1 1 -
 starting_weapon slingshot
@@ -282,9 +282,16 @@ end
 `enemy_type` line fields: `id spriteId maxHealth contactDamage hitboxW hitboxH contactCooldown speed knockbackResistance hitstunSeconds aggroRange killVariable killAmount attackCount` (knockbackResistance..killAmount present only in v12+; `killVariable` is `-` when empty)  
 `enemy_attack` fields: `type damage range cooldown projectileSpeed animState ammoSpriteId` (type: 0=Contact, 1=Melee, 2=Ranged)
 
-`weapon_def` line fields: `id type damage range cooldown projSpeed spriteId ammoTypeId [ammoSpriteId(v9+)] ammoPerShot [wallBehavior(v13+)]` (wallBehavior: 0=Break, 1=Rebound)
+`weapon_def` line fields: `id type damage range cooldown projSpeed spriteId ammoTypeId [ammoSpriteId(v9+)] ammoPerShot [wallBehavior(v13+)] [chargeTime chargeScaleMin chargeScaleMax overchargeTime overchargeEffect spreadStart spreadEnd steadyTime pellets falloffStart falloffEnd falloffMinScale aimCone (v14+)] [attackAnim(v15+)]` (wallBehavior: 0=Break, 1=Rebound; overchargeEffect: 0=None, 1=WildShot, 2=Misfire, 3=Break; attackAnim: player animation action played on attack, `-` = default `attack_1` melee / `cast` ranged)
 
-Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs), v9 (weapon projectile sprites/ammo-per-shot), v10 (item_defs), v11 (NPC shop inventory), v12 (enemy knockback resistance, hitstun, aggro range, kill-counter variable/amount), v13 (weapon projectile wall behavior: break vs rebound).
+Ranged feel stats (`WeaponDef`, ADGAME v14+) let one stat block express different weapon archetypes:
+
+- **Hold-to-draw:** `chargeTimeSeconds > 0` or `steadyTimeSeconds > 0` makes the ranged button a hold/release control. Damage scales from `chargeDamageScaleMin` (tap) to `chargeDamageScaleMax` (full draw) over `chargeTimeSeconds`; shot spread interpolates from `spreadStartDegrees` to `spreadEndDegrees` over `steadyTimeSeconds`. Holding past full draw + `overchargeTimeSeconds` triggers `overchargeEffect`: WildShot (spread keeps growing), Misfire (release fizzles the shot, ammo spent), or Break (the weapon is destroyed and unequipped).
+- **Pellets + falloff:** `pelletCount` projectiles per shot, each with an independent spread roll (ammo cost is per shot); impact damage scales from full at `falloffStartPx` down to `falloffMinDamageScale` at `falloffEndPx` (`falloffStartPx <= 0` disables falloff).
+- **Auto-aim:** living enemies within weapon range and inside `aimConeDegrees` (full angle, centred on player facing) are selectable targets; `<= 0` disables auto-aim.
+- Archetype examples — slingshot: charge 1.2 s, damage ×0.5→×2.0, overhold WildShot or Break, Rebound walls; shotgun: instant, 6 pellets, ~25° spread, falloff 48→160 px to ×0.2; sniper: steady 1.5 s, spread 18°→0°, narrow cone, no falloff.
+
+Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs), v9 (weapon projectile sprites/ammo-per-shot), v10 (item_defs), v11 (NPC shop inventory), v12 (enemy knockback resistance, hitstun, aggro range, kill-counter variable/amount), v13 (weapon projectile wall behavior), v14 (ranged feel stats), v15 (per-weapon attack animation), v16 (scoped variables/effects, event hooks, NPC state rules).
 
 Editor behavior:
 
@@ -292,9 +299,11 @@ Editor behavior:
 - `EnemyPathEditorPanel::saveProjectEnemyTypes` saves reusable enemy type definitions (including attack defs) into `project.adgame`.
 - `NpcEditorPanel::saveProjectNpcTypes` saves reusable NPC type definitions into `project.adgame`.
 - NPC type definitions can include shop inventory rows. Each row references a project item ID and stores buy price, sell price, stock count, and unlimited-stock flag.
-- `WeaponEditorPanel` saves weapon definitions and the project starting weapon into `project.adgame`. For ranged weapons it exposes an "On wall hit" combo (Break / Rebound) that sets `WeaponDef::wallBehavior`.
+- `WeaponEditorPanel` saves weapon definitions and the project starting weapon into `project.adgame`. For ranged weapons it exposes an "On wall hit" combo (Break / Rebound) that sets `WeaponDef::wallBehavior`, plus Draw/Charge, Accuracy, Damage falloff, and Auto-aim sections (with tooltips) covering the ADGAME v14 ranged feel stats. An "Attack animation" combo (`attack_1` through `attack_20`, `cast`, or default) sets `WeaponDef::attackAnimState`, the player sprite action the runtime plays when attacking with that weapon.
 - The top-level `Items` tab saves project-wide item definitions into `project.adgame`. Item categories cover common RPG types plus a custom category string for user-defined item groups. The tab can add missing common defaults and warns on empty or duplicate item IDs.
 - The Quest State tab in `EditorApp` saves state variable definitions and reusable effect definitions into `project.adgame`.
+- Quest State uses a master-detail variable list. Variable-reference fields can open a type-filtered picker; Save and Return persists definitions, applies the selected ID/scope, and restores the prior editor screen.
+- ADGAME v16 adds Universal/Chapter variable scope, scoped reusable effects, item-acquire and enemy-defeat effect hooks, NPC talk effects, and first-match conditional NPC rules for dialogue graph, movement, visibility, following, animation, and activation effects. ADDIALOGUE v2 adds scope to variable conditions/actions.
 - All panels that load project data track `lastLoadedProjectRoot_` and reload when the active project folder changes, preventing stale data from a previously opened project.
 
 Runtime behavior:
@@ -664,8 +673,9 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - Collision against nonzero cells in `.admap` layer 1.
 - Screen-boundary crossings with 30% threshold trigger sliding transition to linked screen.
 - Obstacle hazards (spikes, pits, timed spikes) deal each obstacle's configured `damage` to the player while overlapping, repeating no faster than that obstacle's `damageIntervalSeconds` (tracked per-obstacle in `hazardCooldowns_`, keyed by id, and cleared on screen load). Damage routes through `damagePlayer`, so the player respawns at the map spawn only when HP reaches 0. Obstacles with `damage <= 0` are harmless.
-- Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged, and north face button/Select/Start for inventory.
-- Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile from `WeaponDef` data.
+- Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged (hold to draw on charge weapons), bumpers (LB/RB) for aim-target cycling, and north face button/Select/Start for inventory.
+- Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile(s) from `WeaponDef` data. Attacks play the weapon's `attackAnimState` sprite action when set (`playerAttackAnimOverride_` in `playerActionName`), else `attack_1` (melee) / `cast` (ranged). Instant weapons fire on press; hold-to-draw weapons (`chargeTimeSeconds`/`steadyTimeSeconds > 0`) charge while held — movement slows to the attack speed scale, a charge meter renders above the player (green → gold at full draw → flashing red when overheld) — and fire on release with charge-scaled damage and steady-scaled spread. Overholding applies the weapon's `OverchargeEffect` (WildShot spread growth, Misfire dud shot, or Break: weapon unequipped).
+- **Cone auto-aim** (`updateAimTargets`): with a ranged weapon equipped, living enemies within `WeaponDef::range` and inside `aimConeDegrees` (default 45°) of player facing form a candidate list sorted left-to-right; the most central is auto-locked. Every candidate is drawn with a scope-style reticle centred on it (`renderAimTargets` + `renderArc`) — two segmented circles spinning in counter directions with cardinal crosshair ticks; pulsing yellow for the locked target, faint white for the rest. The reticle radius scales with current spread (wide when inaccurate, closing onto the enemy as aim steadies) and the spin rate slows as accuracy sharpens. Tab / Q (or RB / LB) cycle the lock next/prev. **Lock-on facing:** while drawing, the player turns to face the locked target and movement strafes; the lock holds as long as the target is alive and in range. Instant weapons snap player facing to the shot direction on fire. **Target lead:** shots at a locked target solve the ballistic intercept against the enemy's measured velocity (`RuntimePathEntity::velocityX/Y`, bracketed around `updatePaths`) and blend from current position toward the intercept as accuracy sharpens — full anticipation at 0° spread, none at ≥ `kLeadMaxSpreadDegrees`. Without a lock, shots fly straight ahead; each pellet rolls its own spread angle, and projectile impact damage applies the weapon's distance falloff.
 - Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.
 - Shop NPCs open a two-panel buy/sell overlay. The shop panel spends `Money` and transfers stock into the player inventory; the player panel sells one selected inventory item and adds `Money`. Limited shop rows decrement on buy and increment when sold back. NPC placements can override the reusable NPC type stock, and the runtime scrolls both shop and player inventory lists.
 - Door triggers render as sprites or colored rectangles, show the interaction prompt when the player stands on or near their tile rectangle, and activate on E/controller south. Free-use doors remain walkable triggers and transition to the target screen/tile. Locked and required-item rectangles block player movement; interaction still works from beside the rectangle. A key door without a destination unlocks in place, becomes walkable, and stops prompting; without an opening animation it disappears when crossed. Destination transitions mix Open over screen music, then play Close after the slide. Permanently locked and missing-key interactions play Locked.
@@ -693,7 +703,7 @@ Implemented in `src/editor/panels/sprite_editor_panel.*`.
 - **Frame metadata section** (right inspector): action type (combo: idle/walk/run/attack/etc.), facing direction (combo: any/E/W/N/S/NE/NW/SE/SW), and duration in ms. The direction system is shared by all sprites: player, enemy, NPC alike.
 - **Polygon tool:** left-click adds vertices; double-click or Enter closes and rasterizes the outline with the current brush/color; right-click or Escape cancels. A live overlay previews committed edges and the closing edge.
 - **Frame ordering:** the active thumbnail rail exposes Earlier/Later and drag-and-drop. `reorderFrame` moves the selected `SpriteFrame` and its complete per-layer cel vector together, follows the moved frame, remaps selection ownership, and records one undo state.
-- **Resize:** all frames share one canvas size; `Resize` rescales every frame and layer with nearest-neighbour and proportionally rescales `pivot` and `bodyGuide`.
+- **Resize:** all frames share one canvas size; the `Resize` dialog offers two modes. **Keep pixels (default)** changes only the canvas: existing art keeps its pixel size and stays centred — growing adds equal blank margins (room for sword-swing frames etc.), shrinking crops the edges evenly; `pivot`, `bodyGuide`, and frame rects shift by the margin offset. **Scale pixels** rescales every frame and layer with nearest-neighbour and proportionally rescales `pivot` and `bodyGuide`.
 - **Authoring overlays (not rendered in game):** `Pivot` toggle (`showPivot_`) draws a crosshair at `document_.pivot`; `Body` toggle (`showBodyGuide_`) draws the user-defined `bodyGuide` rectangle (`x,y,w,h` canvas px; `= canvas` button fills the frame). Both persist in `.sprite.json`; the runtime never reads `bodyGuide` (`pivot` is also currently unused by rendering — frames draw centred on the entity position).
 - Transform actions: flip H/V, rotate CW. Clipboard: copy/paste selections.
 - Snapshot-based undo. OS-aware shortcuts (`Cmd` on macOS, `Ctrl` elsewhere).

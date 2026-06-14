@@ -99,6 +99,8 @@ private:
     bool pendingProjectSwitch_ = false;
     std::string pendingProjectId_;
     std::string pendingProjectChapterId_;
+    bool variablePickerActive_ = false;
+    int selectedVariable_ = -1;
 
     void drawStartupChapterModal();
     void drawProjectManagerWindow();
@@ -130,7 +132,7 @@ private:
     void launchGame(bool fresh = false, const std::string& startScreen = {}, bool fromCheckpoint = false);
     void enterScreenMode(ScreenEditMode mode);
     void drawScreensTab();
-    void drawProjectStateTab();
+    void drawProjectStateTab(bool pickerMode = false);
     void drawProjectItemsTab();
     void drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving);
     void exitScreenModeSaving();

@@ -109,6 +109,7 @@ private:
     std::array<int, 2> trackedCanvasSize_{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
     std::array<int, 2> newSpriteSize_{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
     std::array<int, 2> resizeSpriteSize_{kDefaultSpriteCanvasSize, kDefaultSpriteCanvasSize};
+    int resizeMode_ = 0;  // 0 = keep pixels centred (grow/crop canvas), 1 = scale pixels
     std::array<int, 2> resizeSelectionSize_{1, 1};
     std::array<int, 2> dragStartPixel_{0, 0};
     std::array<int, 2> lastPaintPixel_{-1, -1};
@@ -166,6 +167,7 @@ private:
     void createBlankSprite(int width, int height);
     void clearCurrentFrame();
     void resizeSprite(int newWidth, int newHeight);
+    void resizeSpriteCanvas(int newWidth, int newHeight);
     void resizeCanvasStorage(int oldWidth, int oldHeight, int newWidth, int newHeight);
     void handleCanvasInput(const ImVec2& canvasOrigin, float pixelSize);
     bool canvasPixelAt(const ImVec2& canvasOrigin, float pixelSize, int& x, int& y) const;

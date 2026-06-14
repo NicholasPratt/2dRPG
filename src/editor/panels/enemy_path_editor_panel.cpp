@@ -638,7 +638,21 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
         type.killVariable = killVarBuf;
         context.markDirty();
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Pick Variable...##killvar")) {
+        context.openVariablePicker(type.killVariable, game::StateVariableType::Integer,
+            type.killVariableScope,
+            [&type](const game::StateVariableDef& variable) {
+                type.killVariable = variable.id;
+                type.killVariableScope = variable.scope;
+            });
+    }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("State variable incremented when this enemy dies (e.g. Crows_Killed)");
+    int killScope = static_cast<int>(type.killVariableScope);
+    if (ImGui::Combo("Counter scope##kvscope", &killScope, "Universal\0Chapter\0")) {
+        type.killVariableScope = static_cast<game::StateVariableScope>(killScope);
+        context.markDirty();
+    }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(70.0f);
     if (ImGui::InputInt("+amt##kva", &type.killAmount)) {
@@ -646,6 +660,33 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
         context.markDirty();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Amount added to the kill counter per death");
+
+    ImGui::TextUnformatted("On Defeat Effects");
+    for (int i = 0; i < static_cast<int>(type.defeatEffectIds.size()); ++i) {
+        ImGui::PushID(7000 + i);
+        std::string& effectId = type.defeatEffectIds[static_cast<std::size_t>(i)];
+        if (ImGui::BeginCombo("Effect", effectId.empty() ? "(choose)" : effectId.c_str())) {
+            for (const game::GameEffectDef& effect : context.effectDefs) {
+                if (ImGui::Selectable(effect.id.c_str(), effect.id == effectId)) {
+                    effectId = effect.id;
+                    context.markDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) {
+            type.defeatEffectIds.erase(type.defeatEffectIds.begin() + i);
+            context.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    if (ImGui::SmallButton("+ Defeat Effect")) {
+        type.defeatEffectIds.push_back(context.effectDefs.empty() ? std::string{} : context.effectDefs.front().id);
+        context.markDirty();
+    }
 
     ImGui::EndGroup();
 

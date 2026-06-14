@@ -81,7 +81,10 @@ bool editString(const char* label, std::string& value, std::size_t capacity = 25
 {
     std::vector<char> buffer(capacity, '\0');
     std::memcpy(buffer.data(), value.data(), std::min(value.size(), buffer.size() - 1));
-    if (ui::inputTextString(label, buffer.data(), buffer.size())) {
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-1.0f);
+    const std::string id = std::string("##") + label;
+    if (ui::inputTextString(id.c_str(), buffer.data(), buffer.size())) {
         value = buffer.data();
         return true;
     }
@@ -92,18 +95,38 @@ bool editMultiline(const char* label, std::string& value)
 {
     char buffer[1024]{};
     std::memcpy(buffer, value.data(), std::min(value.size(), sizeof(buffer) - 1));
-    if (ImGui::InputTextMultiline(label, buffer, sizeof(buffer), ImVec2(-1.0f, 82.0f))) {
+    ImGui::TextUnformatted(label);
+    const std::string id = std::string("##") + label;
+    if (ImGui::InputTextMultiline(id.c_str(), buffer, sizeof(buffer), ImVec2(-1.0f, 82.0f))) {
         value = buffer;
         return true;
     }
     return false;
 }
 
-bool editCondition(game::DialogueCondition& condition)
+bool editInt(const char* label, int& value)
+{
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-1.0f);
+    const std::string id = std::string("##") + label;
+    return ImGui::DragInt(id.c_str(), &value, 1.0f);
+}
+
+bool editFloat(const char* label, float& value)
+{
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(-1.0f);
+    const std::string id = std::string("##") + label;
+    return ImGui::DragFloat(id.c_str(), &value, 1.0f);
+}
+
+bool editCondition(EditorContext& context, game::DialogueCondition& condition)
 {
     bool changed = false;
     int type = static_cast<int>(condition.type);
-    if (ImGui::BeginCombo("Condition", conditionTypeName(condition.type))) {
+    ImGui::TextUnformatted("Condition");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::BeginCombo("##ConditionType", conditionTypeName(condition.type))) {
         for (int i = 0; i <= 4; ++i) {
             const auto candidate = static_cast<game::DialogueConditionType>(i);
             if (ImGui::Selectable(conditionTypeName(candidate), i == type)) {
@@ -118,10 +141,44 @@ bool editCondition(game::DialogueCondition& condition)
     }
     if (condition.type != game::DialogueConditionType::HasMoney) {
         changed = editString("Variable/Item", condition.variableId, 128) || changed;
+        if (condition.type == game::DialogueConditionType::IntCompare ||
+            condition.type == game::DialogueConditionType::BoolEquals ||
+            condition.type == game::DialogueConditionType::HasItem) {
+            const bool itemCondition = condition.type == game::DialogueConditionType::HasItem;
+            if (ImGui::Button(itemCondition ? "Pick Item..." : "Pick Variable...",
+                    ImVec2(-1.0f, 0.0f))) {
+                const game::StateVariableType variableType =
+                    itemCondition
+                    ? game::StateVariableType::Item
+                    : condition.type == game::DialogueConditionType::BoolEquals
+                    ? game::StateVariableType::Boolean
+                    : game::StateVariableType::Integer;
+                const game::StateVariableScope scope =
+                    variableType == game::StateVariableType::Item
+                    ? game::StateVariableScope::Universal : condition.scope;
+                context.openVariablePicker(condition.variableId, variableType, scope,
+                    [&condition](const game::StateVariableDef& variable) {
+                        condition.variableId = variable.id;
+                        condition.scope = variable.scope;
+                    });
+            }
+        }
+    }
+    if (condition.type == game::DialogueConditionType::IntCompare ||
+        condition.type == game::DialogueConditionType::BoolEquals) {
+        int scope = static_cast<int>(condition.scope);
+        ImGui::TextUnformatted("Scope");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##ConditionScope", &scope, "Universal\0Chapter\0")) {
+            condition.scope = static_cast<game::StateVariableScope>(scope);
+            changed = true;
+        }
     }
     if (condition.type == game::DialogueConditionType::IntCompare) {
         int op = static_cast<int>(condition.op);
-        if (ImGui::BeginCombo("Compare", compareOpName(condition.op))) {
+        ImGui::TextUnformatted("Compare");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##ConditionCompare", compareOpName(condition.op))) {
             for (int i = 0; i <= 5; ++i) {
                 const auto candidate = static_cast<game::DialogueCompareOp>(i);
                 if (ImGui::Selectable(compareOpName(candidate), i == op)) {
@@ -131,12 +188,16 @@ bool editCondition(game::DialogueCondition& condition)
             }
             ImGui::EndCombo();
         }
-        changed = ImGui::DragInt("Value", &condition.intValue, 1.0f) || changed;
+        ImGui::TextUnformatted("Value");
+        ImGui::SetNextItemWidth(-1.0f);
+        changed = ImGui::DragInt("##ConditionValue", &condition.intValue, 1.0f) || changed;
     } else if (condition.type == game::DialogueConditionType::BoolEquals ||
                condition.type == game::DialogueConditionType::HasItem) {
-        changed = ImGui::Checkbox("Expected", &condition.boolValue) || changed;
+        changed = ImGui::Checkbox("Expected value", &condition.boolValue) || changed;
     } else if (condition.type == game::DialogueConditionType::HasMoney) {
-        changed = ImGui::DragInt("Money", &condition.intValue, 1.0f, 0, 999999) || changed;
+        ImGui::TextUnformatted("Required Money");
+        ImGui::SetNextItemWidth(-1.0f);
+        changed = ImGui::DragInt("##RequiredMoney", &condition.intValue, 1.0f, 0, 999999) || changed;
     }
     return changed;
 }
@@ -181,8 +242,9 @@ void DialogueGraphEditorPanel::draw(EditorContext& context)
         loaded_ = true;
     }
 
-    const float leftW = 230.0f;
-    const float rightW = 360.0f;
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const float leftW = std::clamp(availableWidth * 0.18f, 190.0f, 230.0f);
+    const float rightW = std::clamp(availableWidth * 0.32f, 380.0f, 460.0f);
     ImGui::BeginChild("DialogueGraphList", ImVec2(leftW, 0.0f), true);
     drawGraphList(context);
     ImGui::EndChild();
@@ -485,7 +547,9 @@ void DialogueGraphEditorPanel::drawInspector(EditorContext& context)
     ImGui::Text("Node: %s", node->id.c_str());
     if (editString("Node ID", node->id, 128)) { dirty_ = true; }
     int type = static_cast<int>(node->type);
-    if (ImGui::BeginCombo("Type", nodeTypeName(node->type))) {
+    ImGui::TextUnformatted("Type");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::BeginCombo("##NodeType", nodeTypeName(node->type))) {
         for (int i = 0; i <= 5; ++i) {
             const auto candidate = static_cast<game::DialogueNodeType>(i);
             if (ImGui::Selectable(nodeTypeName(candidate), i == type)) {
@@ -498,7 +562,7 @@ void DialogueGraphEditorPanel::drawInspector(EditorContext& context)
     if (drawTargetPicker("Next", node->nextNodeId)) { dirty_ = true; }
     if (node->type == game::DialogueNodeType::Condition) {
         if (drawTargetPicker("False", node->falseNodeId)) { dirty_ = true; }
-        if (editCondition(node->condition)) { dirty_ = true; }
+        if (editCondition(context, node->condition)) { dirty_ = true; }
     }
     if (node->type == game::DialogueNodeType::Dialogue || node->type == game::DialogueNodeType::Choice) {
         if (editString("Speaker", node->speaker, 128)) { dirty_ = true; }
@@ -513,7 +577,7 @@ void DialogueGraphEditorPanel::drawInspector(EditorContext& context)
             if (editString("Text", choice.text, 256)) { dirty_ = true; }
             if (drawTargetPicker("Target", choice.targetNodeId)) { dirty_ = true; }
             if (ImGui::TreeNode("Condition")) {
-                if (editCondition(choice.condition)) { dirty_ = true; }
+                if (editCondition(context, choice.condition)) { dirty_ = true; }
                 ImGui::TreePop();
             }
             if (ImGui::Button("Remove Choice")) {
@@ -537,7 +601,9 @@ void DialogueGraphEditorPanel::drawInspector(EditorContext& context)
             ImGui::PushID(10000 + i);
             game::DialogueAction& action = node->actions[static_cast<std::size_t>(i)];
             int actionType = static_cast<int>(action.type);
-            if (ImGui::BeginCombo("Type", actionTypeName(action.type))) {
+            ImGui::TextUnformatted("Type");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("##ActionType", actionTypeName(action.type))) {
                 for (int t = 0; t <= 16; ++t) {
                     const auto candidate = static_cast<game::DialogueActionType>(t);
                     if (ImGui::Selectable(actionTypeName(candidate), t == actionType)) {
@@ -547,12 +613,52 @@ void DialogueGraphEditorPanel::drawInspector(EditorContext& context)
                 }
                 ImGui::EndCombo();
             }
-            if (editString("Target", action.targetId, 128)) { dirty_ = true; }
+            const bool variableTarget =
+                action.type == game::DialogueActionType::SetInt ||
+                action.type == game::DialogueActionType::AddInt ||
+                action.type == game::DialogueActionType::SetBool ||
+                action.type == game::DialogueActionType::StartQuest ||
+                action.type == game::DialogueActionType::CompleteQuest;
+            const bool itemTarget =
+                action.type == game::DialogueActionType::GiveItem ||
+                action.type == game::DialogueActionType::TakeItem;
+            if (editString(itemTarget ? "Item" : variableTarget ? "Variable" : "Target",
+                    action.targetId, 128)) {
+                dirty_ = true;
+            }
+            if (variableTarget) {
+                int scope = static_cast<int>(action.scope);
+                ImGui::TextUnformatted("Scope");
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::Combo("##ActionScope", &scope, "Universal\0Chapter\0")) {
+                    action.scope = static_cast<game::StateVariableScope>(scope);
+                    dirty_ = true;
+                }
+            }
+            if (variableTarget || itemTarget) {
+                if (ImGui::Button(itemTarget ? "Pick Item..." : "Pick Variable...",
+                        ImVec2(-1.0f, 0.0f))) {
+                    const game::StateVariableType variableType = itemTarget
+                        ? game::StateVariableType::Item
+                        : (action.type == game::DialogueActionType::SetBool ||
+                           action.type == game::DialogueActionType::StartQuest ||
+                           action.type == game::DialogueActionType::CompleteQuest)
+                        ? game::StateVariableType::Boolean
+                        : game::StateVariableType::Integer;
+                    const game::StateVariableScope scope = itemTarget
+                        ? game::StateVariableScope::Universal : action.scope;
+                    context.openVariablePicker(action.targetId, variableType, scope,
+                        [&action](const game::StateVariableDef& variable) {
+                            action.targetId = variable.id;
+                            action.scope = variable.scope;
+                        });
+                }
+            }
             if (editString("Text Value", action.textValue, 128)) { dirty_ = true; }
-            if (ImGui::DragInt("Int", &action.intValue, 1.0f)) { dirty_ = true; }
+            if (editInt("Int", action.intValue)) { dirty_ = true; }
             if (ImGui::Checkbox("Bool", &action.boolValue)) { dirty_ = true; }
-            if (ImGui::DragFloat("X", &action.x, 1.0f)) { dirty_ = true; }
-            if (ImGui::DragFloat("Y", &action.y, 1.0f)) { dirty_ = true; }
+            if (editFloat("X", action.x)) { dirty_ = true; }
+            if (editFloat("Y", action.y)) { dirty_ = true; }
             if (ImGui::Button("Remove Action")) {
                 node->actions.erase(node->actions.begin() + i);
                 dirty_ = true;
@@ -640,30 +746,46 @@ void DialogueGraphEditorPanel::validateGraph(const EditorContext& context)
             validationWarnings_.push_back(owner + " has broken " + label + " target: " + target);
         }
     };
+    auto checkRequiredTarget = [&](const std::string& owner, const std::string& label,
+                                   const std::string& target) {
+        if (target.empty()) {
+            validationWarnings_.push_back(owner + " has no " + label + " target.");
+        } else {
+            checkTarget(owner, label, target);
+        }
+    };
 
-    auto stateDefExists = [&](const std::string& id, game::StateVariableType type) {
+    auto stateDefExists = [&](const std::string& id, game::StateVariableType type, game::StateVariableScope scope) {
         return std::any_of(context.stateVariables.begin(), context.stateVariables.end(), [&](const game::StateVariableDef& def) {
-            return def.id == id && def.type == type;
+            return def.id == id && def.type == type && def.scope == scope &&
+                (scope == game::StateVariableScope::Universal ||
+                 def.chapterId.empty() || def.chapterId == context.currentChapterId);
         });
     };
 
     auto validateCondition = [&](const std::string& owner, const game::DialogueCondition& condition) {
         if (condition.type == game::DialogueConditionType::IntCompare &&
-            !stateDefExists(condition.variableId, game::StateVariableType::Integer)) {
+            !stateDefExists(condition.variableId, game::StateVariableType::Integer, condition.scope)) {
             validationWarnings_.push_back(owner + " references missing integer variable: " + condition.variableId);
         } else if (condition.type == game::DialogueConditionType::BoolEquals &&
-            !stateDefExists(condition.variableId, game::StateVariableType::Boolean)) {
+            !stateDefExists(condition.variableId, game::StateVariableType::Boolean, condition.scope)) {
             validationWarnings_.push_back(owner + " references missing boolean variable: " + condition.variableId);
         } else if (condition.type == game::DialogueConditionType::HasItem &&
-            !stateDefExists(condition.variableId, game::StateVariableType::Item)) {
+            !stateDefExists(condition.variableId, game::StateVariableType::Item, game::StateVariableScope::Universal)) {
             validationWarnings_.push_back(owner + " references missing item variable: " + condition.variableId);
         }
     };
 
     for (const game::DialogueNode& node : graph_.nodes) {
-        checkTarget(node.id, "next", node.nextNodeId);
+        if (node.type == game::DialogueNodeType::Start ||
+            node.type == game::DialogueNodeType::Condition ||
+            node.type == game::DialogueNodeType::Action) {
+            checkRequiredTarget(node.id, "next", node.nextNodeId);
+        } else {
+            checkTarget(node.id, "next", node.nextNodeId);
+        }
         if (node.type == game::DialogueNodeType::Condition) {
-            checkTarget(node.id, "false", node.falseNodeId);
+            checkRequiredTarget(node.id, "false", node.falseNodeId);
             validateCondition(node.id, node.condition);
         }
         if (node.type == game::DialogueNodeType::Choice) {
@@ -682,11 +804,11 @@ void DialogueGraphEditorPanel::validateGraph(const EditorContext& context)
                     action.type == game::DialogueActionType::StartQuest ||
                     action.type == game::DialogueActionType::CompleteQuest;
                 const bool needsItem = action.type == game::DialogueActionType::GiveItem || action.type == game::DialogueActionType::TakeItem;
-                if (needsInt && !stateDefExists(action.targetId, game::StateVariableType::Integer)) {
+                if (needsInt && !stateDefExists(action.targetId, game::StateVariableType::Integer, action.scope)) {
                     validationWarnings_.push_back(node.id + " action references missing integer variable: " + action.targetId);
-                } else if (needsBool && !stateDefExists(action.targetId, game::StateVariableType::Boolean)) {
+                } else if (needsBool && !stateDefExists(action.targetId, game::StateVariableType::Boolean, action.scope)) {
                     validationWarnings_.push_back(node.id + " action references missing boolean variable: " + action.targetId);
-                } else if (needsItem && !stateDefExists(action.targetId, game::StateVariableType::Item)) {
+                } else if (needsItem && !stateDefExists(action.targetId, game::StateVariableType::Item, game::StateVariableScope::Universal)) {
                     validationWarnings_.push_back(node.id + " action references missing item variable: " + action.targetId);
                 }
             }
@@ -734,11 +856,21 @@ void DialogueGraphEditorPanel::simulateGraph(const EditorContext& context)
     std::unordered_map<std::string, int> ints;
     std::unordered_map<std::string, bool> bools;
     std::unordered_set<std::string> items;
+    const auto scopedKey = [&](game::StateVariableScope scope, const std::string& id) {
+        return scope == game::StateVariableScope::Chapter
+            ? "chapter." + context.currentChapterId + "." + id
+            : id;
+    };
     for (const game::StateVariableDef& def : context.stateVariables) {
+        if (def.scope == game::StateVariableScope::Chapter &&
+            !def.chapterId.empty() && def.chapterId != context.currentChapterId) {
+            continue;
+        }
+        const std::string key = scopedKey(def.scope, def.id);
         if (def.type == game::StateVariableType::Integer) {
-            ints[def.id] = def.defaultInt;
+            ints[key] = def.defaultInt;
         } else if (def.type == game::StateVariableType::Boolean) {
-            bools[def.id] = def.defaultBool;
+            bools[key] = def.defaultBool;
         }
     }
 
@@ -747,7 +879,8 @@ void DialogueGraphEditorPanel::simulateGraph(const EditorContext& context)
             case game::DialogueConditionType::Always:
                 return true;
             case game::DialogueConditionType::IntCompare: {
-                const int value = ints.count(condition.variableId) ? ints[condition.variableId] : 0;
+                const std::string key = scopedKey(condition.scope, condition.variableId);
+                const int value = ints.count(key) ? ints[key] : 0;
                 switch (condition.op) {
                     case game::DialogueCompareOp::Equal: return value == condition.intValue;
                     case game::DialogueCompareOp::NotEqual: return value != condition.intValue;
@@ -759,7 +892,8 @@ void DialogueGraphEditorPanel::simulateGraph(const EditorContext& context)
                 return false;
             }
             case game::DialogueConditionType::BoolEquals:
-                return (bools.count(condition.variableId) ? bools[condition.variableId] : false) == condition.boolValue;
+                return (bools.count(scopedKey(condition.scope, condition.variableId))
+                    ? bools[scopedKey(condition.scope, condition.variableId)] : false) == condition.boolValue;
             case game::DialogueConditionType::HasItem:
                 return (items.count(condition.variableId) > 0) == condition.boolValue;
             case game::DialogueConditionType::HasMoney:
@@ -804,12 +938,13 @@ void DialogueGraphEditorPanel::simulateGraph(const EditorContext& context)
             case game::DialogueNodeType::Action:
                 for (const game::DialogueAction& action : node->actions) {
                     simulationLog_.push_back(std::string("Action: ") + actionTypeName(action.type));
+                    const std::string target = scopedKey(action.scope, action.targetId);
                     if (action.type == game::DialogueActionType::SetInt) {
-                        ints[action.targetId] = action.intValue;
+                        ints[target] = action.intValue;
                     } else if (action.type == game::DialogueActionType::AddInt) {
-                        ints[action.targetId] += action.intValue;
+                        ints[target] += action.intValue;
                     } else if (action.type == game::DialogueActionType::SetBool) {
-                        bools[action.targetId] = action.boolValue;
+                        bools[target] = action.boolValue;
                     } else if (action.type == game::DialogueActionType::GiveItem) {
                         items.insert(action.targetId);
                     } else if (action.type == game::DialogueActionType::TakeItem) {
@@ -842,8 +977,10 @@ bool DialogueGraphEditorPanel::nodeExists(const std::string& nodeId) const
 bool DialogueGraphEditorPanel::drawTargetPicker(const char* label, std::string& targetNodeId)
 {
     bool changed = false;
+    ImGui::TextUnformatted(label);
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::BeginCombo(label, targetNodeId.empty() ? "-" : targetNodeId.c_str())) {
+    const std::string id = std::string("##") + label;
+    if (ImGui::BeginCombo(id.c_str(), targetNodeId.empty() ? "-" : targetNodeId.c_str())) {
         if (ImGui::Selectable("-", targetNodeId.empty())) {
             targetNodeId.clear();
             changed = true;

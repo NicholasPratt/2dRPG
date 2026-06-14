@@ -73,6 +73,12 @@ private:
         bool pathFinished = false;
         std::string speechText;
         float speechRemainingSeconds = 0.0f;
+        // Actual movement velocity (px/s) measured across the last update,
+        // used to lead the target when firing ranged shots.
+        float prevX = 0.0f;
+        float prevY = 0.0f;
+        float velocityX = 0.0f;
+        float velocityY = 0.0f;
     };
 
     struct RuntimeSprite {
@@ -111,6 +117,11 @@ private:
         ProjectileWallBehavior wallBehavior = ProjectileWallBehavior::Break;
         int bouncesRemaining = 0;     // rebound only
         float settleSeconds = -1.0f;  // >=0: grounded/settling (inert), counts up to fade-out
+        // Distance damage falloff: full damage to falloffStartPx, scaling
+        // linearly down to damage * falloffMinScale at falloffEndPx (shotgun).
+        float falloffStartPx = 0.0f;  // <= 0: no falloff
+        float falloffEndPx = 0.0f;
+        float falloffMinScale = 1.0f;
     };
 
     struct RuntimeItemEntity {
@@ -123,6 +134,7 @@ private:
         std::string spriteId;
         std::vector<DialogueLine> dialogue;
         std::string graphId;
+        std::string baseGraphId;
         DialogueGraph graph;
         bool hasGraph = false;
         bool hidden = false;
@@ -142,6 +154,11 @@ private:
         std::string speechText;
         bool pathHidden = false;
         bool pathFinished = false;
+        std::vector<std::string> talkEffectIds;
+        std::vector<NpcStateRule> stateRules;
+        int activeStateRule = -1;
+        NpcMovementMode baseMovement = NpcMovementMode::Stationary;
+        std::string ruleAnimation;
         float facingX = 1.0f;  // unit vector — direction the NPC is facing
         float facingY = 0.0f;
     };
@@ -175,6 +192,8 @@ private:
         Interact,
         Melee,
         Ranged,
+        AimCycleNext,
+        AimCyclePrev,
         Inventory,
         Exit,
     };
@@ -206,6 +225,7 @@ private:
     std::optional<WeaponDef> meleeWeapon_;
     std::optional<WeaponDef> rangedWeapon_;
     std::vector<ItemDef> itemDefs_;
+    std::vector<GameEffectDef> effectDefs_;
     std::unordered_map<std::string, int> inventory_;
     bool inventoryVisible_ = false;
     bool inventoryInputWasDown_ = false;
@@ -221,6 +241,9 @@ private:
     float playerAnimSeconds_ = 0.0f;
     std::string playerActionType_ = "idle";
     PlayerActionState playerActionState_ = PlayerActionState::Idle;
+    // Animation action of the weapon used for the current attack (e.g.
+    // "attack_20"); empty falls back to "attack_1" (melee) / "cast" (ranged).
+    std::string playerAttackAnimOverride_;
     float playerActionSeconds_ = 0.0f;
     bool playerIsMoving_ = false;
     int playerMaxHealth_ = 6;
@@ -235,6 +258,14 @@ private:
     float playerHitFlashSeconds_ = 0.0f;
     bool meleeInputWasDown_ = false;
     bool rangedInputWasDown_ = false;
+    // Ranged hold-to-draw / auto-aim state.
+    bool rangedAiming_ = false;          // ranged button held on a hold-to-draw weapon
+    float rangedHoldSeconds_ = 0.0f;     // how long the current draw has been held
+    bool rangedMisfireLatched_ = false;  // overheld a Misfire weapon: shot fizzles on release
+    std::string aimTargetId_;            // enemy instance id of the locked target
+    std::vector<std::size_t> aimCandidates_;  // pathEntities_ indexes in the aim cone, sorted left-to-right
+    bool aimCycleNextWasDown_ = false;
+    bool aimCyclePrevWasDown_ = false;
     float runtimeSeconds_ = 0.0f;
     std::unordered_map<std::string, float> hazardCooldowns_;  // per-obstacle damage-tick timer, keyed by obstacle id
     float playerInvulnerableSeconds_ = 0.0f;
@@ -279,6 +310,11 @@ private:
     void loadProjectFont();
     void loadWeapons();
     void syncInventoryFromGameState();
+    [[nodiscard]] std::string scopedStateId(StateVariableScope scope, const std::string& id) const;
+    [[nodiscard]] int scopedInt(StateVariableScope scope, const std::string& id, int fallback = 0) const;
+    [[nodiscard]] bool scopedBool(StateVariableScope scope, const std::string& id, bool fallback = false) const;
+    void applyEffect(const GameEffectDef& effect);
+    void applyEffects(const std::vector<std::string>& effectIds);
     void loadPathEntities();
     void loadNpcEntities();
     void loadAllSprites();
@@ -302,6 +338,14 @@ private:
     void useInventoryItem(const std::string& itemId);
     void updatePlayer(float dt);
     void updateAttack(float dt);
+    void updateRangedAttack(float dt, bool pressed, bool released);
+    void updateAimTargets();
+    void cycleAimTarget(int direction);
+    [[nodiscard]] const RuntimePathEntity* aimTargetEntity() const;
+    void cancelRangedAim();
+    void fireRangedWeapon(bool misfire);
+    [[nodiscard]] float rangedFullDrawSeconds() const;
+    [[nodiscard]] float rangedSpreadDegrees() const;
     void setPlayerActionState(PlayerActionState state, float durationSeconds = 0.0f);
     [[nodiscard]] bool playerActionLocksBaseMotion() const;
     [[nodiscard]] std::string playerActionName() const;
@@ -311,6 +355,8 @@ private:
     void updateEnemyDeaths(float dt);
     void updatePaths(float dt);
     void updateNpcs(float dt);
+    void updateNpcStateRules(RuntimeNpcEntity& npc);
+    void loadNpcGraph(RuntimeNpcEntity& npc, const std::string& graphId);
     void updateDoors();
     void applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypoint& waypoint);
     void applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint);
@@ -378,6 +424,8 @@ private:
     [[nodiscard]] const SpriteFrameDef* playerSpriteFrame(bool& flipHorizontal) const;
     static std::string directionFromFacing(float fx, float fy);
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;
+    void renderArc(float cx, float cy, float radius, float thickness,
+        float startRadians, float spanRadians, float r, float g, float b, float a) const;
     void renderDoors() const;
     void renderNpcs() const;
     void renderInteractionPrompt() const;
@@ -389,6 +437,8 @@ private:
     void renderItems() const;
     void renderProjectiles() const;
     void renderMeleeFlash() const;
+    void renderAimTargets() const;
+    void renderChargeMeter() const;
     void renderHud() const;
     void renderInventory() const;
     void renderText(const std::string& text, float x, float y, float scale, float r, float g, float b, float a) const;

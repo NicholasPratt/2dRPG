@@ -31,8 +31,23 @@ private:
     std::array<char, 64> spriteId_{'\0'};
     std::array<char, 64> ammoTypeId_{'\0'};
     std::array<char, 64> ammoSpriteId_{'\0'};
+    std::array<char, 64> attackAnim_{'\0'};  // player action played on attack; empty = default
     int ammoPerShot_ = 1;
     int wallBehavior_ = 0;  // 0=Break, 1=Rebound
+    // Ranged feel stats (ADGAME v14)
+    float chargeTime_ = 0.0f;
+    float chargeDamageMin_ = 1.0f;
+    float chargeDamageMax_ = 1.0f;
+    float overchargeTime_ = 0.0f;
+    int overchargeEffect_ = 0;  // 0=None, 1=WildShot, 2=Misfire, 3=Break
+    float spreadStart_ = 0.0f;
+    float spreadEnd_ = 0.0f;
+    float steadyTime_ = 0.0f;
+    int pelletCount_ = 1;
+    float falloffStart_ = 0.0f;
+    float falloffEnd_ = 0.0f;
+    float falloffMinScale_ = 1.0f;
+    float aimCone_ = 45.0f;
 
     void syncInspectorFromSelected(const EditorContext& context);
     void writeInspectorToSelected(EditorContext& context);
