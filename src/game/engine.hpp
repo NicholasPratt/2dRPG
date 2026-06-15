@@ -224,6 +224,7 @@ private:
     float startPosY_ = -1.0f;
     std::optional<WeaponDef> meleeWeapon_;
     std::optional<WeaponDef> rangedWeapon_;
+    std::vector<WeaponDef> weaponDefs_;
     std::vector<ItemDef> itemDefs_;
     std::vector<GameEffectDef> effectDefs_;
     std::unordered_map<std::string, int> inventory_;
@@ -234,6 +235,8 @@ private:
     bool inventoryUpWasDown_ = false;
     bool inventoryDownWasDown_ = false;
     bool inventoryUseWasDown_ = false;
+    bool inventoryMeleeWasDown_ = false;
+    bool inventoryRangedWasDown_ = false;
     float playerX_ = 0.0f;
     float playerY_ = 0.0f;
     float playerFacingX_ = 1.0f;
@@ -313,6 +316,7 @@ private:
     [[nodiscard]] std::string scopedStateId(StateVariableScope scope, const std::string& id) const;
     [[nodiscard]] int scopedInt(StateVariableScope scope, const std::string& id, int fallback = 0) const;
     [[nodiscard]] bool scopedBool(StateVariableScope scope, const std::string& id, bool fallback = false) const;
+    [[nodiscard]] std::string interpolateText(const std::string& text) const;
     void applyEffect(const GameEffectDef& effect);
     void applyEffects(const std::vector<std::string>& effectIds);
     void loadPathEntities();
@@ -333,6 +337,8 @@ private:
     [[nodiscard]] bool isAmmoItemId(const std::string& id) const;
     [[nodiscard]] bool isCurrencyItemId(const std::string& id) const;
     [[nodiscard]] bool hasInventoryItem(const std::string& itemId) const;
+    [[nodiscard]] const WeaponDef* weaponForInventoryItem(const std::string& itemId) const;
+    void equipWeapon(const WeaponDef& weapon);
     void addInventoryItem(const std::string& itemId, int quantity);
     [[nodiscard]] bool removeInventoryItem(const std::string& itemId, int quantity);
     void useInventoryItem(const std::string& itemId);

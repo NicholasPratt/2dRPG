@@ -291,6 +291,8 @@ questions.</p>
     <code>Crows_Killed &ge; 12</code>. On the “not yet” branch play reminder dialogue; on the “done” branch play
     completion dialogue plus an <strong>Action</strong> node that sets <code>Crow_Quest_Done = true</code> and gives
     the reward item.</li>
+    <li>To show the live counter in a Dialogue node, write
+    <code>You killed $Crows_Killed crows.</code>. Variable IDs are case-sensitive.</li>
   </ol>
   <p>Because everything reads/writes the same state registry, the counter persists and the dialogue branches react to
   it automatically. Nothing about “crows” is hard-coded — use any variable, threshold, enemy, and reward.</p>
@@ -342,6 +344,12 @@ questions.</p>
   state/inventory/money, <strong>Action</strong> nodes for effects (give/take item or money, set int/bool, heal/damage,
   move/hide/show/follow NPC, set animation, start/complete quest), and <strong>End</strong>. Use <em>Validate</em> to
   catch broken links and <em>Simulate</em> to walk the graph.</p>
+  <div class="note"><strong>Show live variables in text:</strong> use <code>$Variable_Id</code> in Dialogue text,
+  speaker names, choice text, fallback dialogue, or timed path speech. Integer values render as numbers and booleans
+  render as <code>true</code>/<code>false</code>. In a chapter, a matching chapter-scoped value is checked before a
+  universal value. Plain placeholders support letters, digits, and underscores; use
+  <code>${Variable.With-Dots}</code> for IDs containing dots or hyphens. Unknown placeholders remain unchanged,
+  IDs are case-sensitive, and <code>$$</code> renders a literal dollar sign.</div>
 </div>
 
 <div class="recipe" id="recipe-pickup">

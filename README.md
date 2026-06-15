@@ -70,6 +70,25 @@ Runtime options:
 
 Normal launches start a new game. Use `--continue` to resume saved state.
 
+Controls:
+
+- Move: arrow keys / WASD / left stick
+- Interact: E / Enter / Space / gamepad A
+- Melee attack: Z / gamepad X
+- Ranged attack: X / gamepad B
+- Inventory and weapon selector: I / gamepad Y, Start, or Back
+- In the inventory, highlight a weapon and press its attack button to assign it
+
+The runtime keeps the complete 48 x 32 tile room visible and renders health,
+weapon slots, and ammo in a dedicated black bar below the playfield. At startup
+it queries the primary monitor's usable work area, chooses the largest integer
+window scale that fits with room for window decorations, and centers the window.
+
+Dialogue text can show live game-state values with `$Variable_Id`. For example,
+`You killed $Crows_killed crows.` resolves chapter-scoped variables in the
+current chapter before checking universal variables. Use `${Variable.With-Dots}`
+for IDs containing dots or hyphens, and `$$` for a literal `$`.
+
 ## Verify
 
 ```sh

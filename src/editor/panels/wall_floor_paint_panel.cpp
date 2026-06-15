@@ -233,7 +233,16 @@ void WallFloorPaintPanel::draw(EditorContext& context)
     }
 
     // Global keyboard shortcuts
-    if (!ImGui::GetIO().WantTextInput) {
+    if (!ImGui::IsAnyItemActive() && !ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_KeypadEqual, false)) {
+            zoom_ = std::min(16, zoom_ + 1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) {
+            zoom_ = std::max(1, zoom_ - 1);
+        }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
             undo();
         }
@@ -550,7 +559,7 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
     ImGui::SameLine();
     ImGui::Text("%dx%d px", width_, height_);
 
-    ui::sliderInt("Zoom", "##ScreenGraphicsZoom", &zoom_, 1, 16, 80.0f);
+    ui::sliderInt("Zoom =/-", "##ScreenGraphicsZoom", &zoom_, 1, 16, 80.0f);
     ImGui::SameLine(220.0f);
     ui::sliderInt("Brush", "##ScreenGraphicsBrush", &brushSize_, 1, 12, 80.0f);
     ui::checkbox("Grid", "##ScreenGraphicsGrid", &showGrid_);

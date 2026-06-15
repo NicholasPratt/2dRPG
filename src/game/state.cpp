@@ -246,4 +246,66 @@ bool loadGameState(const std::filesystem::path& path, GameState& state, std::str
     return true;
 }
 
+std::string interpolateGameStateText(
+    const std::string& text, const GameState& state, const std::string& chapterId)
+{
+    std::string result;
+    result.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();) {
+        if (text[i] != '$') {
+            result.push_back(text[i++]);
+            continue;
+        }
+        if (i + 1 < text.size() && text[i + 1] == '$') {
+            result.push_back('$');
+            i += 2;
+            continue;
+        }
+
+        const bool braced = i + 1 < text.size() && text[i + 1] == '{';
+        const std::size_t tokenStart = i + (braced ? 2 : 1);
+        std::size_t tokenEnd = tokenStart;
+        if (braced) {
+            tokenEnd = text.find('}', tokenStart);
+            if (tokenEnd == std::string::npos) {
+                result.push_back(text[i++]);
+                continue;
+            }
+        } else {
+            while (tokenEnd < text.size()) {
+                const unsigned char c = static_cast<unsigned char>(text[tokenEnd]);
+                if (std::isalnum(c) == 0 && c != '_') {
+                    break;
+                }
+                ++tokenEnd;
+            }
+        }
+        if (tokenEnd == tokenStart) {
+            result.push_back(text[i++]);
+            continue;
+        }
+
+        const std::string id = text.substr(tokenStart, tokenEnd - tokenStart);
+        const std::size_t placeholderEnd = tokenEnd + (braced ? 1 : 0);
+        const std::string chapterKey = chapterId.empty() ? std::string{} : "chapter." + chapterId + "." + id;
+        const auto chapterInt = state.ints().find(chapterKey);
+        const auto universalInt = state.ints().find(id);
+        const auto chapterBool = state.bools().find(chapterKey);
+        const auto universalBool = state.bools().find(id);
+        if (chapterInt != state.ints().end()) {
+            result += std::to_string(chapterInt->second);
+        } else if (universalInt != state.ints().end()) {
+            result += std::to_string(universalInt->second);
+        } else if (chapterBool != state.bools().end()) {
+            result += chapterBool->second ? "true" : "false";
+        } else if (universalBool != state.bools().end()) {
+            result += universalBool->second ? "true" : "false";
+        } else {
+            result.append(text, i, placeholderEnd - i);
+        }
+        i = placeholderEnd;
+    }
+    return result;
+}
+
 } // namespace adventure::game

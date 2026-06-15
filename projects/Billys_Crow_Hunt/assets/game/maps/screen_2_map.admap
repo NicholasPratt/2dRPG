@@ -106,7 +106,9 @@ obstacle obstacle_1 2 timed_spikes 31 14 3 3 1 2.4 0 1 0.75
 obstacle obstacle_2 2 timed_spikes 23 16 3 3 1 2.4 0 1 0.75
 obstacle obstacle_3 2 timed_spikes 28 17 3 3 1 1.5 0 1 0.75
 obstacle obstacle_4 1 pit 25 4 5 5 1 1 0 1 4
-items 1
+items 3
 item item_1 3 key 1 269.333 285.333 0 key
+item Health_Potion 2 - 10 384 256 0 -
+item item_3 2 - 10 680.667 265.333 0 -
 doors 0
 end

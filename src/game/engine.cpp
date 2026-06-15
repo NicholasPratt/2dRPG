@@ -69,6 +69,39 @@ constexpr float kSpeechTextScale = 1.5f;
 constexpr float kDialogueTextScale = 1.8f;
 constexpr int kDialogueVisibleLines = 4;
 constexpr float kGamepadDeadZone = 0.35f;
+constexpr float kHudBarHeightPx = 40.0f;
+constexpr int kWindowWorkAreaMarginXPx = 32;
+constexpr int kWindowWorkAreaMarginYPx = 64;
+
+struct RuntimeWindowLayout {
+    int width = kScreenTilesW * kTileSize;
+    int height = kScreenTilesH * kTileSize + static_cast<int>(kHudBarHeightPx);
+    int scale = 1;
+    int workX = 0;
+    int workY = 0;
+    int workWidth = width;
+    int workHeight = height;
+};
+
+RuntimeWindowLayout runtimeWindowLayout()
+{
+    RuntimeWindowLayout layout;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (monitor == nullptr) {
+        return layout;
+    }
+
+    glfwGetMonitorWorkarea(monitor,
+        &layout.workX, &layout.workY, &layout.workWidth, &layout.workHeight);
+    const int logicalWidth = kScreenTilesW * kTileSize;
+    const int logicalHeight = kScreenTilesH * kTileSize + static_cast<int>(kHudBarHeightPx);
+    const int usableWidth = std::max(logicalWidth, layout.workWidth - kWindowWorkAreaMarginXPx);
+    const int usableHeight = std::max(logicalHeight, layout.workHeight - kWindowWorkAreaMarginYPx);
+    layout.scale = std::max(1, std::min(usableWidth / logicalWidth, usableHeight / logicalHeight));
+    layout.width = logicalWidth * layout.scale;
+    layout.height = logicalHeight * layout.scale;
+    return layout;
+}
 
 std::size_t dialogueWrapChars(float screenWidth)
 {
@@ -760,11 +793,27 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
-    window_ = glfwCreateWindow(kScreenTilesW * kTileSize * 2, kScreenTilesH * kTileSize * 2, "Adventure Runtime", nullptr, nullptr);
+    const RuntimeWindowLayout windowLayout = runtimeWindowLayout();
+    window_ = glfwCreateWindow(
+        windowLayout.width,
+        windowLayout.height,
+        "Adventure Runtime", nullptr, nullptr);
     if (window_ == nullptr) {
         setError(errorMessage, "Failed to create runtime window.");
         return false;
     }
+    int frameLeft = 0;
+    int frameTop = 0;
+    int frameRight = 0;
+    int frameBottom = 0;
+    glfwGetWindowFrameSize(window_, &frameLeft, &frameTop, &frameRight, &frameBottom);
+    const int outerWidth = windowLayout.width + frameLeft + frameRight;
+    const int outerHeight = windowLayout.height + frameTop + frameBottom;
+    const int windowX = windowLayout.workX +
+        std::max(0, (windowLayout.workWidth - outerWidth) / 2) + frameLeft;
+    const int windowY = windowLayout.workY +
+        std::max(0, (windowLayout.workHeight - outerHeight) / 2) + frameTop;
+    glfwSetWindowPos(window_, windowX, windowY);
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1);
 
@@ -972,6 +1021,7 @@ void Engine::loadWeapons()
 {
     meleeWeapon_.reset();
     rangedWeapon_.reset();
+    weaponDefs_.clear();
     itemDefs_.clear();
     inventory_.clear();
 
@@ -979,6 +1029,7 @@ void Engine::loadWeapons()
     if (!loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
         return;
     }
+    weaponDefs_ = project.weaponDefs;
     itemDefs_ = project.itemDefs;
     effectDefs_ = project.effectDefs;
     syncInventoryFromGameState();
@@ -987,16 +1038,16 @@ void Engine::loadWeapons()
         return;
     }
 
-    for (const WeaponDef& w : project.weaponDefs) {
+    for (const WeaponDef& w : weaponDefs_) {
         if (w.id == project.startingWeaponId) {
+            inventory_[w.id] = std::max(1, inventory_[w.id]);
             if (w.type == WeaponType::Melee) {
                 meleeWeapon_ = w;
-                loadSpriteById(w.spriteId);
             } else {
                 rangedWeapon_ = w;
-                loadSpriteById(w.spriteId);
-                loadSpriteById(w.ammoSpriteId);
             }
+            loadSpriteById(w.spriteId);
+            loadSpriteById(w.ammoSpriteId);
             break;
         }
     }
@@ -1018,6 +1069,11 @@ int Engine::scopedInt(StateVariableScope scope, const std::string& id, int fallb
 bool Engine::scopedBool(StateVariableScope scope, const std::string& id, bool fallback) const
 {
     return gameState_.getBool(scopedStateId(scope, id), fallback);
+}
+
+std::string Engine::interpolateText(const std::string& text) const
+{
+    return interpolateGameStateText(text, gameState_, chapter_.id);
 }
 
 void Engine::applyEffect(const GameEffectDef& effect)
@@ -1058,6 +1114,11 @@ void Engine::syncInventoryFromGameState()
     for (const ItemDef& def : itemDefs_) {
         if (!def.id.empty() && gameState_.hasItem(def.id) && inventory_[def.id] <= 0) {
             inventory_[def.id] = 1;
+        }
+    }
+    for (const WeaponDef& weapon : weaponDefs_) {
+        if (!weapon.id.empty() && gameState_.hasItem(weapon.id) && inventory_[weapon.id] <= 0) {
+            inventory_[weapon.id] = 1;
         }
     }
 }
@@ -1597,6 +1658,36 @@ bool Engine::hasInventoryItem(const std::string& itemId) const
     return it != inventory_.end() && it->second > 0;
 }
 
+const WeaponDef* Engine::weaponForInventoryItem(const std::string& itemId) const
+{
+    std::string weaponId = itemId;
+    const auto itemIt = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&itemId](const ItemDef& def) {
+        return def.id == itemId && def.type == ItemDefType::Weapon;
+    });
+    if (itemIt != itemDefs_.end() && !itemIt->targetId.empty()) {
+        weaponId = itemIt->targetId;
+    }
+
+    const auto weaponIt = std::find_if(weaponDefs_.begin(), weaponDefs_.end(), [&weaponId](const WeaponDef& weapon) {
+        return weapon.id == weaponId;
+    });
+    return weaponIt == weaponDefs_.end() ? nullptr : &*weaponIt;
+}
+
+void Engine::equipWeapon(const WeaponDef& weapon)
+{
+    if (weapon.type == WeaponType::Melee) {
+        meleeWeapon_ = weapon;
+        showNotice(weapon.id + " assigned to Z / Pad X");
+    } else {
+        cancelRangedAim();
+        rangedWeapon_ = weapon;
+        showNotice(weapon.id + " assigned to X / Pad B");
+    }
+    loadSpriteById(weapon.spriteId);
+    loadSpriteById(weapon.ammoSpriteId);
+}
+
 void Engine::addInventoryItem(const std::string& itemId, int quantity)
 {
     if (itemId.empty() || quantity <= 0) {
@@ -1687,6 +1778,8 @@ std::vector<std::string> Engine::sortedShopInventoryIds() const
 void Engine::updateInventoryInput()
 {
     const std::vector<std::string> ids = sortedInventoryIds();
+    const bool meleeDown = inputDown(InputAction::Melee);
+    const bool rangedDown = inputDown(InputAction::Ranged);
     if (ids.empty()) {
         inventorySelection_ = 0;
         inventoryScroll_ = 0;
@@ -1706,6 +1799,17 @@ void Engine::updateInventoryInput()
         if (useDown && !inventoryUseWasDown_) {
             useInventoryItem(ids[static_cast<std::size_t>(inventorySelection_)]);
         }
+        const WeaponDef* selectedWeapon = weaponForInventoryItem(
+            ids[static_cast<std::size_t>(inventorySelection_)]);
+        if (selectedWeapon != nullptr) {
+            if (selectedWeapon->type == WeaponType::Melee &&
+                meleeDown && !inventoryMeleeWasDown_) {
+                equipWeapon(*selectedWeapon);
+            } else if (selectedWeapon->type == WeaponType::Ranged &&
+                rangedDown && !inventoryRangedWasDown_) {
+                equipWeapon(*selectedWeapon);
+            }
+        }
 
         inventoryUpWasDown_ = upDown;
         inventoryDownWasDown_ = downDown;
@@ -1717,12 +1821,19 @@ void Engine::updateInventoryInput()
             inventoryScroll_ = inventorySelection_ - kVisibleRows + 1;
         }
     }
+    inventoryMeleeWasDown_ = meleeDown;
+    inventoryRangedWasDown_ = rangedDown;
 }
 
 void Engine::useInventoryItem(const std::string& itemId)
 {
     auto countIt = inventory_.find(itemId);
     if (countIt == inventory_.end() || countIt->second <= 0) {
+        return;
+    }
+
+    if (const WeaponDef* weapon = weaponForInventoryItem(itemId); weapon != nullptr) {
+        equipWeapon(*weapon);
         return;
     }
 
@@ -1738,23 +1849,6 @@ void Engine::useInventoryItem(const std::string& itemId)
     const int value = std::max(1, def.value);
     switch (def.type) {
         case ItemDefType::Weapon: {
-            GameProject project;
-            if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
-                const std::string& weaponId = def.targetId.empty() ? def.id : def.targetId;
-                for (const WeaponDef& w : project.weaponDefs) {
-                    if (w.id != weaponId) {
-                        continue;
-                    }
-                    if (w.type == WeaponType::Melee) {
-                        meleeWeapon_ = w;
-                    } else {
-                        rangedWeapon_ = w;
-                    }
-                    loadSpriteById(w.spriteId);
-                    loadSpriteById(w.ammoSpriteId);
-                    break;
-                }
-            }
             break;
         }
         case ItemDefType::Health:
@@ -2750,20 +2844,11 @@ void Engine::collectItem(RuntimeItemEntity& item)
     item.collected = true;
     switch (item.placement.pickupType) {
         case ItemPickupType::Weapon: {
-            GameProject project;
-            if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
-                for (const WeaponDef& w : project.weaponDefs) {
-                    if (w.id == item.placement.targetId) {
-                        if (w.type == WeaponType::Melee) {
-                            meleeWeapon_ = w;
-                        } else {
-                            rangedWeapon_ = w;
-                        }
-                        addInventoryItem(w.id, 1);
-                        loadSpriteById(w.spriteId);
-                        loadSpriteById(w.ammoSpriteId);
-                        break;
-                    }
+            for (const WeaponDef& weapon : weaponDefs_) {
+                if (weapon.id == item.placement.targetId) {
+                    addInventoryItem(weapon.id, 1);
+                    equipWeapon(weapon);
+                    break;
                 }
             }
             const auto itemDef = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&item](const ItemDef& def) {
@@ -2817,22 +2902,8 @@ void Engine::collectItem(RuntimeItemEntity& item)
             applyEffects(def.acquireEffectIds);
             switch (def.type) {
                 case ItemDefType::Weapon: {
-                    GameProject project;
-                    if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
-                        const std::string& weaponId = def.targetId.empty() ? def.id : def.targetId;
-                        for (const WeaponDef& w : project.weaponDefs) {
-                            if (w.id != weaponId) {
-                                continue;
-                            }
-                            if (w.type == WeaponType::Melee) {
-                                meleeWeapon_ = w;
-                            } else {
-                                rangedWeapon_ = w;
-                            }
-                            loadSpriteById(w.spriteId);
-                            loadSpriteById(w.ammoSpriteId);
-                            break;
-                        }
+                    if (const WeaponDef* weapon = weaponForInventoryItem(def.id); weapon != nullptr) {
+                        equipWeapon(*weapon);
                     }
                     break;
                 }
@@ -3527,11 +3598,13 @@ void Engine::advanceDialogueGraph()
                 break;
             case DialogueNodeType::Dialogue:
             case DialogueNodeType::Choice: {
-                dialogueGraphLine_ = {node->speaker, node->text};
+                dialogueGraphLine_ = {interpolateText(node->speaker), interpolateText(node->text)};
                 dialogueGraphChoices_.clear();
                 for (const DialogueChoice& choice : node->choices) {
                     if (dialogueConditionPasses(choice.condition)) {
-                        dialogueGraphChoices_.push_back(choice);
+                        DialogueChoice expandedChoice = choice;
+                        expandedChoice.text = interpolateText(choice.text);
+                        dialogueGraphChoices_.push_back(std::move(expandedChoice));
                     }
                 }
                 dialogueChoiceIndex_ = std::clamp(dialogueChoiceIndex_, 0, std::max(0, static_cast<int>(dialogueGraphChoices_.size()) - 1));
@@ -3690,7 +3763,8 @@ void Engine::updateInteraction()
                 } else if (interactPressed) {
                     confirmDialogueGraph();
                 } else if (scrollUpPressed || scrollDownPressed) {
-                    const int wrappedLineCount = static_cast<int>(wrapText(dialogueGraphLine_.text, dialogueWrapChars(screenWidthPx()), 0).size());
+                    const int wrappedLineCount = static_cast<int>(wrapText(
+                        interpolateText(dialogueGraphLine_.text), dialogueWrapChars(screenWidthPx()), 0).size());
                     const int maxScroll = std::max(0, wrappedLineCount - kDialogueVisibleLines);
                     dialogueScrollLine_ = std::clamp(dialogueScrollLine_ + (scrollDownPressed ? 1 : -1), 0, maxScroll);
                 }
@@ -3704,7 +3778,8 @@ void Engine::updateInteraction()
                 }
             } else if (scrollUpPressed || scrollDownPressed) {
                 const DialogueLine& line = npc.dialogue[static_cast<std::size_t>(dialogueLineIndex_)];
-                const int wrappedLineCount = static_cast<int>(wrapText(line.text, dialogueWrapChars(screenWidthPx()), 0).size());
+                const int wrappedLineCount = static_cast<int>(wrapText(
+                    interpolateText(line.text), dialogueWrapChars(screenWidthPx()), 0).size());
                 const int maxScroll = std::max(0, wrappedLineCount - kDialogueVisibleLines);
                 dialogueScrollLine_ = std::clamp(dialogueScrollLine_ + (scrollDownPressed ? 1 : -1), 0, maxScroll);
             }
@@ -3833,7 +3908,7 @@ void Engine::renderSpeechBubble() const
         return;
     }
 
-    std::vector<std::string> lines = wrapText(dialogue->text, 24, 3);
+    std::vector<std::string> lines = wrapText(interpolateText(dialogue->text), 24, 3);
     if (lines.empty()) {
         return;
     }
@@ -3866,7 +3941,7 @@ void Engine::renderPathSpeechBubbles() const
         if (text.empty()) {
             return;
         }
-        const std::vector<std::string> lines = wrapText(text, 28, 3);
+        const std::vector<std::string> lines = wrapText(interpolateText(text), 28, 3);
         if (lines.empty()) {
             return;
         }
@@ -3925,7 +4000,7 @@ void Engine::renderDialogueBox() const
     const float padY = 8.0f;
     const float lineH = 11.0f * kDialogueTextScale;
     const std::size_t maxChars = dialogueWrapChars(sw);
-    const std::vector<std::string> lines = wrapText(dialogue.text, maxChars, 0);
+    const std::vector<std::string> lines = wrapText(interpolateText(dialogue.text), maxChars, 0);
     const int visibleTextLines = graphDialogue && !dialogueGraphChoices_.empty() ? 2 : kDialogueVisibleLines;
     const int maxScroll = std::max(0, static_cast<int>(lines.size()) - visibleTextLines);
     const int firstLine = std::clamp(dialogueScrollLine_, 0, maxScroll);
@@ -3935,7 +4010,8 @@ void Engine::renderDialogueBox() const
 
     float textY = boxY + padY;
     if (!dialogue.speaker.empty()) {
-        renderText(dialogue.speaker, margin + padX, textY, kDialogueTextScale, 0.30f, 0.78f, 0.95f, 1.0f);
+        renderText(interpolateText(dialogue.speaker), margin + padX, textY,
+            kDialogueTextScale, 0.30f, 0.78f, 0.95f, 1.0f);
         textY += lineH;
     }
 
@@ -4545,7 +4621,7 @@ void Engine::render()
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0.0, screenWidthPx(), screenHeightPx(), 0.0, -1.0, 1.0);
+    glOrtho(0.0, screenWidthPx(), screenHeightPx() + kHudBarHeightPx, 0.0, -1.0, 1.0);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glEnable(GL_BLEND);
@@ -4689,11 +4765,10 @@ void Engine::render()
     renderPathSpeechBubbles();
     renderSpeechBubble();
 
-    renderHud();
-    renderInventory();
-
     glPopMatrix();
 
+    renderHud();
+    renderInventory();
     renderNotice();
     renderDialogueBox();
     renderShopMenu();
@@ -5254,33 +5329,78 @@ void Engine::renderChargeMeter() const
 
 void Engine::renderHud() const
 {
+    const float barY = screenHeightPx();
+    renderFilledRect(0.0f, barY, screenWidthPx(), kHudBarHeightPx, 0.0f, 0.0f, 0.0f, 0.96f);
+    renderFilledRect(0.0f, barY, screenWidthPx(), 1.0f, 0.22f, 0.24f, 0.28f, 1.0f);
+
     const float heartW = 8.0f;
     for (int i = 0; i < playerMaxHealth_; ++i) {
         const bool filled = i < playerHealth_;
-        renderFilledRect(8.0f + static_cast<float>(i) * (heartW + 2.0f), 8.0f, heartW, 6.0f,
+        renderFilledRect(10.0f + static_cast<float>(i) * (heartW + 2.0f), barY + 17.0f, heartW, 6.0f,
             filled ? 0.90f : 0.16f, filled ? 0.08f : 0.08f, filled ? 0.12f : 0.09f, 0.95f);
     }
 
-    float hudY = 18.0f;
+    const auto renderWeaponSlot = [this](const WeaponDef& weapon, const char* button,
+                                      int ammoCount, float x, float y,
+                                      float accentR, float accentG, float accentB) {
+        constexpr float slotSize = 28.0f;
+        constexpr float iconSize = 22.0f;
+        renderFilledRect(x, y, slotSize, slotSize, 0.03f, 0.04f, 0.06f, 0.84f);
+        renderFilledRect(x, y, slotSize, 1.0f, accentR, accentG, accentB, 0.95f);
 
-    if (meleeWeapon_.has_value()) {
-        glDisable(GL_TEXTURE_2D);
-        glColor4f(1.0f, 0.9f, 0.3f, 0.85f);
-        glBegin(GL_QUADS);
-        glVertex2f(8.0f,  hudY);
-        glVertex2f(18.0f, hudY);
-        glVertex2f(18.0f, hudY + 6.0f);
-        glVertex2f(8.0f,  hudY + 6.0f);
-        glEnd();
-        hudY += 9.0f;
-    }
+        bool renderedSprite = false;
+        const auto spriteIt = loadedSprites_.find(weapon.spriteId);
+        if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded &&
+            spriteIt->second.texture.id != 0) {
+            const RuntimeSprite& sprite = spriteIt->second;
+            const SpriteFrameDef* frame = spriteFrame(sprite);
+            if (frame != nullptr && frame->width > 0 && frame->height > 0 &&
+                sprite.texture.width > 0 && sprite.texture.height > 0) {
+                const float scale = std::min(iconSize / static_cast<float>(frame->width),
+                    iconSize / static_cast<float>(frame->height));
+                const float drawW = static_cast<float>(frame->width) * scale;
+                const float drawH = static_cast<float>(frame->height) * scale;
+                const float drawX = x + (slotSize - drawW) * 0.5f;
+                const float drawY = y + (slotSize - drawH) * 0.5f;
+                const float u0 = static_cast<float>(frame->x) / static_cast<float>(sprite.texture.width);
+                const float v0 = static_cast<float>(frame->y) / static_cast<float>(sprite.texture.height);
+                const float u1 = static_cast<float>(frame->x + frame->width) /
+                    static_cast<float>(sprite.texture.width);
+                const float v1 = static_cast<float>(frame->y + frame->height) /
+                    static_cast<float>(sprite.texture.height);
+                renderTextureRegion(sprite.texture, drawX, drawY, drawW, drawH, u0, v0, u1, v1);
+                renderedSprite = true;
+            }
+        }
+        if (!renderedSprite) {
+            renderFilledRect(x + 5.0f, y + 5.0f, slotSize - 10.0f, slotSize - 10.0f,
+                accentR, accentG, accentB, 0.75f);
+        }
+
+        renderFilledRect(x + slotSize - 9.0f, y + slotSize - 9.0f, 9.0f, 9.0f,
+            0.02f, 0.03f, 0.04f, 0.92f);
+        renderText(button, x + slotSize - 7.0f, y + slotSize - 9.0f, 0.62f,
+            0.96f, 0.97f, 1.0f, 1.0f);
+        if (ammoCount >= 0) {
+            const std::string ammo = std::to_string(ammoCount);
+            renderText(ammo, x + slotSize + 3.0f, y + 8.0f, 0.78f,
+                accentR, accentG, accentB, 1.0f);
+        }
+    };
+
+    const float rightEdge = screenWidthPx() - 10.0f;
+    float slotX = rightEdge - 28.0f;
+    const float slotY = barY + 6.0f;
 
     if (rangedWeapon_.has_value()) {
-        const int ammoCount = ammoCountForWeapon(*rangedWeapon_);
-        const float barMax = 20.0f;
-        const float barW = std::min(static_cast<float>(ammoCount), barMax) * 2.0f;
-        renderFilledRect(8.0f, hudY, 40.0f, 4.0f, 0.08f, 0.08f, 0.08f, 0.6f);
-        renderFilledRect(8.0f, hudY, barW, 4.0f, 0.2f, 0.8f, 1.0f, 0.9f);
+        slotX = rightEdge - 48.0f;
+        renderWeaponSlot(*rangedWeapon_, "X", ammoCountForWeapon(*rangedWeapon_),
+            slotX, slotY, 0.20f, 0.80f, 1.0f);
+        slotX -= 38.0f;
+    }
+
+    if (meleeWeapon_.has_value()) {
+        renderWeaponSlot(*meleeWeapon_, "Z", -1, slotX, slotY, 1.0f, 0.78f, 0.25f);
     }
 }
 
@@ -5296,6 +5416,7 @@ void Engine::renderInventory() const
         std::string spriteId;
         int count = 0;
         bool stackable = true;
+        const WeaponDef* weapon = nullptr;
     };
 
     std::vector<InventoryEntry> entries;
@@ -5313,6 +5434,7 @@ void Engine::renderInventory() const
         entry.id = id;
         entry.name = id;
         entry.count = count;
+        entry.weapon = weaponForInventoryItem(id);
         for (const ItemDef& def : itemDefs_) {
             if (def.id == id) {
                 entry.name = def.name.empty() ? def.id : def.name;
@@ -5384,6 +5506,16 @@ void Engine::renderInventory() const
         }
 
         std::string label = entry.name;
+        if (entry.weapon != nullptr) {
+            const bool equipped =
+                (entry.weapon->type == WeaponType::Melee && meleeWeapon_.has_value() &&
+                    meleeWeapon_->id == entry.weapon->id) ||
+                (entry.weapon->type == WeaponType::Ranged && rangedWeapon_.has_value() &&
+                    rangedWeapon_->id == entry.weapon->id);
+            if (equipped) {
+                label = (entry.weapon->type == WeaponType::Melee ? "[Z] " : "[X] ") + label;
+            }
+        }
         constexpr float labelScale = 0.85f;
         const float labelMaxW = 82.0f;
         while (!label.empty() && textWidth(label, labelScale) > labelMaxW) {
@@ -5408,6 +5540,41 @@ void Engine::renderInventory() const
         }
         if (inventoryScroll_ + static_cast<int>(visibleRowCount) < static_cast<int>(entries.size())) {
             renderText("v", panelX + panelW - pad - 8.0f, panelY + panelH - 16.0f, 1.0f, 0.72f, 0.78f, 0.86f, 1.0f);
+        }
+    }
+
+    if (!entries.empty() && inventorySelection_ >= 0 &&
+        inventorySelection_ < static_cast<int>(entries.size())) {
+        const InventoryEntry& selected = entries[static_cast<std::size_t>(inventorySelection_)];
+        if (selected.weapon != nullptr) {
+            const WeaponDef& weapon = *selected.weapon;
+            constexpr float selectorW = 190.0f;
+            constexpr float selectorH = 116.0f;
+            const float selectorX = panelX - selectorW - 6.0f;
+            const float selectorY = panelY;
+            const bool melee = weapon.type == WeaponType::Melee;
+            const bool equipped = melee
+                ? (meleeWeapon_.has_value() && meleeWeapon_->id == weapon.id)
+                : (rangedWeapon_.has_value() && rangedWeapon_->id == weapon.id);
+
+            renderFilledRect(selectorX, selectorY, selectorW, selectorH, 0.03f, 0.04f, 0.06f, 0.92f);
+            renderFilledRect(selectorX, selectorY, selectorW, 1.0f,
+                melee ? 1.0f : 0.20f, melee ? 0.72f : 0.80f, melee ? 0.25f : 1.0f, 0.95f);
+            renderText("WEAPON SELECTOR", selectorX + 8.0f, selectorY + 5.0f, 0.92f,
+                0.92f, 0.95f, 0.98f, 1.0f);
+            renderText(weapon.id, selectorX + 8.0f, selectorY + 27.0f, 1.0f,
+                1.0f, 0.90f, 0.42f, 1.0f);
+            renderText(melee ? "MELEE" : "RANGED", selectorX + 8.0f, selectorY + 48.0f, 0.82f,
+                0.70f, 0.76f, 0.84f, 1.0f);
+            const std::string stats = "DMG " + std::to_string(weapon.damage) +
+                "  RANGE " + std::to_string(static_cast<int>(weapon.range));
+            renderText(stats, selectorX + 8.0f, selectorY + 65.0f, 0.78f,
+                0.82f, 0.86f, 0.92f, 1.0f);
+            const std::string assignment = melee
+                ? "PRESS Z / PAD X TO ASSIGN"
+                : "PRESS X / PAD B TO ASSIGN";
+            renderText(equipped ? "EQUIPPED" : assignment, selectorX + 8.0f, selectorY + 90.0f, 0.72f,
+                equipped ? 0.45f : 0.92f, equipped ? 0.95f : 0.95f, equipped ? 0.52f : 0.98f, 1.0f);
         }
     }
 

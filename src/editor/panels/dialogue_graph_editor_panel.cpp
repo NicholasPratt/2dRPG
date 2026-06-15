@@ -567,6 +567,7 @@ void DialogueGraphEditorPanel::drawInspector(EditorContext& context)
     if (node->type == game::DialogueNodeType::Dialogue || node->type == game::DialogueNodeType::Choice) {
         if (editString("Speaker", node->speaker, 128)) { dirty_ = true; }
         if (editMultiline("Text", node->text)) { dirty_ = true; }
+        ImGui::TextDisabled("Use $Variable_Id for live state; ${id.with-dots} for complex IDs; $$ for $.");
     }
     if (node->type == game::DialogueNodeType::Choice) {
         ImGui::Separator();

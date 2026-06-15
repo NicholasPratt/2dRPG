@@ -246,6 +246,17 @@ int main(int argc, char** argv)
     std::cout << "Round-tripped game state Example_Count=" << loadedState.getInt("Example_Count")
               << " defeated=" << loadedState.defeatedEnemies().size() << "\n";
 
+    loadedState.setInt("chapter.Farm_House.Crows_killed", 7);
+    loadedState.setBool("Quest_Complete", true);
+    const std::string interpolated = adventure::game::interpolateGameStateText(
+        "You killed $Crows_killed crows. Complete: $Quest_Complete. Reward: $$5.",
+        loadedState, "Farm_House");
+    if (interpolated != "You killed 7 crows. Complete: true. Reward: $5.") {
+        std::cerr << "Game state text interpolation did not match: " << interpolated << "\n";
+        return 1;
+    }
+    std::cout << "Interpolated chapter and universal game variables in dialogue text\n";
+
     adventure::game::DialogueGraph graph;
     graph.id = "scope_smoke";
     graph.startNodeId = "start";

@@ -40,5 +40,7 @@ private:
 
 [[nodiscard]] bool saveGameState(const std::filesystem::path& path, const GameState& state, std::string* errorMessage = nullptr);
 [[nodiscard]] bool loadGameState(const std::filesystem::path& path, GameState& state, std::string* errorMessage = nullptr);
+[[nodiscard]] std::string interpolateGameStateText(
+    const std::string& text, const GameState& state, const std::string& chapterId = {});
 
 } // namespace adventure::game

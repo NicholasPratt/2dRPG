@@ -4,6 +4,7 @@
   "canvasSize": [32, 32],
   "gridSize": [32, 32],
   "pivot": [16, 16],
+  "bodyGuide": [0, 0, 0, 0],
   "frames": [
     {"rect": [0, 0, 32, 32], "durationMs": 100, "type": "idle"}
   ],

@@ -794,7 +794,7 @@ void SpriteEditorPanel::drawTopBar()
     ImGui::SameLine();
     ui::checkbox("Body", "##SpriteBodyGuide", &showBodyGuide_, 46.0f);
     ImGui::SameLine();
-    ui::sliderInt("Zoom", "##SpriteZoom", &zoom_, 2, 32, 90.0f, 48.0f);
+    ui::sliderInt("Zoom =/-", "##SpriteZoom", &zoom_, 2, 32, 90.0f, 48.0f);
     ImGui::EndChild();
 
     if (openNewSpritePopup_) {
@@ -2060,6 +2060,16 @@ void SpriteEditorPanel::handleShortcuts()
 {
     if (ImGui::IsAnyItemActive() || ImGui::GetIO().WantTextInput) {
         return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_KeypadEqual, false)) {
+        zoom_ = std::min(32, zoom_ + 1);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) {
+        zoom_ = std::max(2, zoom_ - 1);
     }
 
     if (primaryShortcutDown()) {

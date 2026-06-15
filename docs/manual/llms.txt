@@ -16,6 +16,7 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Projectile bounces off walls (stone) vs breaks (arrow/bullet) → Weapons → On wall hit = Rebound/Break  (R4)
 - Enemy shoots projectiles → Edit Enemy Types → add Ranged attack  (R5)
 - "Kill N enemies" quest → Quest State variable + enemy Kill counter var + NPC dialogue Condition/Action  (R6)
+- NPC says a live variable → put `$Variable_Id` in dialogue, e.g. `You killed $Crows_Killed crows.` Chapter scope wins over universal; IDs are case-sensitive; `$$` is a literal `$`.  (R6/R10)
 - Enemies stay dead / respawn → dead within a session; placement respawn flag to bring back; every launch is a new game so they always spawn  (R7)
 - Placed enemies don't appear → check waypoint present, typeId matches a type, not walled off (state no longer carries over between launches)  (R8)
 - Shop NPC → interaction mode is TYPE-level only (no per-placement override). Edit NPC Types → default interaction = Shop + inventory rows; place an instance (stock can be overridden per instance). Setting a shop stock override on a Talk-type placement does NOT make it a shop.  (R9)
@@ -46,10 +47,12 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Reusable assets live in project.adgame; dialogue trees are chapter-scoped.
 - Game state registry: named ints/bools/items; quests, kills, money, dialogue all route through it.
   Variable names are designer-authored, never hard-coded. Money = integer var "Money".
+- Dialogue interpolation: `$Variable_Id` displays live integer or boolean state in dialogue, choices, speaker text, fallback lines, and timed speech. Use `${Variable.With-Dots}` for IDs containing dots/hyphens. Chapter-scoped values take precedence; unknown placeholders remain visible; `$$` escapes `$`.
 - Persistence: defeated enemies + state tracked in-memory within a session and written to save.adstate, but every launch starts a NEW game (state initialized from project defaults); save.adstate is only re-loaded with the --continue launch flag. --fresh test launches also ignore it and don't write.
 - Ammo: stored in the inventory (not a separate pool); ranged weapons consume the matching Ammo item directly. Inventory has an AMMO section (sprite + count).
 - Tiles: Tile Palette entries can be linked to a sprite (Edit Sprite); a tile whose sprite has >=2 frames is "animated" and stamps as a runtime AnimatedTilePlacement instead of baking pixels.
 - Colors: screen graphics and sprite color authoring use the shared 128-color Stella-based Atari 2600 NTSC palette. The sprite canvas Picker can still sample colors already present in legacy art; loading/saving does not automatically remap old colors.
+- Editor zoom: `=`/keypad `+` zooms in and `-`/keypad `-` zooms out in the Sprite and Screen Graphics editors. Shortcuts are ignored while editing a field.
 - Combat: melee has windup→active→recovery; hits cause knockback + hitstun + flash; lethal → dead/fade.
   Projectiles are team-tagged (enemy shots hit the player). Aggro enemies chase then return to nearest path point.
 

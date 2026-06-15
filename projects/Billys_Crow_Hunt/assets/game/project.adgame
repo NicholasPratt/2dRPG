@@ -15,10 +15,11 @@ weapon_defs 3
 weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 30 -
 weapon_def slingshot 1 9 293 0.59 200 slingshot ss_rock ss_rock 1 1 0 1 1 0 0 0 0 0 1 0 0 1 30 -
 weapon_def sword 0 25 32 0.31 200 sword - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 45 attack_3
-item_defs 3
+item_defs 4
 item_def coins "Coins" 4 coin Money 1 1 - 0
 item_def ss_rock "Slingshot Rock" 1 rock ss_rock 1 1 - 0
 item_def key "key" 5 key - 1 1 - 0
+item_def Health_Potion "Health Potion" 2 Health_Potion - 1 1 - 0
 starting_weapon Pocketknife
 font "Roboto.ttf"
 state_defs 2

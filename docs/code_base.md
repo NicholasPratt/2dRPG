@@ -369,6 +369,11 @@ struct DialogueGraph {
 - Up/Down or W/S selects player responses. E confirms a choice or advances graph dialogue.
 - Conditions evaluate against `GameState` and money stored as integer variable `Money`.
 - Action nodes mutate `GameState`, player health, and runtime NPC state.
+- Dialogue text interpolation uses `$Variable_Id`. `interpolateGameStateText` resolves a matching
+  `chapter.<chapterId>.<Variable_Id>` integer/boolean first, then the universal ID. Unknown placeholders
+  remain unchanged, IDs are case-sensitive, `${Variable.With-Dots}` supports IDs containing dots/hyphens,
+  and `$$` emits a literal dollar sign. The runtime applies
+  interpolation to graph dialogue/speakers/choices, legacy dialogue, and timed NPC/enemy path speech.
 
 ## Chapter System
 
@@ -763,9 +768,26 @@ public:
     bool isEnemyDefeated(const std::string& key) const;   // key: "<screenId>/<enemyId>"
     void markEnemyDefeated(const std::string& key);
 };
+
+std::string interpolateGameStateText(
+    const std::string& text,
+    const GameState& state,
+    const std::string& chapterId = {});
 ```
 
 `.adstate` (current version **2**) stores runtime values: named ints, named bools, owned items, and a defeated-enemy key set. v1 files (no `defeated` block) still load. Variable names are designer-authored content, not hard-coded engine behavior. The runtime save file lives at `assets/game/save.adstate`.
+
+`interpolateGameStateText` supports live state in authored text:
+
+```text
+You killed $Crows_Killed crows.
+Quest complete: $Crow_Quest_Done
+Reward: $$5
+```
+
+Integer values render as decimal numbers and booleans as `true`/`false`. Resolution prefers
+the current chapter's scoped key before the universal key. Plain `$Variable_Id` placeholders
+accept letters, digits, and underscores; braced placeholders support the full authored ID.
 
 ---
 
