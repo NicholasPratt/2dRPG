@@ -69,9 +69,10 @@ constexpr float kSpeechTextScale = 1.5f;
 constexpr float kDialogueTextScale = 1.8f;
 constexpr int kDialogueVisibleLines = 4;
 constexpr float kGamepadDeadZone = 0.35f;
-constexpr float kHudBarHeightPx = 40.0f;
+constexpr float kHudBarHeightPx = 28.0f;
 constexpr int kWindowWorkAreaMarginXPx = 32;
 constexpr int kWindowWorkAreaMarginYPx = 64;
+constexpr int kPreferredFullscreenScale = 2;
 
 struct RuntimeWindowLayout {
     int width = kScreenTilesW * kTileSize;
@@ -515,10 +516,13 @@ public:
             return true;
         }
 
+        // Screen music is exclusive. Stop the current track before loading its
+        // replacement; one-shot effects remain in their separate mix buffer.
+        stop();
+
         std::vector<std::uint8_t> decoded;
         SDL_AudioSpec decodedSpec{};
         if (!decodeOgg(path, decoded, decodedSpec, errorMessage)) {
-            stop();
             return false;
         }
 
@@ -814,6 +818,12 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     const int windowY = windowLayout.workY +
         std::max(0, (windowLayout.workHeight - outerHeight) / 2) + frameTop;
     glfwSetWindowPos(window_, windowX, windowY);
+    windowedX_ = windowX;
+    windowedY_ = windowY;
+    windowedWidth_ = windowLayout.width;
+    windowedHeight_ = windowLayout.height;
+    displayMode_ = windowLayout.scale >= 2 ? DisplayMode::Windowed2x : DisplayMode::Windowed1x;
+    displayMenuSelection_ = displayMode_ == DisplayMode::Windowed2x ? 1 : 0;
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1);
 
@@ -1569,6 +1579,32 @@ void Engine::update(float dt)
     playerHitFlashSeconds_ = std::max(0.0f, playerHitFlashSeconds_ - dt);
     noticeSeconds_ = std::max(0.0f, noticeSeconds_ - dt);
 
+    const bool fullscreenShortcutDown = glfwGetKey(window_, GLFW_KEY_F11) == GLFW_PRESS;
+    if (fullscreenShortcutDown && !fullscreenShortcutWasDown_) {
+        applyDisplayMode(displayMode_ == DisplayMode::Fullscreen2x
+                ? DisplayMode::Windowed2x
+                : DisplayMode::Fullscreen2x);
+    }
+    fullscreenShortcutWasDown_ = fullscreenShortcutDown;
+
+    const bool escapeDown = inputDown(InputAction::Exit);
+    if (escapeDown && !displayMenuEscapeWasDown_) {
+        displayMenuVisible_ = !displayMenuVisible_;
+        if (displayMenuVisible_) {
+            inventoryVisible_ = false;
+            displayMenuSelection_ = displayMode_ == DisplayMode::Windowed1x
+                ? 0
+                : (displayMode_ == DisplayMode::Windowed2x ? 1 : 2);
+        }
+    }
+    displayMenuEscapeWasDown_ = escapeDown;
+
+    if (displayMenuVisible_) {
+        updateDisplayMenu();
+        playerIsMoving_ = false;
+        return;
+    }
+
     const bool inventoryInputDown = inputDown(InputAction::Inventory);
     if (inventoryInputDown && !inventoryInputWasDown_ &&
         interactionState_ != InteractionState::InDialogue &&
@@ -1630,6 +1666,75 @@ void Engine::update(float dt)
     updateDoors();
     updateInteraction();
     updateItemPickups();
+}
+
+void Engine::updateDisplayMenu()
+{
+    const bool upDown = inputDown(InputAction::Up);
+    const bool downDown = inputDown(InputAction::Down);
+    const bool useDown = inputDown(InputAction::Interact);
+
+    if (upDown && !displayMenuUpWasDown_) {
+        displayMenuSelection_ = (displayMenuSelection_ + 3) % 4;
+    }
+    if (downDown && !displayMenuDownWasDown_) {
+        displayMenuSelection_ = (displayMenuSelection_ + 1) % 4;
+    }
+    if (useDown && !displayMenuUseWasDown_) {
+        if (displayMenuSelection_ == 3) {
+            glfwSetWindowShouldClose(window_, GLFW_TRUE);
+        } else {
+            applyDisplayMode(static_cast<DisplayMode>(displayMenuSelection_));
+            displayMenuVisible_ = false;
+        }
+    }
+
+    displayMenuUpWasDown_ = upDown;
+    displayMenuDownWasDown_ = downDown;
+    displayMenuUseWasDown_ = useDown;
+}
+
+void Engine::applyDisplayMode(DisplayMode mode)
+{
+    if (window_ == nullptr || mode == displayMode_) {
+        return;
+    }
+
+    const int logicalWidth = kScreenTilesW * kTileSize;
+    const int logicalHeight = kScreenTilesH * kTileSize + static_cast<int>(kHudBarHeightPx);
+
+    if (displayMode_ != DisplayMode::Fullscreen2x) {
+        glfwGetWindowPos(window_, &windowedX_, &windowedY_);
+        glfwGetWindowSize(window_, &windowedWidth_, &windowedHeight_);
+    }
+
+    if (mode == DisplayMode::Fullscreen2x) {
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        if (monitor == nullptr) {
+            return;
+        }
+        int monitorX = 0;
+        int monitorY = 0;
+        glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+        const GLFWvidmode* videoMode = glfwGetVideoMode(monitor);
+        if (videoMode == nullptr) {
+            return;
+        }
+        glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_FALSE);
+        glfwSetWindowMonitor(window_, nullptr, monitorX, monitorY,
+            videoMode->width, videoMode->height, GLFW_DONT_CARE);
+    } else {
+        const int scale = mode == DisplayMode::Windowed2x ? 2 : 1;
+        const int width = logicalWidth * scale;
+        const int height = logicalHeight * scale;
+        glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_TRUE);
+        glfwSetWindowMonitor(window_, nullptr, windowedX_, windowedY_,
+            width, height, GLFW_DONT_CARE);
+        windowedWidth_ = width;
+        windowedHeight_ = height;
+    }
+
+    displayMode_ = mode;
 }
 
 bool Engine::isAmmoItemId(const std::string& id) const
@@ -1907,10 +2012,6 @@ void Engine::updatePlayer(float dt)
     if (inputDown(InputAction::Right)) { dx += 1.0f; }
     if (inputDown(InputAction::Up)) { dy -= 1.0f; }
     if (inputDown(InputAction::Down)) { dy += 1.0f; }
-    if (inputDown(InputAction::Exit)) {
-        glfwSetWindowShouldClose(window_, GLFW_TRUE);
-    }
-
     const float len = std::sqrt(dx * dx + dy * dy);
     if (len > 0.0f) {
         dx /= len;
@@ -4615,9 +4716,18 @@ void Engine::render()
     int fbWidth = 0;
     int fbHeight = 0;
     glfwGetFramebufferSize(window_, &fbWidth, &fbHeight);
-    glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(0.03f, 0.035f, 0.04f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+
+    const int logicalWidth = static_cast<int>(screenWidthPx());
+    const int logicalHeight = static_cast<int>(screenHeightPx() + kHudBarHeightPx);
+    const int availableScale = std::max(1, std::min(fbWidth / logicalWidth, fbHeight / logicalHeight));
+    const int integerScale = std::min(kPreferredFullscreenScale, availableScale);
+    const int viewportWidth = logicalWidth * integerScale;
+    const int viewportHeight = logicalHeight * integerScale;
+    const int viewportX = (fbWidth - viewportWidth) / 2;
+    const int viewportY = (fbHeight - viewportHeight) / 2;
+    glViewport(viewportX, viewportY, viewportWidth, viewportHeight);
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -4664,16 +4774,6 @@ void Engine::render()
     // Floor-layer animated tiles sit above the floor but below entities/player.
     renderAnimatedTiles(0);
     renderDoors();
-
-    for (int y = 0; y < activeMap_.height; ++y) {
-        for (int x = 0; x < activeMap_.width; ++x) {
-            const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(activeMap_.width) + static_cast<std::size_t>(x);
-            if (activeMap_.layers[1][index] != 0u) {
-                renderFilledRect(static_cast<float>(x * kTileSize), static_cast<float>(y * kTileSize),
-                    static_cast<float>(kTileSize), static_cast<float>(kTileSize), 0.95f, 0.82f, 0.20f, 0.22f);
-            }
-        }
-    }
 
     for (const RuntimePathEntity& entity : pathEntities_) {
         if (!entity.pathHidden && !entity.path.renderAboveWalls) {
@@ -4772,6 +4872,7 @@ void Engine::render()
     renderNotice();
     renderDialogueBox();
     renderShopMenu();
+    renderDisplayMenu();
 }
 
 void Engine::renderTexture(const Texture& texture, float x, float y, float width, float height) const
@@ -5145,26 +5246,28 @@ void Engine::renderAnimatedTiles(int layer) const
     if (activeScreen_ == nullptr) {
         return;
     }
-    for (const AnimatedTilePlacement& tile : activeScreen_->animatedTiles) {
-        if (tile.layer != layer) {
-            continue;
+    for (int stack = 0; stack < kAnimatedTileStackCount; ++stack) {
+        for (const AnimatedTilePlacement& tile : activeScreen_->animatedTiles) {
+            if (tile.layer != layer || tile.stack != stack) {
+                continue;
+            }
+            auto spriteIt = loadedSprites_.find(tile.spriteId);
+            if (spriteIt == loadedSprites_.end() || !spriteIt->second.loaded || spriteIt->second.texture.id == 0) {
+                continue;
+            }
+            const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            if (frame == nullptr) {
+                continue;
+            }
+            const Texture& tex = spriteIt->second.texture;
+            const float u0 = static_cast<float>(frame->x) / static_cast<float>(tex.width);
+            const float v0 = static_cast<float>(frame->y) / static_cast<float>(tex.height);
+            const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(tex.width);
+            const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(tex.height);
+            const float x = static_cast<float>(tile.cellX * kTileSize);
+            const float y = static_cast<float>(tile.cellY * kTileSize);
+            renderTextureRegion(tex, x, y, static_cast<float>(frame->width), static_cast<float>(frame->height), u0, v0, u1, v1);
         }
-        auto spriteIt = loadedSprites_.find(tile.spriteId);
-        if (spriteIt == loadedSprites_.end() || !spriteIt->second.loaded || spriteIt->second.texture.id == 0) {
-            continue;
-        }
-        const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
-        if (frame == nullptr) {
-            continue;
-        }
-        const Texture& tex = spriteIt->second.texture;
-        const float u0 = static_cast<float>(frame->x) / static_cast<float>(tex.width);
-        const float v0 = static_cast<float>(frame->y) / static_cast<float>(tex.height);
-        const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(tex.width);
-        const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(tex.height);
-        const float x = static_cast<float>(tile.cellX * kTileSize);
-        const float y = static_cast<float>(tile.cellY * kTileSize);
-        renderTextureRegion(tex, x, y, static_cast<float>(frame->width), static_cast<float>(frame->height), u0, v0, u1, v1);
     }
 }
 
@@ -5336,15 +5439,15 @@ void Engine::renderHud() const
     const float heartW = 8.0f;
     for (int i = 0; i < playerMaxHealth_; ++i) {
         const bool filled = i < playerHealth_;
-        renderFilledRect(10.0f + static_cast<float>(i) * (heartW + 2.0f), barY + 17.0f, heartW, 6.0f,
+        renderFilledRect(10.0f + static_cast<float>(i) * (heartW + 2.0f), barY + 11.0f, heartW, 6.0f,
             filled ? 0.90f : 0.16f, filled ? 0.08f : 0.08f, filled ? 0.12f : 0.09f, 0.95f);
     }
 
     const auto renderWeaponSlot = [this](const WeaponDef& weapon, const char* button,
                                       int ammoCount, float x, float y,
                                       float accentR, float accentG, float accentB) {
-        constexpr float slotSize = 28.0f;
-        constexpr float iconSize = 22.0f;
+        constexpr float slotSize = 22.0f;
+        constexpr float iconSize = 18.0f;
         renderFilledRect(x, y, slotSize, slotSize, 0.03f, 0.04f, 0.06f, 0.84f);
         renderFilledRect(x, y, slotSize, 1.0f, accentR, accentG, accentB, 0.95f);
 
@@ -5389,11 +5492,11 @@ void Engine::renderHud() const
     };
 
     const float rightEdge = screenWidthPx() - 10.0f;
-    float slotX = rightEdge - 28.0f;
-    const float slotY = barY + 6.0f;
+    float slotX = rightEdge - 22.0f;
+    const float slotY = barY + 3.0f;
 
     if (rangedWeapon_.has_value()) {
-        slotX = rightEdge - 48.0f;
+        slotX = rightEdge - 42.0f;
         renderWeaponSlot(*rangedWeapon_, "X", ammoCountForWeapon(*rangedWeapon_),
             slotX, slotY, 0.20f, 0.80f, 1.0f);
         slotX -= 38.0f;
@@ -5402,6 +5505,52 @@ void Engine::renderHud() const
     if (meleeWeapon_.has_value()) {
         renderWeaponSlot(*meleeWeapon_, "Z", -1, slotX, slotY, 1.0f, 0.78f, 0.25f);
     }
+}
+
+void Engine::renderDisplayMenu() const
+{
+    if (!displayMenuVisible_) {
+        return;
+    }
+
+    constexpr float panelW = 220.0f;
+    constexpr float panelH = 154.0f;
+    constexpr float rowH = 25.0f;
+    const float panelX = (screenWidthPx() - panelW) * 0.5f;
+    const float panelY = (screenHeightPx() + kHudBarHeightPx - panelH) * 0.5f;
+    const std::array<const char*, 4> labels = {
+        "WINDOWED 1X",
+        "WINDOWED 2X",
+        "FULLSCREEN 2X",
+        "QUIT GAME",
+    };
+
+    renderFilledRect(0.0f, 0.0f, screenWidthPx(), screenHeightPx() + kHudBarHeightPx,
+        0.0f, 0.0f, 0.0f, 0.58f);
+    renderFilledRect(panelX, panelY, panelW, panelH, 0.03f, 0.04f, 0.06f, 0.98f);
+    renderFilledRect(panelX, panelY, panelW, 1.0f, 0.30f, 0.72f, 0.96f, 1.0f);
+    renderText("DISPLAY", panelX + 10.0f, panelY + 8.0f, 1.1f,
+        0.92f, 0.96f, 1.0f, 1.0f);
+
+    for (int i = 0; i < static_cast<int>(labels.size()); ++i) {
+        const float rowY = panelY + 32.0f + static_cast<float>(i) * rowH;
+        if (i == displayMenuSelection_) {
+            renderFilledRect(panelX + 7.0f, rowY, panelW - 14.0f, rowH - 2.0f,
+                0.16f, 0.34f, 0.48f, 0.95f);
+        }
+        const bool active =
+            (i == 0 && displayMode_ == DisplayMode::Windowed1x) ||
+            (i == 1 && displayMode_ == DisplayMode::Windowed2x) ||
+            (i == 2 && displayMode_ == DisplayMode::Fullscreen2x);
+        const std::string label = std::string(active ? "* " : "  ") + labels[static_cast<std::size_t>(i)];
+        renderText(label, panelX + 14.0f, rowY + 4.0f, 0.9f,
+            i == displayMenuSelection_ ? 1.0f : 0.78f,
+            i == displayMenuSelection_ ? 0.94f : 0.82f,
+            i == displayMenuSelection_ ? 0.55f : 0.88f, 1.0f);
+    }
+
+    renderText("ENTER SELECTS   ESC CLOSES   F11 TOGGLES", panelX + 10.0f, panelY + panelH - 17.0f,
+        0.56f, 0.62f, 0.68f, 0.76f, 1.0f);
 }
 
 void Engine::renderInventory() const

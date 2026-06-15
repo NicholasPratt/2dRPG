@@ -159,6 +159,18 @@ int main(int argc, char** argv)
     actionNpc.waypoints = {enemyEnter, enemySpeak, enemyLeave};
     actionChapter.screens.front().npcs.push_back(actionNpc);
 
+    adventure::game::AnimatedTilePlacement lowerAnimation;
+    lowerAnimation.spriteId = "smoke_lower";
+    lowerAnimation.cellX = 4;
+    lowerAnimation.cellY = 5;
+    lowerAnimation.layer = 0;
+    lowerAnimation.stack = 0;
+    adventure::game::AnimatedTilePlacement upperAnimation = lowerAnimation;
+    upperAnimation.spriteId = "smoke_upper";
+    upperAnimation.stack = 2;
+    actionChapter.screens.front().animatedTiles.push_back(lowerAnimation);
+    actionChapter.screens.front().animatedTiles.push_back(upperAnimation);
+
     const std::filesystem::path chapterSmokePath = "build/smoke_chapter.adchapter";
     if (!adventure::game::saveChapter(chapterSmokePath, actionChapter, &error)) {
         std::cerr << "Failed to save chapter action smoke file: " << error << "\n";
@@ -178,11 +190,16 @@ int main(int argc, char** argv)
         loadedActionEnemy.waypoints[1].speechDurationSeconds != 1.5f ||
         loadedActionEnemy.waypoints[1].speechText != "You cannot escape!" ||
         loadedActionEnemy.waypoints.back().action != adventure::game::PathWaypointAction::Leave ||
-        loadedActionNpc.curveMode != adventure::game::PathCurveMode::Spline) {
+        loadedActionNpc.curveMode != adventure::game::PathCurveMode::Spline ||
+        loadedActionChapter.screens.front().animatedTiles.size() <
+            actionChapter.screens.front().animatedTiles.size() ||
+        loadedActionChapter.screens.front().animatedTiles[
+            loadedActionChapter.screens.front().animatedTiles.size() - 2].stack != 0 ||
+        loadedActionChapter.screens.front().animatedTiles.back().stack != 2) {
         std::cerr << "Chapter waypoint action round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped spline waypoint enter/speak/leave actions (ADCHAPTER v12)\n";
+    std::cout << "Round-tripped waypoint actions and animation stacks (ADCHAPTER v13)\n";
 
     adventure::game::SpriteMetadata sprite;
     const std::filesystem::path spritePath = "assets/game/sprites/new_sprite.sprite.json";

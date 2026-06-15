@@ -589,7 +589,7 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
 
     ui::sliderInt("Zoom =/-", "##ScreenGraphicsZoom", &zoom_, 1, 16, 80.0f);
     ImGui::SameLine(220.0f);
-    ui::sliderInt("Brush", "##ScreenGraphicsBrush", &brushSize_, 1, 12, 80.0f);
+    ui::sliderInt("Brush", "##ScreenGraphicsBrush", &brushSize_, 1, 32, 80.0f);
     ui::checkbox("Grid", "##ScreenGraphicsGrid", &showGrid_);
     if (!wallGuide_.empty()) {
         ImGui::SameLine(220.0f);
@@ -658,7 +658,11 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
         if (tool_ == PaintTool::Smudge) {
             ImGui::TextDisabled("Drag to blend; output snaps to Atari colors.");
         } else {
-            ImGui::TextDisabled("One adjustment per pixel per stroke; edges are dithered.");
+            ui::sliderInt("Graduation", "##AdjustmentBrushGraduation", &adjustmentGraduation_,
+                0, 100, 120.0f);
+            ImGui::SameLine();
+            ImGui::TextDisabled("%d%%", adjustmentGraduation_);
+            ImGui::TextDisabled("Graduation controls the feathered outer edge.");
         }
     }
     drawToolButton("Fill", PaintTool::Fill);
@@ -721,6 +725,17 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
         (tool_ == PaintTool::TileStamp && stampTileIndex_ >= 0)) {
         ImGui::TextDisabled("Reference: %s", pasteReferenceName());
         ImGui::TextDisabled("Press Ctrl+V to use another corner.");
+    }
+    if (tool_ == PaintTool::TileStamp && stampTileIndex_ >= 0 &&
+        stampTileIndex_ < static_cast<int>(context.tilePalette.size()) &&
+        tileIsAnimated(context.tilePalette[static_cast<std::size_t>(stampTileIndex_)])) {
+        ImGui::Text("Animation band: %s", activeLayer_ == ActiveLayer::Floor ? "Floor" : "Overlay");
+        ImGui::RadioButton("Stack 1", &animatedTileStack_, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Stack 2", &animatedTileStack_, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Stack 3", &animatedTileStack_, 2);
+        ImGui::TextDisabled("Higher stacks draw over lower stacks in the same band.");
     }
     drawToolButton("Tile Fill", PaintTool::TileFill);
     ImGui::SameLine();
@@ -1025,23 +1040,27 @@ void WallFloorPaintPanel::placeAnimatedTile(EditorContext& context, const TilePa
         return;
     }
     auto& placements = context.selectedScreenAnimatedTiles;
-    // Stamping replaces whatever animated tile is already on this cell.
-    removeAnimatedTileAt(context, cellX, cellY);
+    // Stamping replaces only the selected animation band/stack at this cell.
+    removeAnimatedTileAt(context, cellX, cellY, false);
     game::AnimatedTilePlacement placement;
     placement.spriteId = tile.spriteId;
     placement.cellX = cellX;
     placement.cellY = cellY;
     placement.layer = (activeLayer_ == ActiveLayer::Wall) ? 1 : 0;
+    placement.stack = std::clamp(animatedTileStack_, 0, game::kAnimatedTileStackCount - 1);
     placements.push_back(placement);
     context.markDirty();
 }
 
-void WallFloorPaintPanel::removeAnimatedTileAt(EditorContext& context, int cellX, int cellY)
+void WallFloorPaintPanel::removeAnimatedTileAt(
+    EditorContext& context, int cellX, int cellY, bool allStacks)
 {
     auto& placements = context.selectedScreenAnimatedTiles;
+    const int selectedLayer = activeLayer_ == ActiveLayer::Wall ? 1 : 0;
     for (int i = static_cast<int>(placements.size()) - 1; i >= 0; --i) {
-        if (placements[static_cast<std::size_t>(i)].cellX == cellX &&
-            placements[static_cast<std::size_t>(i)].cellY == cellY) {
+        const game::AnimatedTilePlacement& placement = placements[static_cast<std::size_t>(i)];
+        if (placement.cellX == cellX && placement.cellY == cellY &&
+            (allStacks || (placement.layer == selectedLayer && placement.stack == animatedTileStack_))) {
             placements.erase(placements.begin() + i);
             context.markDirty();
         }
@@ -1397,14 +1416,17 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
                     origin.y + static_cast<float>(tile.cellY * ts) * pixelSize};
                 const ImVec2 mMax{mMin.x + static_cast<float>(fp[0] * ts) * pixelSize,
                     mMin.y + static_cast<float>(fp[1] * ts) * pixelSize};
-                const bool highlighted = !selectedSpriteId.empty() && tile.spriteId == selectedSpriteId;
+                const bool selectedSlot = tile.layer == (activeLayer_ == ActiveLayer::Wall ? 1 : 0) &&
+                    tile.stack == animatedTileStack_;
+                const bool highlighted = selectedSlot && !selectedSpriteId.empty() && tile.spriteId == selectedSpriteId;
                 const ImU32 fill = highlighted ? IM_COL32(255, 216, 64, 70)
                     : (tile.layer == 1 ? IM_COL32(120, 200, 255, 40) : IM_COL32(120, 255, 160, 40));
                 const ImU32 border = highlighted ? IM_COL32(255, 216, 64, 255)
                     : (tile.layer == 1 ? IM_COL32(120, 200, 255, 220) : IM_COL32(120, 255, 160, 220));
                 drawList->AddRectFilled(mMin, mMax, fill);
                 drawList->AddRect(mMin, mMax, border, 0.0f, 0, highlighted ? 2.5f : 1.5f);
-                drawList->AddText({mMin.x + 2.0f, mMin.y + 2.0f}, border, "A");
+                const std::string marker = "A" + std::to_string(tile.stack + 1);
+                drawList->AddText({mMin.x + 2.0f, mMin.y + 2.0f}, border, marker.c_str());
             }
         }
         if (tool_ == PaintTool::TileStamp && stampTile != nullptr && tileIsAnimated(*stampTile) &&
@@ -1776,20 +1798,32 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             // palette tile (and switch to the Stamp tool) so it can be re-stamped.
             const int ccx = tx / ts;
             const int ccy = ty / ts;
+            const game::AnimatedTilePlacement* selectedPlacement = nullptr;
             for (const game::AnimatedTilePlacement& p : context.selectedScreenAnimatedTiles) {
                 const auto fpIt = animTileFootprints_.find(p.spriteId);
                 const int fpW = fpIt != animTileFootprints_.end() ? fpIt->second[0] : 1;
                 const int fpH = fpIt != animTileFootprints_.end() ? fpIt->second[1] : 1;
                 if (ccx >= p.cellX && ccx < p.cellX + fpW && ccy >= p.cellY && ccy < p.cellY + fpH) {
-                    for (int ti = 0; ti < static_cast<int>(context.tilePalette.size()); ++ti) {
-                        if (context.tilePalette[static_cast<std::size_t>(ti)].spriteId == p.spriteId) {
-                            stampTileIndex_ = ti;
-                            tool_ = PaintTool::TileStamp;
-                            status_ = "Selected animated tile '" + p.spriteId + "' for stamping.";
-                            break;
-                        }
+                    const int priority = p.layer * 3 + p.stack;
+                    const int selectedPriority = selectedPlacement != nullptr
+                        ? selectedPlacement->layer * 3 + selectedPlacement->stack : -1;
+                    if (priority >= selectedPriority) {
+                        selectedPlacement = &p;
                     }
-                    break;
+                }
+            }
+            if (selectedPlacement != nullptr) {
+                for (int ti = 0; ti < static_cast<int>(context.tilePalette.size()); ++ti) {
+                    if (context.tilePalette[static_cast<std::size_t>(ti)].spriteId == selectedPlacement->spriteId) {
+                        stampTileIndex_ = ti;
+                        activeLayer_ = selectedPlacement->layer == 1 ? ActiveLayer::Wall : ActiveLayer::Floor;
+                        animatedTileStack_ = std::clamp(
+                            selectedPlacement->stack, 0, game::kAnimatedTileStackCount - 1);
+                        tool_ = PaintTool::TileStamp;
+                        status_ = "Selected animated tile '" + selectedPlacement->spriteId + "' stack " +
+                            std::to_string(animatedTileStack_ + 1) + " for stamping.";
+                        break;
+                    }
                 }
             }
         }
@@ -1883,12 +1917,12 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             strokeCaptured_ = true;
             lastPaint_ = {tx, ty};
             eraseTile(tx, ty);
-            removeAnimatedTileAt(context, tx / ts, ty / ts);
+            removeAnimatedTileAt(context, tx / ts, ty / ts, true);
         } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && strokeCaptured_) {
             if (lastPaint_[0] != tx || lastPaint_[1] != ty) {
                 lastPaint_ = {tx, ty};
                 eraseTile(tx, ty);
-                removeAnimatedTileAt(context, tx / ts, ty / ts);
+                removeAnimatedTileAt(context, tx / ts, ty / ts, true);
             }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -1921,8 +1955,9 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
 
             // Right-click removes an animated placement under the cursor.
             if (animated && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-                removeAnimatedTileAt(context, tx / ts, ty / ts);
-                status_ = "Removed animated tile at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
+                removeAnimatedTileAt(context, tx / ts, ty / ts, false);
+                status_ = "Removed animated tile stack " + std::to_string(animatedTileStack_ + 1) +
+                    " at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
             }
 
             const bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -1936,7 +1971,8 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
             if (leftDown && strokeCaptured_ && (lastPaint_[0] != tx || lastPaint_[1] != ty)) {
                 if (animated) {
                     placeAnimatedTile(context, tile, tx / ts, ty / ts);
-                    status_ = "Stamped animated tile at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
+                    status_ = "Stamped animated tile on stack " + std::to_string(animatedTileStack_ + 1) +
+                        " at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
                 } else {
                     stampTile(tx, ty, tile);
                     status_ = "Stamped at [" + std::to_string(tx / ts) + "," + std::to_string(ty / ts) + "].";
@@ -1957,9 +1993,9 @@ void WallFloorPaintPanel::handleCanvasInput(EditorContext& context, const ImVec2
     const bool adjustmentTool = tool_ == PaintTool::Darken || tool_ == PaintTool::Lighten;
     const bool smudgeTool = tool_ == PaintTool::Smudge;
     if (adjustmentTool) {
-        ImGui::SetTooltip("%s %s %.0f%% [%d,%d]", activeLayer().name.c_str(),
+        ImGui::SetTooltip("%s %s %d%%, graduation %d%% [%d,%d]", activeLayer().name.c_str(),
             tool_ == PaintTool::Lighten ? "lighten" : "darken",
-            static_cast<float>(adjustmentIntensity_), x, y);
+            adjustmentIntensity_, adjustmentGraduation_, x, y);
     } else if (smudgeTool) {
         ImGui::SetTooltip("%s smudge %.0f%% [%d,%d] (Atari colors)",
             activeLayer().name.c_str(), static_cast<float>(adjustmentIntensity_), x, y);
@@ -2162,7 +2198,9 @@ void WallFloorPaintPanel::setAdjustmentBrushPixel(PaintLayer& layer, int x, int 
 
     const int radius = std::max(0, brushSize_ - 1);
     const float outerRadius = static_cast<float>(radius) + 0.5f;
-    const float featherWidth = radius > 0 ? std::min(2.5f, std::max(1.0f, outerRadius * 0.35f)) : 0.0f;
+    const float graduation =
+        static_cast<float>(std::clamp(adjustmentGraduation_, 0, 100)) / 100.0f;
+    const float featherWidth = radius > 0 ? outerRadius * graduation : 0.0f;
     const float innerRadius = std::max(0.0f, outerRadius - featherWidth);
     const int extent = std::max(0, static_cast<int>(std::ceil(outerRadius)));
     const float intensity = static_cast<float>(std::clamp(adjustmentIntensity_, 0, 100)) / 100.0f;

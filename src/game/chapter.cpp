@@ -16,6 +16,7 @@ constexpr int kMaxScreenNpcs = 1024;
 constexpr int kMaxScreenAnimatedTiles = 4096;
 constexpr int kMaxEnemyWaypoints = 4096;
 constexpr int kMaxNpcWaypoints = 4096;
+constexpr int kMaxAnimatedTileStack = kAnimatedTileStackCount - 1;
 constexpr int kMinGridCoord = -512;
 constexpr int kMaxGridCoord = 512;
 
@@ -79,6 +80,15 @@ bool validChapterShape(const Chapter& chapter)
                 return false;
             }
         }
+        if (screen.animatedTiles.size() > kMaxScreenAnimatedTiles) {
+            return false;
+        }
+        for (const AnimatedTilePlacement& tile : screen.animatedTiles) {
+            if (!validToken(tile.spriteId) || tile.layer < 0 || tile.layer > 1 ||
+                tile.stack < 0 || tile.stack > kMaxAnimatedTileStack) {
+                return false;
+            }
+        }
     }
 
     return findScreen(chapter, chapter.startScreenId) != nullptr;
@@ -112,7 +122,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 12\n";
+    output << "ADCHAPTER 13\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -183,7 +193,8 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         output << "animtiles " << screen.animatedTiles.size() << "\n";
         for (const AnimatedTilePlacement& tile : screen.animatedTiles) {
             output << "animtile " << (tile.spriteId.empty() ? "-" : tile.spriteId)
-                   << ' ' << tile.cellX << ' ' << tile.cellY << ' ' << tile.layer << "\n";
+                   << ' ' << tile.cellX << ' ' << tile.cellY << ' ' << tile.layer
+                   << ' ' << tile.stack << "\n";
         }
     }
     output << "end\n";
@@ -207,7 +218,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 12) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 13) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -483,12 +494,16 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 AnimatedTilePlacement tile;
                 std::string spriteId;
                 input >> key >> spriteId >> tile.cellX >> tile.cellY >> tile.layer;
+                if (version >= 13) {
+                    input >> tile.stack;
+                }
                 if (key != "animtile" || !input) {
                     setError(errorMessage, "Expected animated tile entry.");
                     return false;
                 }
                 tile.spriteId = (spriteId == "-") ? std::string{} : spriteId;
                 tile.layer = std::clamp(tile.layer, 0, 1);
+                tile.stack = std::clamp(tile.stack, 0, kMaxAnimatedTileStack);
                 screen.animatedTiles.push_back(std::move(tile));
             }
         }

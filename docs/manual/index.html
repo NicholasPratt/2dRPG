@@ -186,7 +186,10 @@ replace them explicitly when converting older art.</p>
 the Strength control. Smudged output is always snapped to the nearest Atari 2600 NTSC palette color. Transparent
 source pixels are skipped rather than erasing the destination. The <strong>Spray</strong> and
 <strong>Dither</strong> brush shapes feather their density toward the outside of the brush, including when used with
-Smudge.</p>
+Smudge. The Brush control supports sizes from 1 to 32.</p>
+<p><strong>Lighten</strong> and <strong>Darken</strong> have separate <strong>Intensity</strong> and
+<strong>Graduation</strong> sliders. Intensity controls how strongly the color changes. Graduation controls the width
+of the dithered feather around the brush edge: 0% is a hard edge and 100% graduates across the full brush radius.</p>
 <p>Clear the <strong>Animated tiles</strong> checkbox in Screen Graphics to hide placed animation overlays while
 painting the Floor or Wall beneath them. This is useful when transparent animation frames should reveal authored
 background pixels. The placements remain in the chapter and reappear when the checkbox is enabled; an active Stamp
@@ -424,6 +427,10 @@ questions.</p>
   <code>kEnemyKnockbackBasePxPerSecond</code>, <code>kProjectileReboundRestitution</code>) and require a rebuild.</p>
 </div>
 
+<div class="note"><strong>Music playback:</strong> only one screen-music track plays at a time. Entering a screen with
+different music stops the previous track before loading the replacement. Door and other one-shot sound effects can
+still play over the active music.</div>
+
 <div class="recipe" id="recipe-not-appearing">
   <h4>R17. A placed NPC/enemy doesn’t appear, or doesn’t react</h4>
   <p>Work through these in order — they cover almost every case:</p>
@@ -462,10 +469,15 @@ questions.</p>
     <li>Back in screen graphics, hit the palette’s <strong>Refresh</strong>; the tile now shows
     “● anim (N)”. Select it and use the <strong>Stamp</strong> tool to place it on cells. An animated tile stamps as a
     runtime placement drawn on top of the screen at that cell (active layer decides order: <em>Wall</em> = in front of
-    the player, <em>Floor</em> = behind). Right-click or <strong>Tile Erase</strong> removes a placement.</li>
+    the player, <em>Floor</em> = behind). Choose <strong>Stack 1</strong>, <strong>Stack 2</strong>, or
+    <strong>Stack 3</strong> to layer multiple animations in the same band and cell; higher stacks draw over lower
+    stacks. Right-click removes the selected band/stack. <strong>Tile Erase</strong> removes all animation stacks at
+    the cell.</li>
   </ul>
   <p>A single-frame tile stamps static pixels as before; it only animates once its sprite has ≥2 frames. Placements are
   saved into the chapter and animate in-game.</p>
+  <p>Each cell can therefore hold three Floor animations and three Overlay animations. Selecting a cell with
+  <strong>Tile Select</strong> chooses the topmost animation under the cursor and restores its band and stack controls.</p>
 </div>
 
 <div class="recipe" id="recipe-weapon-pickup-sprite">
@@ -644,8 +656,13 @@ questions.</p>
   <tr><td>Ranged attack</td><td><span class="kbd">X</span></td><td>East face button</td></tr>
   <tr><td>Toggle inventory</td><td><span class="kbd">I</span></td><td>North / Select / Start</td></tr>
   <tr><td>Scroll dialogue / select response</td><td>Up/Down or W/S</td><td>D-pad / left stick</td></tr>
-  <tr><td>Quit the game window</td><td><span class="kbd">Esc</span></td><td>—</td></tr>
+  <tr><td>Open / close display menu</td><td><span class="kbd">Esc</span></td><td>—</td></tr>
+  <tr><td>Toggle Fullscreen 2x</td><td><span class="kbd">F11</span></td><td>—</td></tr>
 </table>
+<p>The game renders a fixed 768&times;540 logical canvas: a 768&times;512 playfield and compact
+28-pixel HUD. It uses centred integer scaling with black letterboxing, so resizing never stretches
+the pixels. The display menu offers Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game.
+Fullscreen 2x renders at 1536&times;1080 and remains centred on wider monitors.</p>
 
 <!-- ============================================================ -->
 <h2 id="glossary">8. Glossary</h2>

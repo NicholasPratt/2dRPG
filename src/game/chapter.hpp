@@ -8,6 +8,8 @@
 
 namespace adventure::game {
 
+inline constexpr int kAnimatedTileStackCount = 3;
+
 enum class PathWaypointAction {
     None = 0,
     Enter = 1,
@@ -78,12 +80,14 @@ struct ScreenLink {
 // An animated tile is a sprite asset placed on a map cell. The runtime cycles the
 // sprite's frames over the static screen graphics. `layer` controls draw order
 // relative to the wall texture: 0 = above floor (player walks over it),
-// 1 = above walls / overlay (player walks behind it).
+// 1 = above walls / overlay (player walks behind it). `stack` provides three
+// ordered animation slots inside each layer; higher stacks draw later.
 struct AnimatedTilePlacement {
     std::string spriteId;
     int cellX = 0;
     int cellY = 0;
     int layer = 0;
+    int stack = 0;
 };
 
 struct ChapterScreen {

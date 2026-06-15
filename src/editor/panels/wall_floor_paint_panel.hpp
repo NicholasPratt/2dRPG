@@ -64,6 +64,7 @@ private:
     int zoom_ = 10;
     int brushSize_ = 1;
     int adjustmentIntensity_ = 20;
+    int adjustmentGraduation_ = 35;
     int pixelsPerTile_ = game::kTileSize;
     ActiveLayer activeLayer_ = ActiveLayer::Wall;
     PaintTool tool_ = PaintTool::Pencil;
@@ -111,6 +112,7 @@ private:
     // Tile stamp
     int stampTileIndex_ = -1;
     int stampFrameIndex_ = 0;
+    int animatedTileStack_ = 0;
 
     // Per-tile sprite info: a palette tile whose linked sprite has >= 2 frames is
     // "animated" and stamps as a runtime animated tile instead of static pixels.
@@ -138,7 +140,7 @@ private:
     void addTileSelectionToPalette(EditorContext& context);
     void stampTile(int x, int y, const TilePaletteEntry& tile);
     void placeAnimatedTile(EditorContext& context, const TilePaletteEntry& tile, int cellX, int cellY);
-    void removeAnimatedTileAt(EditorContext& context, int cellX, int cellY);
+    void removeAnimatedTileAt(EditorContext& context, int cellX, int cellY, bool allStacks);
     void floodFillTile(int x, int y, const TilePaletteEntry& tile);
     void fillTile(int x, int y, std::uint32_t color);
     void eraseTile(int x, int y);

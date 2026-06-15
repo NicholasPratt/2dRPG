@@ -198,6 +198,12 @@ private:
         Exit,
     };
 
+    enum class DisplayMode {
+        Windowed1x,
+        Windowed2x,
+        Fullscreen2x,
+    };
+
     std::filesystem::path projectRoot_;
     GLFWwindow* window_ = nullptr;
     std::unique_ptr<MusicPlayer> musicPlayer_;
@@ -237,6 +243,18 @@ private:
     bool inventoryUseWasDown_ = false;
     bool inventoryMeleeWasDown_ = false;
     bool inventoryRangedWasDown_ = false;
+    bool displayMenuVisible_ = false;
+    int displayMenuSelection_ = 2;
+    bool displayMenuUpWasDown_ = false;
+    bool displayMenuDownWasDown_ = false;
+    bool displayMenuUseWasDown_ = false;
+    bool displayMenuEscapeWasDown_ = false;
+    bool fullscreenShortcutWasDown_ = false;
+    DisplayMode displayMode_ = DisplayMode::Windowed1x;
+    int windowedX_ = 0;
+    int windowedY_ = 0;
+    int windowedWidth_ = 768;
+    int windowedHeight_ = 540;
     float playerX_ = 0.0f;
     float playerY_ = 0.0f;
     float playerFacingX_ = 1.0f;
@@ -330,6 +348,8 @@ private:
     [[nodiscard]] bool gamepadButtonDown(int button) const;
     [[nodiscard]] float gamepadAxis(int axis) const;
     void update(float dt);
+    void updateDisplayMenu();
+    void applyDisplayMode(DisplayMode mode);
     void updateInventoryInput();
     [[nodiscard]] std::vector<std::string> sortedInventoryIds() const;
     [[nodiscard]] std::vector<std::string> sortedShopInventoryIds() const;
@@ -447,6 +467,7 @@ private:
     void renderChargeMeter() const;
     void renderHud() const;
     void renderInventory() const;
+    void renderDisplayMenu() const;
     void renderText(const std::string& text, float x, float y, float scale, float r, float g, float b, float a) const;
     [[nodiscard]] float textWidth(const std::string& text, float scale) const;
 };

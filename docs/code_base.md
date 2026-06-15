@@ -108,7 +108,7 @@ cmake --build build --parallel
 ./build/adventure_editor_window
 ```
 
-From the editor, `Chapter > Save and Play Game` and scoped `Save and Play` buttons save the current project/chapter data and launch `adventure_game_window` as a separate runtime process with an explicit chapter path. The game executable derives its runtime asset root from that chapter path, so editor launches use the selected project folder. Escape closes the game window.
+From the editor, `Chapter > Save and Play Game` and scoped `Save and Play` buttons save the current project/chapter data and launch `adventure_game_window` as a separate runtime process with an explicit chapter path. The game executable derives its runtime asset root from that chapter path, so editor launches use the selected project folder. Escape opens the runtime display menu.
 
 Two **test launches** sit beside Save and Play (and in the Chapter menu): **Play Selected Screen** (`launchGame(fresh=true, startScreen=selectedScreen)`) and **Play From Last Entry** (`launchGame(fresh=true, fromCheckpoint=true)`, which reads `assets/game/test_checkpoint`). Both pass `--fresh` so authored enemies always appear and the player's real `save.adstate` is left untouched. `launchDetachedProcess` forwards the chapter path plus these extra args via `execv`. **Save and Play itself also starts a new game** (no `--continue`), so prior progress never carries over; the engine only loads `save.adstate` when launched with `--continue`.
 
@@ -441,10 +441,10 @@ struct Chapter {
 };
 ```
 
-### `.adchapter` format (v12)
+### `.adchapter` format (v13)
 
 ```text
-ADCHAPTER 12
+ADCHAPTER 13
 id chapter_1
 start screen_1
 playable hero
@@ -465,11 +465,11 @@ wp 120.0 200.0 0.0 2.0 -1 - 2 2.0 "Welcome!"
 dl "Merchant" "Hello there traveler!"
 shop_item potion 10 5 3 0
 animtiles 1
-animtile water_tile 11 14 0
+animtile water_tile 11 14 0 2
 end
 ```
 
-Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block. v12 adds NPC curve mode and extends waypoint rows with `action speechDuration "speechText"` (`0=None`, `1=Enter`, `2=Speak`, `3=Leave`).
+The `animtile` row is `spriteId cellX cellY layer stack`, where `layer` is 0 Floor or 1 Overlay and `stack` is 0–2. Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block. v12 adds NPC curve mode and extends waypoint rows with `action speechDuration "speechText"` (`0=None`, `1=Enter`, `2=Speak`, `3=Leave`). v13 adds animated-tile stack slots; v11/v12 placements default to stack 0.
 
 ### Layout Editor
 
@@ -673,6 +673,8 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 ### Other runtime behavior
 
 - Initializes GLFW/OpenGL window and runs fixed 60 Hz update loop.
+- Uses a 768 x 540 logical canvas (768 x 512 playfield plus 28-pixel HUD) and a centred integer-scaled viewport capped at 2x. Unused framebuffer space is cleared to black instead of stretching the game.
+- Escape opens a paused display menu with Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. F11 toggles between Fullscreen 2x and Windowed 2x. Fullscreen uses an undecorated monitor-sized window, with the 1536 x 1080 game image centred when the monitor is wider.
 - Direct launch opens project/chapter picker; explicit chapter path skips it.
 - Loads `.admap`, resolves playable character, loads per-screen enemy and NPC placements from `ChapterScreen`.
 - Collision against nonzero cells in `.admap` layer 1.
@@ -684,11 +686,12 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.
 - Shop NPCs open a two-panel buy/sell overlay. The shop panel spends `Money` and transfers stock into the player inventory; the player panel sells one selected inventory item and adds `Money`. Limited shop rows decrement on buy and increment when sold back. NPC placements can override the reusable NPC type stock, and the runtime scrolls both shop and player inventory lists.
 - Door triggers render as sprites or colored rectangles, show the interaction prompt when the player stands on or near their tile rectangle, and activate on E/controller south. Free-use doors remain walkable triggers and transition to the target screen/tile. Locked and required-item rectangles block player movement; interaction still works from beside the rectangle. A key door without a destination unlocks in place, becomes walkable, and stops prompting; without an opening animation it disappears when crossed. Destination transitions mix Open over screen music, then play Close after the slide. Permanently locked and missing-key interactions play Locked.
+- `MusicPlayer::play` enforces exclusive screen music: when the requested path/loop key changes it calls `stop()` before decoding and installing replacement PCM. The effect PCM buffer remains separate, so door and other one-shot SFX can mix over the single active track.
 - Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay and pauses player/world updates while it is open. Inventory rows use each item definition's sprite as a pictogram and render stack/value counts as a pictogram/number pair. Up/Down, W/S, D-pad, or left stick changes selection; E, Space, Enter, or controller south face button uses usable item types.
 - NPC dialogue: E key or controller south face button triggers interaction. Legacy dialogue advances line-by-line; graph dialogue follows nodes, conditions, choices, and actions. Up/Down, W/S, D-pad, or left stick selects graph responses. Speech bubble / dialogue box renders above NPC and dialogue text is bounded, wrapped, and scrollable.
 - **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults. **By default that is the whole story — every launch is a new game.** Saved progress in `assets/game/save.adstate` is merged over the defaults only when the runtime is started with `--continue` (gated by `continueSave_`, default false). State is still written on every screen transition and on quit (so a future continue works), and within a session defeated enemies persist in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"`, filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
 - **Launch flags:** the runtime accepts `--continue` (load `save.adstate` to resume), `--fresh` (test launch: ignore *and* don't overwrite `save.adstate`), `--screen <id>` (start on a specific screen), and `--pos <x> <y>` (start at a position). On each screen entry it writes a lightweight `assets/game/test_checkpoint` (`screen <id>` / `pos <x> <y>`) recording where the player last entered a screen; the editor reads this for "Play From Last Entry". A `--fresh` run never writes `save.adstate` but still updates the checkpoint.
-- **Animated tiles:** `Engine::loadAllSprites` also loads sprites referenced by the active screen's `animatedTiles`; `Engine::renderAnimatedTiles(layer)` draws each placement's current frame (via `spriteFrame()` + `renderTextureRegion()` at `cell*kTileSize`) — layer 0 after the floor texture (below the player), layer 1 after the wall texture (player walks behind).
+- **Animated tiles:** `Engine::loadAllSprites` also loads sprites referenced by the active screen's `animatedTiles`; `Engine::renderAnimatedTiles(layer)` draws each placement's current frame (via `spriteFrame()` + `renderTextureRegion()` at `cell*kTileSize`) — layer 0 after the floor texture (below the player), layer 1 after the wall texture (player walks behind). Within each band it renders stack 0, 1, then 2 so higher stacks composite over lower stacks.
 
 Current limitations:
 
@@ -799,11 +802,12 @@ Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 - Two-layer pixel painter (Floor + Wall). Canvas locked to `kScreenTilesW × kTileSize` × `kScreenTilesH × kTileSize` (768 × 512 px).
 - The unrestricted RGBA picker is replaced by the shared Atari 2600 NTSC selector (`atari2600::drawNtscPaletteSelector`). It presents all 128 TIA colors plus a transparent swatch used by the layered paint workflow; tooltips show the TIA color code and RGB value.
 - Tools: Pencil, Eraser, Darken, Lighten, Smudge, Fill, Line, Rect, Select, Tile Draw, Tile Select, Tile Paste, Stamp, Tile Fill, Tile Erase.
+- Lighten/Darken use `adjustmentIntensity_` for channel adjustment strength and `adjustmentGraduation_` for the feather width as a percentage of the brush radius. Graduation 0 bypasses edge dithering; 100 graduates across the full radius.
 - Smudge drags pixels from the prior cursor position into the current brush footprint, blends by `adjustmentIntensity_`, then maps RGB to the nearest entry in `atari2600::kNtscPalette`. It snapshots only the current footprint before writing, avoiding a full-canvas copy per interpolated point.
-- Brush shapes: Square, Circle, Spray, Dither. Spray and Dither use `radialBrushCoverage` to reduce density near the brush edge; the same feathering applies when those shapes drive Smudge. Zoom 1–16.
+- Brush size 1–32. Brush shapes: Square, Circle, Spray, Dither. Spray and Dither use `radialBrushCoverage` to reduce density near the brush edge; the same feathering applies when those shapes drive Smudge. Zoom 1–16.
 - Tile palette: `Tile Select` → Add to palette → Stamp / Tile Fill across all screens.
 - Paste/stamp reference: `PasteReference` cycles clockwise with `Ctrl+V` through top-left, top-right, bottom-right, and bottom-left while clipboard paste or palette Stamp placement is active. `placementOrigin` converts the mouse reference to the actual pixel origin; tile-aligned placement uses one tile as the reference span. The canvas ghost and committed placement share this calculation, and the active corner is exposed in the controls plus a yellow `Ctrl+V: corner` marker.
-- **Animated tiles (palette-driven):** each `TilePaletteEntry` carries an optional `spriteId`. An **Edit Sprite** button per palette row (`editTileSprite`) seeds a sprite from the tile's pixels (composite wall-over-floor → `PendingSpriteSeed` → `SpriteEditorPanel::createSpriteFromPixels`) and opens the Sprite editor; reopening an existing sprite skips the seed. A tile whose sprite has **≥2 frames** is *animated* (`tileIsAnimated`, cached in `spriteFrameCount_` via `refreshTileSpriteInfo`). Stamping a static tile bakes pixels (`stampTile`); stamping an animated tile calls `placeAnimatedTile`, which upserts a `game::AnimatedTilePlacement` into `context.selectedScreenAnimatedTiles` at the cell (active layer → 0 floor / 1 overlay, replacing any placement there, painted pixels left intact). `Tile Erase`/right-click → `removeAnimatedTileAt`. Placements sync to/from the chapter via `LayoutEditorPanel::applyContextSelectedScreenData` (re-synced on screen switch through `context.requestScreenPlacementSync`). The tile↔sprite link is persisted in `.adeditor` v3.
+- **Animated tiles (palette-driven):** each `TilePaletteEntry` carries an optional `spriteId`. An **Edit Sprite** button per palette row (`editTileSprite`) seeds a sprite from the tile's pixels (composite wall-over-floor → `PendingSpriteSeed` → `SpriteEditorPanel::createSpriteFromPixels`) and opens the Sprite editor; reopening an existing sprite skips the seed. A tile whose sprite has **≥2 frames** is *animated* (`tileIsAnimated`, cached in `spriteFrameCount_` via `refreshTileSpriteInfo`). Stamping a static tile bakes pixels (`stampTile`); stamping an animated tile calls `placeAnimatedTile`, which upserts a `game::AnimatedTilePlacement` for the selected band and `animatedTileStack_` slot. Each Floor/Overlay band has stack slots 0–2; replacing/removing a selected slot leaves the other stacks intact, while Tile Erase removes all stacks at the cell. Tile Select chooses the highest visible band/stack under the cursor. Placements sync to/from the chapter via `LayoutEditorPanel::applyContextSelectedScreenData` (re-synced on screen switch through `context.requestScreenPlacementSync`). The tile↔sprite link is persisted in `.adeditor` v3.
 - `showAnimatedTileOverlay_` controls only the rendering of existing placement footprint markers in Screen Graphics. It does not mutate `selectedScreenAnimatedTiles`, and the selected Stamp ghost remains visible while the overlay is hidden so floor/wall art can be painted beneath transparent animation content.
 - Undo stack (up to 50 steps).
 
@@ -981,7 +985,7 @@ Runtime behavior:
 | §4.4 Enemy type editor: sprite preview + hitbox overlay | ✅ First idle frame shown at pixel scale; red hitbox overlay toggle |
 | §4.4 Enemy type editor: attack definitions | ✅ Per-attack collapsing sections with type/damage/range/cooldown/anim/sprite fields |
 | §4.4 Enemy type editor: two-column layout (no overlap) | ✅ `BeginGroup`/`EndGroup` on both columns |
-| §4.4 Enemy waypoint/spline paths | ✅ `.adpath` v5 (legacy) + `EnemyPlacement` in ADCHAPTER v12, including waypoint actions |
+| §4.4 Enemy waypoint/spline paths | ✅ `.adpath` v5 (legacy) + `EnemyPlacement` in ADCHAPTER v13, including waypoint actions |
 | §4.4 Enemy behavior states (idle/patrol/aggro) | ✅ In path data; runtime moves non-idle paths |
 | §4.4 Enemy sprite direction-aware rendering + flip | ✅ `spriteFrameForEntity` with `bool& flipH`; `facingX/Y` from movement direction |
 | §4.4 Enemy combat — per-attack Melee/Ranged | ✅ `updateEnemyCombat` fires attacks with per-attack timers |

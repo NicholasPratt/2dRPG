@@ -47,11 +47,12 @@ inline bool drawNtscPaletteSelector(
     float swatchSize = 22.0f)
 {
     bool changed = false;
-    int itemIndex = 0;
+    int itemId = 0;
+    int columnIndex = 0;
     ImGui::PushID(id);
 
-    const auto drawSwatch = [&](std::uint32_t color, const char* tooltip) {
-        ImGui::PushID(itemIndex);
+    const auto drawSwatch = [&](std::uint32_t color, const char* tooltip, bool continueRow = true) {
+        ImGui::PushID(itemId);
         if (ImGui::ColorButton(
                 "##AtariColor",
                 unpackColor(color),
@@ -72,17 +73,18 @@ inline bool drawNtscPaletteSelector(
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", tooltip);
         }
-        ++itemIndex;
-        if (itemIndex % columns != 0) {
+        ++itemId;
+        ++columnIndex;
+        if (continueRow && columnIndex % columns != 0) {
             ImGui::SameLine();
         }
         ImGui::PopID();
     };
 
     if (includeTransparent) {
-        drawSwatch(0u, "Transparent");
+        drawSwatch(0u, "Transparent", false);
         ImGui::NewLine();
-        itemIndex = 0;
+        columnIndex = 0;
     }
 
     for (std::size_t index = 0; index < kNtscPalette.size(); ++index) {

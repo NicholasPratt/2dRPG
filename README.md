@@ -8,7 +8,7 @@ tile-based, screen-to-screen games. The repository includes the
 
 - Project and chapter management
 - 48 x 32 tile screens using 16 px tiles
-- Floor/wall painting, collision, hazards, destination/key doors with SFX, pickups, and animated tiles
+- Floor/wall painting, collision, hazards, destination/key doors with SFX, pickups, and stacked animated tiles
 - Character, sprite, weapon, enemy, NPC, shop, quest-state, and dialogue editors
 - Linear/spline actor paths with enter, timed speech, and leave waypoint actions
 - Sprite polygon drawing, frame drag-reordering, and repeatable/one-time pickup placement
@@ -77,12 +77,16 @@ Controls:
 - Melee attack: Z / gamepad X
 - Ranged attack: X / gamepad B
 - Inventory and weapon selector: I / gamepad Y, Start, or Back
+- Display menu: Escape
+- Toggle 2x fullscreen: F11
 - In the inventory, highlight a weapon and press its attack button to assign it
 
 The runtime keeps the complete 48 x 32 tile room visible and renders health,
-weapon slots, and ammo in a dedicated black bar below the playfield. At startup
-it queries the primary monitor's usable work area, chooses the largest integer
-window scale that fits with room for window decorations, and centers the window.
+weapon slots, and ammo in a compact 28-pixel black bar below the playfield. The
+resulting 768 x 540 logical canvas uses centred integer scaling and black
+letterboxing, so resizing never stretches the image. Escape opens an in-game
+display menu with Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game.
+Fullscreen 2x renders at 1536 x 1080, centred on wider displays.
 
 Dialogue text can show live game-state values with `$Variable_Id`. For example,
 `You killed $Crows_killed crows.` resolves chapter-scoped variables in the
