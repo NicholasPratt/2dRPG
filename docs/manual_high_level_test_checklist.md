@@ -30,6 +30,9 @@ state changes.
 - Project folders: create a project and confirm the declared `assets/raw`, `assets/game`, `assets/game/sfx/doors`, and chapter dialogue folders exist.
 - Obstacle hazard: place Spike/Pit/Timed Spike hazards and confirm active hazards respawn the player at the map spawn.
 - Animated tile: stamp an animated tile, save, launch, and confirm the animation renders in the correct floor/wall layer.
+- Screen graphics paste/stamp reference: copy a non-square selection and select a multi-tile palette stamp. For each, press `Ctrl+V` repeatedly and confirm the control label and yellow ghost marker cycle top-left → top-right → bottom-right → bottom-left, then confirm placement matches the preview at every corner.
+- Screen graphics Smudge: drag across two contrasting colors at several strengths and confirm the color is carried in the drag direction, undo restores the stroke, transparent source pixels do not erase, and every opaque output color belongs to the 128-color Atari palette. Repeat with Spray and Dither and confirm density feathers at the brush edge.
+- Screen graphics animated-tile visibility: place an animated tile over painted floor pixels, clear `Animated tiles`, edit the pixels beneath its footprint, re-enable the overlay, save/reload, and confirm both the underlying art and animated placement remain intact.
 - Screen transition persistence: cross a screen edge or door, return, and confirm defeated enemies, inventory, money, and quest state behave according to fresh/continue launch rules.
 
 ## Editor Validation

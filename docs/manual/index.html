@@ -173,11 +173,33 @@ sprite in the <code>.sprite.json</code> and are never drawn in the running game 
 palette. Hover a swatch to see its TIA color code and RGB value. In Screen Graphics, click a swatch to make it the
 active paint color; a separate transparent swatch is available for clearing and compositing the Floor and Wall
 layers.</p>
+<p>The Sprite editor starts with transparency plus all 128 colors available in its main drawing palette. The
+transparent swatch has a checkerboard and red slash, and the swatches automatically fit the left tool rail.
+Left-click a swatch for the primary color or right-click it for the secondary color.</p>
 <p>In the Sprite editor's palette panel, click an existing swatch and choose an Atari color to replace it, or use
 <code>Add color</code> and choose a swatch to append it. The canvas <code>Picker</code> tool samples colors already
 present in the artwork; it is separate from the fixed color chooser. Older sprites and screen art may contain colors
 outside the Atari table. Those colors remain visible and are not changed merely by opening or saving the project;
 replace them explicitly when converting older art.</p>
+
+<p>In Screen Graphics, <strong>Smudge</strong> carries existing pixels along the drag direction and blends them using
+the Strength control. Smudged output is always snapped to the nearest Atari 2600 NTSC palette color. Transparent
+source pixels are skipped rather than erasing the destination. The <strong>Spray</strong> and
+<strong>Dither</strong> brush shapes feather their density toward the outside of the brush, including when used with
+Smudge.</p>
+<p>Clear the <strong>Animated tiles</strong> checkbox in Screen Graphics to hide placed animation overlays while
+painting the Floor or Wall beneath them. This is useful when transparent animation frames should reveal authored
+background pixels. The placements remain in the chapter and reappear when the checkbox is enabled; an active Stamp
+preview is still shown.</p>
+
+<h3 id="screen-graphics-placement">Screen Graphics paste and stamp reference</h3>
+<p>When pasting a copied pixel selection or placing a Tile Palette entry with <strong>Stamp</strong>, the mouse can
+reference any corner of the preview instead of always using its top-left. Press <span class="kbd">Ctrl+V</span> while
+paste or Stamp placement is active to cycle clockwise through <strong>top-left</strong>,
+<strong>top-right</strong>, <strong>bottom-right</strong>, and <strong>bottom-left</strong>. The active reference is
+shown beside the tool controls. On the canvas, a yellow corner marker and <code>Ctrl+V: corner</code> label identify
+the point attached to the mouse. The ghost preview moves immediately, and the committed pixels or animated-tile
+footprint use the same reference.</p>
 
 <h3 id="state">Game state registry (quests)</h3>
 <p>A single runtime registry holds named <strong>integers</strong>, <strong>booleans</strong>, and

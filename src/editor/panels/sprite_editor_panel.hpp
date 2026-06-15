@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/atari_2600_palette.hpp"
 #include "editor/editor_context.hpp"
 #include "game/constants.hpp"
 
@@ -53,7 +54,13 @@ struct SpriteDocument {
     std::vector<SpriteFrame> frames{{}};
     std::vector<SpriteLayer> layers{{}};
     std::vector<std::string> tags{"idle"};
-    std::vector<unsigned int> palette{0xff000000u, 0xffecececu, 0xff90fc90u, 0xff004400u};
+    std::vector<unsigned int> palette = [] {
+        std::vector<unsigned int> colors;
+        colors.reserve(atari2600::kNtscPalette.size() + 1);
+        colors.push_back(0u);
+        colors.insert(colors.end(), atari2600::kNtscPalette.begin(), atari2600::kNtscPalette.end());
+        return colors;
+    }();
     std::vector<std::vector<SpriteCel>> cels;
 };
 

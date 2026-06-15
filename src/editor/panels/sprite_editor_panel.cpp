@@ -1017,7 +1017,13 @@ void SpriteEditorPanel::drawLeftRail()
     }
 
     sectionHeader("Colors");
-    const float swatch = 34.0f;
+    ImGui::TextDisabled("Transparent + 128 Atari colors");
+    constexpr int kPaletteColumns = 8;
+    const float paletteWidth = ImGui::GetContentRegionAvail().x;
+    const float paletteSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const float swatch = std::max(16.0f,
+        std::floor((paletteWidth - paletteSpacing * static_cast<float>(kPaletteColumns - 1)) /
+            static_cast<float>(kPaletteColumns)));
     for (int i = 0; i < static_cast<int>(document_.palette.size()); ++i) {
         ImGui::PushID(i);
         ImGui::PushStyleColor(ImGuiCol_Button, packedColor(document_.palette[i]));
@@ -1031,6 +1037,16 @@ void SpriteEditorPanel::drawLeftRail()
         }
         ImGui::PopStyleColor(3);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
+        if (document_.palette[i] == 0u) {
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            const ImVec2 mid{(min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f};
+            drawList->AddRectFilled(min, mid, IM_COL32(210, 210, 210, 255));
+            drawList->AddRectFilled({mid.x, min.y}, {max.x, mid.y}, IM_COL32(110, 110, 110, 255));
+            drawList->AddRectFilled({min.x, mid.y}, {mid.x, max.y}, IM_COL32(110, 110, 110, 255));
+            drawList->AddRectFilled(mid, max, IM_COL32(210, 210, 210, 255));
+            drawList->AddLine(min, max, IM_COL32(230, 70, 70, 255), 2.0f);
+        }
         if (primaryColor_ == i) {
             drawList->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(255, 224, 64, 255), 0.0f, 0, 3.0f);
         }
@@ -1039,7 +1055,20 @@ void SpriteEditorPanel::drawLeftRail()
             const ImVec2 max = ImGui::GetItemRectMax();
             drawList->AddRect({min.x + 3.0f, min.y + 3.0f}, {max.x - 3.0f, max.y - 3.0f}, IM_COL32(85, 180, 255, 255), 0.0f, 0, 2.0f);
         }
-        if (i % 4 != 3) {
+        if (ImGui::IsItemHovered()) {
+            if (document_.palette[i] == 0u) {
+                ImGui::SetTooltip("Transparent");
+            } else {
+                const auto colorIt = std::find(
+                    atari2600::kNtscPalette.begin(), atari2600::kNtscPalette.end(), document_.palette[i]);
+                if (colorIt != atari2600::kNtscPalette.end()) {
+                    const int tiaCode = static_cast<int>(
+                        std::distance(atari2600::kNtscPalette.begin(), colorIt)) * 2;
+                    ImGui::SetTooltip("TIA $%02X", tiaCode);
+                }
+            }
+        }
+        if (i % kPaletteColumns != kPaletteColumns - 1) {
             ImGui::SameLine();
         }
         ImGui::PopID();
@@ -1569,7 +1598,7 @@ void SpriteEditorPanel::drawPalette(EditorContext& context)
         }
         if (ImGui::BeginPopup("AtariColorPicker")) {
             std::uint32_t selectedColor = document_.palette[i];
-            if (atari2600::drawNtscPaletteSelector("ReplaceColor", selectedColor, false, 16)) {
+            if (atari2600::drawNtscPaletteSelector("ReplaceColor", selectedColor, true, 16)) {
                 document_.palette[i] = selectedColor;
                 ImGui::CloseCurrentPopup();
             }
@@ -1586,7 +1615,7 @@ void SpriteEditorPanel::drawPalette(EditorContext& context)
     }
     if (ImGui::BeginPopup("AddAtariColor")) {
         std::uint32_t selectedColor = atari2600::kNtscPalette.front();
-        if (atari2600::drawNtscPaletteSelector("NewColor", selectedColor, false, 16)) {
+        if (atari2600::drawNtscPaletteSelector("NewColor", selectedColor, true, 16)) {
             document_.palette.push_back(selectedColor);
             primaryColor_ = static_cast<int>(document_.palette.size()) - 1;
             ImGui::CloseCurrentPopup();

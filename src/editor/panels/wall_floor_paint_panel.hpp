@@ -33,9 +33,10 @@ public:
 
 private:
     enum class ActiveLayer { Floor = 0, Wall = 1 };
-    enum class PaintTool { Pencil = 0, Eraser, Darken, Lighten, Fill, Line, Rect, Select, PickColor, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase, TileRotate };
+    enum class PaintTool { Pencil = 0, Eraser, Darken, Lighten, Smudge, Fill, Line, Rect, Select, PickColor, TileDraw, TileSelect, TilePaste, TileStamp, TileFill, TileErase, TileRotate };
     enum class BrushShape { Square = 0, Circle, Spray, Dither };
     enum class SnapMode { None = 0, Full, Half, Quarter };
+    enum class PasteReference { TopLeft = 0, TopRight, BottomRight, BottomLeft };
 
     static constexpr int kMaxUndoSteps = 50;
 
@@ -71,6 +72,7 @@ private:
     bool showGrid_ = true;
     bool showWallGuide_ = true;
     bool showObstacleOverlay_ = true;
+    bool showAnimatedTileOverlay_ = true;
     std::string wallGuideMapId_;
     int wallGuideWidth_ = 0;
     int wallGuideHeight_ = 0;
@@ -104,6 +106,7 @@ private:
     PixelClipboard pixelClipboard_;
     bool hasPixelClipboard_ = false;
     bool pasteMode_ = false;
+    PasteReference pasteReference_ = PasteReference::TopLeft;
 
     // Tile stamp
     int stampTileIndex_ = -1;
@@ -160,8 +163,12 @@ private:
     void setPixel(PaintLayer& layer, int x, int y, std::uint32_t color);
     void setBrushPixel(PaintLayer& layer, int x, int y, std::uint32_t color);
     void setAdjustmentBrushPixel(PaintLayer& layer, int x, int y, bool lighten);
+    void setSmudgeBrushPixel(PaintLayer& layer, int x, int y, int sourceX, int sourceY);
     void paintStroke(int x0, int y0, int x1, int y1, std::uint32_t color);
     void paintAdjustmentStroke(int x0, int y0, int x1, int y1, bool lighten);
+    void paintSmudgeStroke(int x0, int y0, int x1, int y1);
+    [[nodiscard]] std::uint32_t nearestAtariColor(
+        std::uint32_t red, std::uint32_t green, std::uint32_t blue) const;
     void drawLine(PaintLayer& layer, int x0, int y0, int x1, int y1, std::uint32_t color);
     void drawRect(PaintLayer& layer, int x0, int y0, int x1, int y1, std::uint32_t color);
     void floodFill(PaintLayer& layer, int startX, int startY, std::uint32_t color);
@@ -169,6 +176,10 @@ private:
     void copyPixelSelection();
     void copyTileSelection();
     void pastePixelClipboard(int x, int y);
+    void cyclePasteReference();
+    [[nodiscard]] std::array<int, 2> placementOrigin(
+        int referenceX, int referenceY, int contentWidth, int contentHeight, int referenceSpan = 1) const;
+    [[nodiscard]] const char* pasteReferenceName() const;
     std::vector<unsigned char> layerRgba(const PaintLayer& layer) const;
     std::vector<unsigned char> compositeRgba(bool parallaxPreview) const;
     bool exportPngs(const EditorContext& context);
