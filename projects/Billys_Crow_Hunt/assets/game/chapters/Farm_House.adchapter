@@ -1,4 +1,4 @@
-ADCHAPTER 13
+ADCHAPTER 14
 id Farm_House
 start screen_1
 playable billy
@@ -10,6 +10,7 @@ screen screen_1 screen_1_map 0 0
 links - - screen_3 screen_2
 respawn 0
 music "assets/game/music/screen1.ogg" 1
+walking_sfx "-"
 enemies 2
 enemy enemy_1 enemy_1 1 1 64 0 0 1 8
 wp 128 80 0 0 -1 - 0 2 ""
@@ -56,6 +57,7 @@ screen screen_2 screen_2_map -1 0
 links - - screen_1 -
 respawn 0
 music "-" 1
+walking_sfx "-"
 enemies 1
 enemy enemy_1 wevfer 1 1 33 1 0 0 5
 wp 80 320 0 0 -1 - 0 2 ""
@@ -76,6 +78,7 @@ screen screen_3 screen_3_map 1 0
 links - screen_4 - screen_1
 respawn 0
 music "assets/game/music/merrydigging.ogg" 1
+walking_sfx "-"
 enemies 0
 npcs 3
 npc npc_1 Fred 296 280 2 64 24 0 0 1 15 screen_3_npc_1_dialogue 2 1 0
@@ -91,6 +94,7 @@ screen screen_4 screen_4_map 1 1
 links screen_3 - screen_5 screen_6
 respawn 0
 music "assets/game/music/merrydigging.ogg" 1
+walking_sfx "assets/game/sfx/walking/walk_gravel.wav"
 enemies 9
 enemy enemy_1 wevfer 1 0 64 1 0 0 6
 wp 144 112 0 0 -1 - 0 2 ""
@@ -150,6 +154,7 @@ screen screen_5 screen_5_map 2 1
 links - - - screen_4
 respawn 0
 music "-" 1
+walking_sfx "assets/game/sfx/walking/walk_gravel.wav"
 enemies 0
 npcs 1
 npc npc_1 grandma_spelling 488 344 3 64 24 0 0 1 32 grandma_spelling 1 2 0
@@ -161,6 +166,7 @@ screen screen_6 screen_6_map 0 1
 links - - screen_4 -
 respawn 0
 music "-" 1
+walking_sfx "-"
 enemies 0
 npcs 0
 animtiles 48
@@ -216,6 +222,7 @@ screen screen_7 screen_7_map 3 1
 links - - - -
 respawn 0
 music "-" 1
+walking_sfx "-"
 enemies 0
 npcs 0
 animtiles 0

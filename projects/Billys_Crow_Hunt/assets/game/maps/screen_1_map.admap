@@ -1,4 +1,4 @@
-ADMAP 10
+ADMAP 11
 id screen_1_map
 size 48 32
 spawn 1 1
@@ -50,7 +50,7 @@ layer 1
 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 0 0 0 0 0 1
 0 0 0 0 0 0 0 0 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1
 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 1
-1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 1
+1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 1
 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 1
 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 1
 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 1
@@ -126,5 +126,5 @@ item item_20 1 ss_rock 5 348 370.667 0 rock
 item item_21 1 ss_rock 5 447.333 388 0 rock
 item item_22 1 ss_rock 5 414 369.333 0 rock
 doors 1
-door door_2 13 25 2 3 2 key 1 - 1 1 door_2 - assets/game/sfx/doors/open1.wav assets/game/sfx/doors/close1.wav assets/game/sfx/doors/open1.wav
+door door_2 13 25 2 3 2 key 1 - 1 1 door_2 - assets/game/sfx/doors/open1.wav assets/game/sfx/doors/close1.wav assets/game/sfx/doors/open1.wav -
 end

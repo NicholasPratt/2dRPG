@@ -1,0 +1,12 @@
+{
+  "id": "door_3",
+  "source": "assets/raw/sprites/door_3_sheet.png",
+  "canvasSize": [32, 48],
+  "gridSize": [32, 48],
+  "pivot": [16, 24],
+  "bodyGuide": [0, 0, 0, 0],
+  "frames": [
+    {"rect": [0, 0, 32, 48], "durationMs": 100, "type": "idle"}
+  ],
+  "tags": ["idle"]
+}
