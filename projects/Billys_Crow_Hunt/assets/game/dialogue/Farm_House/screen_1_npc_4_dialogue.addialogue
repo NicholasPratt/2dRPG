@@ -18,7 +18,7 @@ node dialogue_2 1 710 120 "NPC" "Get more son!" end -
 condition 0 5 - 0 1 0
 choices 0
 actions 0
-node dialogue_3 1 920 120 "NPC" "you'll go far!" end -
+node dialogue_3 1 920 120 "NPC" "you'll go far! $Crows_killed is good!" end -
 condition 0 5 - 0 1 0
 choices 0
 actions 0

@@ -13,7 +13,7 @@ enemy_type wevfer enemy_type_2 1 1 30 29 1 33 0 0.18 60 - 1 0 0 1
 enemy_attack 1 1 32 1 120 attack_1 -
 weapon_defs 3
 weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 30 -
-weapon_def slingshot 1 9 293 0.59 200 slingshot ss_rock ss_rock 1 1 0 1 1 0 0 0 0 0 1 0 0 1 30 -
+weapon_def slingshot 1 9 100 0.59 200 slingshot ss_rock rock 1 0 0 1 1 0 0 0 11.1 0 1 0 0 1 30 -
 weapon_def sword 0 25 32 0.31 200 sword - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 45 attack_3
 item_defs 4
 item_def coins "Coins" 4 coin Money 1 1 - 0
