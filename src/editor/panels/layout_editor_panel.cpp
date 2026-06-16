@@ -619,7 +619,7 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         context.requestEditNpcTypes = true;
     }
 
-    if (ImGui::Button("Edit Music", ImVec2(-1.0f, 34.0f))) {
+    if (ImGui::Button("Edit Music/SFX", ImVec2(-1.0f, 34.0f))) {
         context.selectedScreenId = screen.id;
         context.selectedScreenMapId = screen.mapId;
         context.requestEditScreenMusic = true;
@@ -634,7 +634,7 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
     }
 }
 
-void LayoutEditorPanel::drawScreenMusic(EditorContext& context)
+void LayoutEditorPanel::drawScreenMusicSfx(EditorContext& context)
 {
     if (!selectedScreenValid()) {
         ImGui::TextDisabled("No screen selected.");
@@ -644,6 +644,7 @@ void LayoutEditorPanel::drawScreenMusic(EditorContext& context)
     game::ChapterScreen& screen = chapter_.screens[static_cast<std::size_t>(selectedScreen_)];
     ImGui::Text("Screen: %s", screen.id.c_str());
     ImGui::Text("Music folder: %s", context.assets.gameMusicPath().string().c_str());
+    ImGui::Text("Walking SFX folder: %s", (context.assets.gameSfxPath() / "walking").string().c_str());
     ImGui::Separator();
 
     drawMusicFilePicker(context, screen);
@@ -651,6 +652,9 @@ void LayoutEditorPanel::drawScreenMusic(EditorContext& context)
     if (ui::checkbox("Loop music", "##ScreenMusicLoop", &screen.musicLoop, 120.0f)) {
         context.markDirty();
     }
+
+    ImGui::SeparatorText("Walking SFX");
+    drawWalkingSfxFilePicker(context, screen);
 
     ImGui::Spacing();
     ImGui::TextDisabled("Stored on the chapter screen. Use paths relative to the project, such as assets/game/music/screen1.ogg.");
@@ -688,6 +692,54 @@ void LayoutEditorPanel::drawMusicFilePicker(EditorContext& context, game::Chapte
     }
     if (!foundAny) {
         ImGui::TextDisabled("No .ogg files found.");
+    }
+}
+
+void LayoutEditorPanel::drawWalkingSfxFilePicker(EditorContext& context, game::ChapterScreen& screen)
+{
+    if (inputString("Walking SFX path", screen.walkingSfxPath, 240)) {
+        screen.walkingSfxPath = portableProjectPath(context, screen.walkingSfxPath);
+        context.markDirty();
+    }
+
+    const std::filesystem::path walkingDir = context.assets.gameSfxPath() / "walking";
+    std::error_code error;
+    if (!std::filesystem::exists(walkingDir, error)) {
+        ImGui::TextDisabled("Walking SFX folder does not exist yet.");
+        return;
+    }
+
+    ImGui::TextUnformatted("Available walking SFX");
+    bool foundAny = false;
+    if (ImGui::Selectable("<None>", screen.walkingSfxPath.empty())) {
+        screen.walkingSfxPath.clear();
+        context.markDirty();
+    }
+    for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(walkingDir, error)) {
+        if (error) {
+            break;
+        }
+        if (!entry.is_regular_file(error)) {
+            continue;
+        }
+        std::string extension = entry.path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension != ".ogg" && extension != ".wav") {
+            continue;
+        }
+        foundAny = true;
+        std::error_code relativeError;
+        const std::string label = std::filesystem::relative(entry.path(), walkingDir, relativeError).generic_string();
+        const std::string path = portableProjectPath(context, entry.path());
+        if (ImGui::Selectable(relativeError ? entry.path().filename().string().c_str() : label.c_str(),
+                screen.walkingSfxPath == path)) {
+            screen.walkingSfxPath = path;
+            context.markDirty();
+        }
+    }
+    if (!foundAny) {
+        ImGui::TextDisabled("No .ogg or .wav files found.");
     }
 }
 

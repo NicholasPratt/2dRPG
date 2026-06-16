@@ -553,9 +553,9 @@ void EditorApp::drawScreensTab()
             }
             break;
         case ScreenEditMode::Music:
-            drawScopedEditHeader("Editing Screen Music", true, true);
+            drawScopedEditHeader("Editing Screen Music/SFX", true, true);
             ImGui::Separator();
-            layoutEditor_.drawScreenMusic(context_);
+            layoutEditor_.drawScreenMusicSfx(context_);
             break;
         case ScreenEditMode::Enemies:
             drawScopedEditHeader("Editing Screen Enemies", true, true);

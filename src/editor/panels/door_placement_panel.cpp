@@ -66,6 +66,9 @@ void DoorPlacementPanel::openForScreen(EditorContext& context)
     selectedDoor_ = -1;
     loadedMapId_.clear();
     bgMapLoaded_ = false;
+    loadedTargetScreenId_.clear();
+    targetMapLoaded_ = false;
+    pickingTargetTile_ = false;
     loadBackground(context);
 }
 
@@ -126,7 +129,9 @@ void DoorPlacementPanel::drawToolbar(EditorContext& context)
     ImGui::SetNextItemWidth(80.0f);
     ImGui::DragFloat("Zoom##doorzoom", &zoom_, 0.05f, 0.5f, 4.0f);
     ImGui::SameLine();
-    ImGui::TextDisabled("Doors use tile X/Y and tile W/H. Click canvas to place.");
+    ImGui::TextDisabled(pickingTargetTile_
+        ? "Target spawn picker active."
+        : "Doors use tile X/Y and tile W/H. Click canvas to place.");
 }
 
 void DoorPlacementPanel::drawDoorList(EditorContext& context)
@@ -211,9 +216,16 @@ void DoorPlacementPanel::drawInspector(EditorContext& context)
         ImGui::TextWrapped("%s", pairingStatus_.c_str());
     }
 
-    ImGui::TextDisabled("Fallback target tile (used only when no paired door):");
+    ImGui::TextUnformatted("Target spawn tile");
     if (ImGui::DragInt("Target Tile X##door_tx", &targetTileX_, 1.0f, 0, game::kScreenTilesW - 1)) { context.markDirty(); }
     if (ImGui::DragInt("Target Tile Y##door_ty", &targetTileY_, 1.0f, 0, game::kScreenTilesH - 1)) { context.markDirty(); }
+    if (ImGui::Button(pickingTargetTile_ ? "Picking Spawn Tile..." : "Set Spawn Tile On Target Screen",
+            ImVec2(-1.0f, 0.0f))) {
+        writeInspectorToSelected(context);
+        pickingTargetTile_ = !pickingTargetTile_;
+        loadedTargetScreenId_.clear();
+        targetMapLoaded_ = false;
+    }
     ImGui::TextUnformatted("Sprite ID");
     ImGui::SetNextItemWidth(-1.0f);
     if (ui::inputTextString("##door_sprite", spriteId_.data(), spriteId_.size())) { context.markDirty(); }
@@ -390,10 +402,47 @@ void DoorPlacementPanel::drawValidation(EditorContext& context)
     }
 }
 
+bool DoorPlacementPanel::loadTargetMap(EditorContext& context)
+{
+    if (selectedDoor_ < 0 || selectedDoor_ >= static_cast<int>(context.selectedScreenDoors.size())) {
+        targetMapLoaded_ = false;
+        loadedTargetScreenId_.clear();
+        return false;
+    }
+
+    writeInspectorToSelected(context);
+    const game::MapDoorPlacement& door = context.selectedScreenDoors[static_cast<std::size_t>(selectedDoor_)];
+    if (door.targetScreenId.empty()) {
+        targetMapLoaded_ = false;
+        loadedTargetScreenId_.clear();
+        return false;
+    }
+    if (door.targetScreenId == loadedTargetScreenId_) {
+        return targetMapLoaded_;
+    }
+
+    loadedTargetScreenId_ = door.targetScreenId;
+    targetMapLoaded_ = false;
+    const auto targetIt = std::find_if(context.chapterScreens.begin(), context.chapterScreens.end(),
+        [&door](const ChapterScreenEntry& screen) { return screen.id == door.targetScreenId; });
+    if (targetIt == context.chapterScreens.end()) {
+        return false;
+    }
+    const auto mapPath = context.assets.gameMapPath() / (targetIt->mapId + ".admap");
+    targetMapLoaded_ = game::loadTileMap(mapPath, targetMap_, nullptr);
+    return targetMapLoaded_;
+}
+
 void DoorPlacementPanel::drawCanvas(EditorContext& context)
 {
-    const float worldW = static_cast<float>(game::kScreenTilesW * game::kTileSize);
-    const float worldH = static_cast<float>(game::kScreenTilesH * game::kTileSize);
+    const bool targetTileMode = pickingTargetTile_ && selectedDoor_ >= 0 &&
+        selectedDoor_ < static_cast<int>(context.selectedScreenDoors.size());
+    const bool targetLoaded = targetTileMode && loadTargetMap(context);
+    const game::TileMap* canvasMap = targetLoaded ? &targetMap_ : (bgMapLoaded_ ? &bgMap_ : nullptr);
+    const int canvasTilesW = canvasMap == nullptr ? game::kScreenTilesW : canvasMap->width;
+    const int canvasTilesH = canvasMap == nullptr ? game::kScreenTilesH : canvasMap->height;
+    const float worldW = static_cast<float>(canvasTilesW * game::kTileSize);
+    const float worldH = static_cast<float>(canvasTilesH * game::kTileSize);
     const float canvasW = worldW * zoom_;
     const float canvasH = worldH * zoom_;
     const float tileSize = static_cast<float>(game::kTileSize) * zoom_;
@@ -407,11 +456,11 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
 
     dl->AddRectFilled(origin, ImVec2(origin.x + canvasW, origin.y + canvasH), IM_COL32(22, 26, 30, 255));
 
-    if (bgMapLoaded_) {
-        for (int ty = 0; ty < bgMap_.height; ++ty) {
-            for (int tx = 0; tx < bgMap_.width; ++tx) {
-                const std::size_t idx = static_cast<std::size_t>(ty) * static_cast<std::size_t>(bgMap_.width) + static_cast<std::size_t>(tx);
-                if (bgMap_.layers[1][idx] == 0u) {
+    if (canvasMap != nullptr) {
+        for (int ty = 0; ty < canvasMap->height; ++ty) {
+            for (int tx = 0; tx < canvasMap->width; ++tx) {
+                const std::size_t idx = static_cast<std::size_t>(ty) * static_cast<std::size_t>(canvasMap->width) + static_cast<std::size_t>(tx);
+                if (canvasMap->layers[1][idx] == 0u) {
                     continue;
                 }
                 const ImVec2 min = tileToCanvas(origin, tx, ty, zoom_);
@@ -420,21 +469,23 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
         }
     }
 
-    for (int tx = 0; tx <= game::kScreenTilesW; ++tx) {
+    for (int tx = 0; tx <= canvasTilesW; ++tx) {
         const float px = origin.x + static_cast<float>(tx * game::kTileSize) * zoom_;
         dl->AddLine(ImVec2(px, origin.y), ImVec2(px, origin.y + canvasH), IM_COL32(60, 60, 60, 70));
     }
-    for (int ty = 0; ty <= game::kScreenTilesH; ++ty) {
+    for (int ty = 0; ty <= canvasTilesH; ++ty) {
         const float py = origin.y + static_cast<float>(ty * game::kTileSize) * zoom_;
         dl->AddLine(ImVec2(origin.x, py), ImVec2(origin.x + canvasW, py), IM_COL32(60, 60, 60, 70));
     }
 
-    for (int i = 0; i < static_cast<int>(context.selectedScreenDoors.size()); ++i) {
-        const game::MapDoorPlacement& door = context.selectedScreenDoors[static_cast<std::size_t>(i)];
+    const std::vector<game::MapDoorPlacement>* doors =
+        targetLoaded ? &targetMap_.doors : &context.selectedScreenDoors;
+    for (int i = 0; i < static_cast<int>(doors->size()); ++i) {
+        const game::MapDoorPlacement& door = (*doors)[static_cast<std::size_t>(i)];
         const ImVec2 min = tileToCanvas(origin, door.x, door.y, zoom_);
         const ImVec2 max{min.x + static_cast<float>(door.widthTiles) * tileSize,
             min.y + static_cast<float>(door.heightTiles) * tileSize};
-        const bool selected = i == selectedDoor_;
+        const bool selected = !targetLoaded && i == selectedDoor_;
         const ImU32 fill = door.lockMode == game::DoorLockMode::RequiresItem ? IM_COL32(120, 170, 255, 86) :
             (door.lockMode == game::DoorLockMode::Locked ? IM_COL32(255, 90, 80, 86) : IM_COL32(80, 220, 150, 86));
         dl->AddRectFilled(min, max, fill);
@@ -443,14 +494,36 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
         dl->AddText(ImVec2(min.x + 3.0f, min.y + 3.0f), IM_COL32(255, 255, 255, 230), "D");
     }
 
+    if (targetLoaded && selectedDoor_ >= 0 && selectedDoor_ < static_cast<int>(context.selectedScreenDoors.size())) {
+        const game::MapDoorPlacement& selectedDoor = context.selectedScreenDoors[static_cast<std::size_t>(selectedDoor_)];
+        const int spawnX = std::clamp(selectedDoor.targetTileX, 0, canvasTilesW - 1);
+        const int spawnY = std::clamp(selectedDoor.targetTileY, 0, canvasTilesH - 1);
+        const ImVec2 min = tileToCanvas(origin, spawnX, spawnY, zoom_);
+        const ImVec2 max{min.x + tileSize, min.y + tileSize};
+        dl->AddRectFilled(min, max, IM_COL32(255, 220, 80, 96));
+        dl->AddRect(min, max, IM_COL32(255, 255, 255, 245), 0.0f, 0, 3.0f);
+        dl->AddText(ImVec2(min.x + 3.0f, min.y + 3.0f), IM_COL32(255, 255, 255, 240), "S");
+    }
+
     if (!hovered) {
         return;
     }
 
-    const int tileX = std::clamp(static_cast<int>((mouse.x - origin.x) / tileSize), 0, game::kScreenTilesW - 1);
-    const int tileY = std::clamp(static_cast<int>((mouse.y - origin.y) / tileSize), 0, game::kScreenTilesH - 1);
+    const int tileX = std::clamp(static_cast<int>((mouse.x - origin.x) / tileSize), 0, canvasTilesW - 1);
+    const int tileY = std::clamp(static_cast<int>((mouse.y - origin.y) / tileSize), 0, canvasTilesH - 1);
     const ImVec2 hoverMin = tileToCanvas(origin, tileX, tileY, zoom_);
     dl->AddRect(hoverMin, ImVec2(hoverMin.x + tileSize, hoverMin.y + tileSize), IM_COL32(255, 255, 255, 180), 0.0f, 0, 2.0f);
+
+    if (targetLoaded) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            targetTileX_ = tileX;
+            targetTileY_ = tileY;
+            writeInspectorToSelected(context);
+            context.markDirty();
+            pickingTargetTile_ = false;
+        }
+        return;
+    }
 
     auto doorAt = [&](int tx, int ty) {
         for (int i = 0; i < static_cast<int>(context.selectedScreenDoors.size()); ++i) {
@@ -604,6 +677,8 @@ void DoorPlacementPanel::ensurePairedDoor(EditorContext& context, int doorIndex)
     paired.y = std::clamp(targetMap.height / 2 - paired.heightTiles / 2, 0, targetMap.height - paired.heightTiles);
     paired.lockMode = game::DoorLockMode::FreeUse;
     paired.targetScreenId = currentScreenId;
+    paired.targetTileX = std::clamp(door.x + door.widthTiles / 2, 0, game::kScreenTilesW - 1);
+    paired.targetTileY = std::clamp(door.y + door.heightTiles / 2, 0, game::kScreenTilesH - 1);
     paired.targetDoorId = door.id;
     paired.spriteId = door.spriteId;
     targetMap.doors.push_back(paired);

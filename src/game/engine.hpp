@@ -344,6 +344,7 @@ private:
     void loadItemEntities();
     [[nodiscard]] std::string itemStateId(const MapItemPlacement& item) const;
     void updateScreenMusic();
+    void updateWalkingSfx();
     [[nodiscard]] bool inputDown(InputAction action) const;
     [[nodiscard]] bool gamepadButtonDown(int button) const;
     [[nodiscard]] float gamepadAxis(int axis) const;

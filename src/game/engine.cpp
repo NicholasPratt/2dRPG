@@ -547,6 +547,10 @@ public:
             deviceSpec_ = {};
             effectPcm_.clear();
             effectCursor_ = 0;
+            walkingPcm_.clear();
+            walkingCursor_ = 0;
+            walkingPlaying_ = false;
+            walkingKey_.clear();
         }
 
         if (device_ == 0) {
@@ -573,44 +577,8 @@ public:
     {
         std::vector<std::uint8_t> decoded;
         SDL_AudioSpec decodedSpec{};
-        if (!decodeAudio(path, decoded, decodedSpec, errorMessage)) {
+        if (!prepareEffectAudio(path, decoded, decodedSpec, errorMessage)) {
             return false;
-        }
-        if (!audioInitialized_) {
-            if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
-                setError(errorMessage, std::string("Failed to initialize SDL audio: ") + SDL_GetError());
-                return false;
-            }
-            audioInitialized_ = true;
-        }
-        if (device_ == 0) {
-            decodedSpec.callback = &MusicPlayer::audioCallback;
-            decodedSpec.userdata = this;
-            SDL_AudioSpec obtained{};
-            device_ = SDL_OpenAudioDevice(nullptr, 0, &decodedSpec, &obtained, 0);
-            if (device_ == 0) {
-                setError(errorMessage, std::string("Failed to open SDL audio device: ") + SDL_GetError());
-                return false;
-            }
-            deviceSpec_ = obtained;
-        } else if (deviceSpec_.freq != decodedSpec.freq || deviceSpec_.format != decodedSpec.format ||
-            deviceSpec_.channels != decodedSpec.channels) {
-            SDL_AudioCVT converter{};
-            if (SDL_BuildAudioCVT(&converter, decodedSpec.format, decodedSpec.channels, decodedSpec.freq,
-                    deviceSpec_.format, deviceSpec_.channels, deviceSpec_.freq) < 0) {
-                setError(errorMessage, std::string("Failed to configure SFX conversion: ") + SDL_GetError());
-                return false;
-            }
-            std::vector<std::uint8_t> converted(decoded.size() * static_cast<std::size_t>(converter.len_mult));
-            std::memcpy(converted.data(), decoded.data(), decoded.size());
-            converter.buf = converted.data();
-            converter.len = static_cast<int>(decoded.size());
-            if (SDL_ConvertAudio(&converter) != 0) {
-                setError(errorMessage, std::string("Failed to convert SFX audio: ") + SDL_GetError());
-                return false;
-            }
-            converted.resize(static_cast<std::size_t>(converter.len_cvt));
-            decoded = std::move(converted);
         }
 
         SDL_LockAudioDevice(device_);
@@ -619,6 +587,65 @@ public:
         SDL_UnlockAudioDevice(device_);
         SDL_PauseAudioDevice(device_, 0);
         return true;
+    }
+
+    bool setWalkingLoop(const std::filesystem::path& path, std::string* errorMessage)
+    {
+        const std::string key = path.string();
+        if (key == walkingKey_ && !walkingPcm_.empty()) {
+            return true;
+        }
+
+        std::vector<std::uint8_t> decoded;
+        SDL_AudioSpec decodedSpec{};
+        if (!prepareEffectAudio(path, decoded, decodedSpec, errorMessage)) {
+            return false;
+        }
+
+        SDL_LockAudioDevice(device_);
+        walkingPcm_ = std::move(decoded);
+        walkingCursor_ = 0;
+        walkingPlaying_ = false;
+        walkingKey_ = key;
+        SDL_UnlockAudioDevice(device_);
+        return true;
+    }
+
+    void setWalkingPlaying(bool playing)
+    {
+        if (device_ == 0) {
+            walkingPlaying_ = false;
+            return;
+        }
+
+        SDL_LockAudioDevice(device_);
+        walkingPlaying_ = playing && !walkingPcm_.empty();
+        const bool shouldPause = pcm_.empty() && effectCursor_ >= effectPcm_.size() && !walkingPlaying_;
+        SDL_UnlockAudioDevice(device_);
+
+        SDL_PauseAudioDevice(device_, shouldPause ? 1 : 0);
+    }
+
+    void clearWalkingLoop()
+    {
+        walkingKey_.clear();
+        if (device_ == 0) {
+            walkingPcm_.clear();
+            walkingCursor_ = 0;
+            walkingPlaying_ = false;
+            return;
+        }
+
+        SDL_LockAudioDevice(device_);
+        walkingPcm_.clear();
+        walkingCursor_ = 0;
+        walkingPlaying_ = false;
+        const bool shouldPause = pcm_.empty() && effectCursor_ >= effectPcm_.size();
+        SDL_UnlockAudioDevice(device_);
+
+        if (shouldPause) {
+            SDL_PauseAudioDevice(device_, 1);
+        }
     }
 
     void stop()
@@ -634,8 +661,9 @@ public:
         cursor_ = 0;
         loop_ = false;
         const bool effectPlaying = effectCursor_ < effectPcm_.size();
+        const bool walkingPlaying = walkingPlaying_ && !walkingPcm_.empty();
         SDL_UnlockAudioDevice(device_);
-        if (!effectPlaying) {
+        if (!effectPlaying && !walkingPlaying) {
             SDL_PauseAudioDevice(device_, 1);
         }
     }
@@ -647,9 +675,13 @@ private:
     std::size_t cursor_ = 0;
     std::vector<std::uint8_t> effectPcm_;
     std::size_t effectCursor_ = 0;
+    std::vector<std::uint8_t> walkingPcm_;
+    std::size_t walkingCursor_ = 0;
+    bool walkingPlaying_ = false;
     bool loop_ = false;
     bool audioInitialized_ = false;
     std::string currentKey_;
+    std::string walkingKey_;
 
     static bool decodeOgg(const std::filesystem::path& path, std::vector<std::uint8_t>& outPcm,
         SDL_AudioSpec& outSpec, std::string* errorMessage)
@@ -722,6 +754,51 @@ private:
         return false;
     }
 
+    bool prepareEffectAudio(const std::filesystem::path& path, std::vector<std::uint8_t>& decoded,
+        SDL_AudioSpec& decodedSpec, std::string* errorMessage)
+    {
+        if (!decodeAudio(path, decoded, decodedSpec, errorMessage)) {
+            return false;
+        }
+        if (!audioInitialized_) {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+                setError(errorMessage, std::string("Failed to initialize SDL audio: ") + SDL_GetError());
+                return false;
+            }
+            audioInitialized_ = true;
+        }
+        if (device_ == 0) {
+            decodedSpec.callback = &MusicPlayer::audioCallback;
+            decodedSpec.userdata = this;
+            SDL_AudioSpec obtained{};
+            device_ = SDL_OpenAudioDevice(nullptr, 0, &decodedSpec, &obtained, 0);
+            if (device_ == 0) {
+                setError(errorMessage, std::string("Failed to open SDL audio device: ") + SDL_GetError());
+                return false;
+            }
+            deviceSpec_ = obtained;
+        } else if (deviceSpec_.freq != decodedSpec.freq || deviceSpec_.format != decodedSpec.format ||
+            deviceSpec_.channels != decodedSpec.channels) {
+            SDL_AudioCVT converter{};
+            if (SDL_BuildAudioCVT(&converter, decodedSpec.format, decodedSpec.channels, decodedSpec.freq,
+                    deviceSpec_.format, deviceSpec_.channels, deviceSpec_.freq) < 0) {
+                setError(errorMessage, std::string("Failed to configure SFX conversion: ") + SDL_GetError());
+                return false;
+            }
+            std::vector<std::uint8_t> converted(decoded.size() * static_cast<std::size_t>(converter.len_mult));
+            std::memcpy(converted.data(), decoded.data(), decoded.size());
+            converter.buf = converted.data();
+            converter.len = static_cast<int>(decoded.size());
+            if (SDL_ConvertAudio(&converter) != 0) {
+                setError(errorMessage, std::string("Failed to convert SFX audio: ") + SDL_GetError());
+                return false;
+            }
+            converted.resize(static_cast<std::size_t>(converter.len_cvt));
+            decoded = std::move(converted);
+        }
+        return true;
+    }
+
     static void audioCallback(void* userdata, Uint8* stream, int len)
     {
         auto* player = static_cast<MusicPlayer*>(userdata);
@@ -745,6 +822,21 @@ private:
             std::memcpy(stream + written, player->pcm_.data() + player->cursor_, chunk);
             player->cursor_ += chunk;
             written += static_cast<int>(chunk);
+        }
+
+        if (player->walkingPlaying_ && !player->walkingPcm_.empty()) {
+            int mixed = 0;
+            while (mixed < len) {
+                if (player->walkingCursor_ >= player->walkingPcm_.size()) {
+                    player->walkingCursor_ = 0;
+                }
+                const std::size_t remaining = player->walkingPcm_.size() - player->walkingCursor_;
+                const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(len - mixed));
+                SDL_MixAudioFormat(stream + mixed, player->walkingPcm_.data() + player->walkingCursor_,
+                    player->deviceSpec_.format, static_cast<Uint32>(chunk), SDL_MIX_MAXVOLUME / 2);
+                player->walkingCursor_ += chunk;
+                mixed += static_cast<int>(chunk);
+            }
         }
 
         if (player->effectCursor_ < player->effectPcm_.size()) {
@@ -971,6 +1063,7 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     dialogueLineIndex_ = 0;
     loadAllSprites();
     updateScreenMusic();
+    updateWalkingSfx();
     std::cout << "Loaded screen " << screen->id << " map " << activeMap_.id << "\n";
     return true;
 }
@@ -991,6 +1084,27 @@ void Engine::updateScreenMusic()
     if (!musicPlayer_->play(musicPath, activeScreen_->musicLoop, &error)) {
         std::cerr << "Failed to play screen music: " << error << "\n";
     }
+}
+
+void Engine::updateWalkingSfx()
+{
+    if (musicPlayer_ == nullptr || activeScreen_ == nullptr) {
+        return;
+    }
+    if (activeScreen_->walkingSfxPath.empty() || !playerIsMoving_) {
+        musicPlayer_->setWalkingPlaying(false);
+        return;
+    }
+
+    const std::filesystem::path configuredPath(activeScreen_->walkingSfxPath);
+    const std::filesystem::path sfxPath = configuredPath.is_absolute() ? configuredPath : projectRoot_ / configuredPath;
+    std::string error;
+    if (!musicPlayer_->setWalkingLoop(sfxPath, &error)) {
+        std::cerr << "Failed to load walking SFX: " << error << "\n";
+        musicPlayer_->clearWalkingLoop();
+        return;
+    }
+    musicPlayer_->setWalkingPlaying(true);
 }
 
 bool Engine::loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage)
@@ -1604,6 +1718,7 @@ void Engine::update(float dt)
     if (displayMenuVisible_) {
         updateDisplayMenu();
         playerIsMoving_ = false;
+        updateWalkingSfx();
         return;
     }
 
@@ -1619,6 +1734,8 @@ void Engine::update(float dt)
     inventoryInputWasDown_ = inventoryInputDown;
 
     if (transitionState_ == TransitionState::Sliding) {
+        playerIsMoving_ = false;
+        updateWalkingSfx();
         transitionTime_ += dt;
         if (transitionTime_ >= transitionDuration_) {
             transitionState_ = TransitionState::None;
@@ -1637,11 +1754,13 @@ void Engine::update(float dt)
             playerAnimSeconds_ = 0.0f;
         }
         playerIsMoving_ = false;
+        updateWalkingSfx();
         return;
     }
     if (interactionState_ == InteractionState::InShop) {
         updateShopInput();
         playerIsMoving_ = false;
+        updateWalkingSfx();
         return;
     }
 
@@ -1668,6 +1787,7 @@ void Engine::update(float dt)
     updateDoors();
     updateInteraction();
     updateItemPickups();
+    updateWalkingSfx();
 }
 
 void Engine::updateDisplayMenu()
@@ -2863,47 +2983,10 @@ bool Engine::activateDoor(const MapDoorPlacement& door)
         return false;
     }
 
-    // Spawn point: when this door is paired with a door on the target screen,
-    // arrive at that door (stepped one tile toward the screen interior so the
-    // player stands just in front of it). Otherwise use the legacy target tile.
+    // Spawn point is explicit per door. Paired doors are only link metadata, so
+    // the editor can create/reconcile the return door without guessing a spawn.
     float spawnX = static_cast<float>(door.targetTileX * kTileSize + kTileSize / 2);
     float spawnY = static_cast<float>(door.targetTileY * kTileSize + kTileSize / 2);
-    if (!door.targetDoorId.empty()) {
-        const ChapterScreen* targetScreen = findScreen(chapter_, door.targetScreenId);
-        if (targetScreen != nullptr) {
-            TileMap targetMap;
-            const std::filesystem::path mapPath =
-                assetPath(projectRoot_, "assets/game/maps") / (targetScreen->mapId + ".admap");
-            if (loadTileMap(mapPath, targetMap, nullptr)) {
-                for (const MapDoorPlacement& paired : targetMap.doors) {
-                    if (paired.id != door.targetDoorId) {
-                        continue;
-                    }
-                    const float cx = (static_cast<float>(paired.x) +
-                        std::max(1, paired.widthTiles) * 0.5f) * kTileSize;
-                    const float cy = (static_cast<float>(paired.y) +
-                        std::max(1, paired.heightTiles) * 0.5f) * kTileSize;
-                    const float screenCx = static_cast<float>(targetMap.width) * kTileSize * 0.5f;
-                    const float screenCy = static_cast<float>(targetMap.height) * kTileSize * 0.5f;
-                    float steppedX = cx;
-                    float steppedY = cy;
-                    if (std::abs(screenCx - cx) >= std::abs(screenCy - cy)) {
-                        steppedX += (screenCx - cx >= 0.0f ? 1.0f : -1.0f) * kTileSize;
-                    } else {
-                        steppedY += (screenCy - cy >= 0.0f ? 1.0f : -1.0f) * kTileSize;
-                    }
-                    if (playerCanOccupyInMap(targetMap, steppedX, steppedY)) {
-                        spawnX = steppedX;
-                        spawnY = steppedY;
-                    } else {
-                        spawnX = cx;
-                        spawnY = cy;
-                    }
-                    break;
-                }
-            }
-        }
-    }
     float fromX = 0.0f;
     float fromY = 0.0f;
     if (std::abs(playerFacingX_) >= std::abs(playerFacingY_)) {
@@ -3958,7 +4041,8 @@ void Engine::renderNpcs() const
 
 void Engine::renderDoors() const
 {
-    for (const MapDoorPlacement& door : activeMap_.doors) {
+    for (int i = 0; i < static_cast<int>(activeMap_.doors.size()); ++i) {
+        const MapDoorPlacement& door = activeMap_.doors[static_cast<std::size_t>(i)];
         if (doorIsHidden(door)) {
             continue;
         }
@@ -3966,6 +4050,9 @@ void Engine::renderDoors() const
         const float y = static_cast<float>(door.y * kTileSize);
         const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
         const float h = static_cast<float>(std::max(1, door.heightTiles) * kTileSize);
+        const bool highlighted = interactionState_ == InteractionState::PromptVisible &&
+            interactingDoorIndex_ == i;
+        const float pulse = highlighted ? 0.10f + 0.08f * (0.5f + 0.5f * std::sin(runtimeSeconds_ * 5.0f)) : 0.0f;
 
         auto spriteIt = loadedSprites_.find(door.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
@@ -3976,16 +4063,19 @@ void Engine::renderDoors() const
                 const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);
                 const float v1 = static_cast<float>(frame->y + frame->height) / static_cast<float>(spriteIt->second.texture.height);
                 renderTextureRegion(spriteIt->second.texture, x, y, w, h, u0, v0, u1, v1);
+                if (highlighted) {
+                    renderFilledRect(x, y, w, h, 0.20f, 0.95f, 0.35f, pulse);
+                }
                 continue;
             }
         }
 
         if (door.lockMode == DoorLockMode::Locked) {
-            renderFilledRect(x, y, w, h, 0.72f, 0.12f, 0.10f, 0.38f);
+            renderFilledRect(x, y, w, h, 0.72f - pulse, 0.12f + pulse, 0.10f, 0.38f);
         } else if (door.lockMode == DoorLockMode::RequiresItem && !doorIsUnlocked(door)) {
-            renderFilledRect(x, y, w, h, 0.15f, 0.34f, 0.86f, 0.34f);
+            renderFilledRect(x, y, w, h, 0.15f, 0.34f + pulse, 0.86f - pulse, 0.34f);
         } else {
-            renderFilledRect(x, y, w, h, 0.10f, 0.62f, 0.32f, 0.30f);
+            renderFilledRect(x, y, w, h, 0.10f, 0.62f + pulse, 0.32f, 0.30f);
         }
     }
 }
@@ -3998,11 +4088,6 @@ void Engine::renderInteractionPrompt() const
     const float pulse = 0.55f + 0.45f * std::sin(runtimeSeconds_ * 5.0f);
     const float size = 6.0f;
     if (interactingDoorIndex_ >= 0 && interactingDoorIndex_ < static_cast<int>(activeMap_.doors.size())) {
-        const MapDoorPlacement& door = activeMap_.doors[static_cast<std::size_t>(interactingDoorIndex_)];
-        const float x = static_cast<float>(door.x * kTileSize);
-        const float y = static_cast<float>(door.y * kTileSize);
-        const float w = static_cast<float>(std::max(1, door.widthTiles) * kTileSize);
-        renderFilledRect(x + w * 0.5f - size * 0.5f, y - 8.0f, size, size, 0.25f, 0.90f, 0.35f, pulse);
         return;
     }
     if (interactingNpcIndex_ < 0 || interactingNpcIndex_ >= static_cast<int>(npcEntities_.size())) {
@@ -4847,6 +4932,17 @@ void Engine::render()
     renderNpcs();
     renderInteractionPrompt();
 
+    renderMeleeFlash();
+    renderProjectiles();
+
+    if (wallTexture_.id != 0) {
+        renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
+    }
+
+    // Doors draw above the wall texture so a doorway carved into the wall art
+    // stays visible instead of being painted over.
+    renderDoors();
+
     bool flipH = false;
     const SpriteFrameDef* pf = playerSpriteFrame(flipH);
     if (pf != nullptr && playerSprite_.texture.id != 0 &&
@@ -4870,17 +4966,6 @@ void Engine::render()
             kPlayerFallbackDrawSizePx, kPlayerFallbackDrawSizePx,
             hitFlash ? 1.0f : 0.20f, hitFlash ? 0.18f : 0.62f, hitFlash ? 0.18f : 1.0f, 1.0f);
     }
-
-    renderMeleeFlash();
-    renderProjectiles();
-
-    if (wallTexture_.id != 0) {
-        renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
-    }
-
-    // Doors draw above the wall texture so a doorway carved into the wall art
-    // stays visible instead of being painted over.
-    renderDoors();
 
     // Overlay-layer animated tiles draw above the walls (player walks behind them).
     renderAnimatedTiles(1);

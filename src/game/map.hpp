@@ -52,9 +52,9 @@ struct MapDoorPlacement {
     std::string targetScreenId;
     int targetTileX = 1;
     int targetTileY = 1;
-    // Id of the paired door on the target screen. When set, the player spawns at
-    // that door's location (the two doors are created/linked together in the
-    // editor). Falls back to targetTileX/targetTileY when empty.
+    // Id of the paired door on the target screen. The editor uses this to create
+    // and reconcile return links; targetTileX/targetTileY remains the explicit
+    // player spawn point for this door.
     std::string targetDoorId;
     std::string spriteId;
     std::string openingAnimation;

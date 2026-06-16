@@ -20,6 +20,10 @@ private:
     std::string loadedMapId_;
     game::TileMap bgMap_;
     bool bgMapLoaded_ = false;
+    std::string loadedTargetScreenId_;
+    game::TileMap targetMap_;
+    bool targetMapLoaded_ = false;
+    bool pickingTargetTile_ = false;
     int selectedDoor_ = -1;
     float zoom_ = 1.5f;
 
@@ -47,13 +51,14 @@ private:
     void drawValidation(EditorContext& context);
     void drawSoundPicker(EditorContext& context);
     void drawCanvas(EditorContext& context);
+    [[nodiscard]] bool loadTargetMap(EditorContext& context);
     void syncInspectorFromSelected(const EditorContext& context);
     void writeInspectorToSelected(EditorContext& context);
     void requestEditDoorSprite(EditorContext& context);
     void placeDoorAt(EditorContext& context, int tileX, int tileY);
     // Creates (or reconciles) the paired door on the target screen and links the
-    // two together via targetDoorId. The paired door is the player's spawn point
-    // when crossing through this door. No-op for same-screen or untargeted doors.
+    // two together via targetDoorId. Each door's target tile remains its explicit
+    // spawn point. No-op for same-screen or untargeted doors.
     void ensurePairedDoor(EditorContext& context, int doorIndex);
 
     std::string pairingStatus_;

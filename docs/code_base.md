@@ -428,6 +428,9 @@ struct ChapterScreen {
     int gridX, gridY;
     ScreenLink links;
     bool respawnEnemies = false;
+    std::string musicPath;
+    bool musicLoop = true;
+    std::string walkingSfxPath;
     std::vector<EnemyPlacement> enemies;   // per-screen enemy instances
     std::vector<NpcPlacement> npcs;        // per-screen NPC instances
 };
@@ -441,10 +444,10 @@ struct Chapter {
 };
 ```
 
-### `.adchapter` format (v13)
+### `.adchapter` format (v14)
 
 ```text
-ADCHAPTER 13
+ADCHAPTER 14
 id chapter_1
 start screen_1
 playable hero
@@ -454,6 +457,8 @@ screens 1
 screen screen_1 new_map 0 0
 links - - - -
 respawn 0
+music "assets/game/music/screen1.ogg" 1
+walking_sfx "assets/game/sfx/walking/grass.wav"
 enemies 1
 enemy enemy_1 crow_1 1 1 64.0 0 0 0 3
 wp -16.0 80.0 0.0 0.0 -1 - 1 0.0 ""
@@ -469,7 +474,7 @@ animtile water_tile 11 14 0 2
 end
 ```
 
-The `animtile` row is `spriteId cellX cellY layer stack`, where `layer` is 0 Floor or 1 Overlay and `stack` is 0–2. Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block. v12 adds NPC curve mode and extends waypoint rows with `action speechDuration "speechText"` (`0=None`, `1=Enter`, `2=Speak`, `3=Leave`). v13 adds animated-tile stack slots; v11/v12 placements default to stack 0.
+The `animtile` row is `spriteId cellX cellY layer stack`, where `layer` is 0 Floor or 1 Overlay and `stack` is 0–2. Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block. v12 adds NPC curve mode and extends waypoint rows with `action speechDuration "speechText"` (`0=None`, `1=Enter`, `2=Speak`, `3=Leave`). v13 adds animated-tile stack slots; v11/v12 placements default to stack 0. v14 adds per-screen `walking_sfx`, a project-relative `.ogg`/`.wav` loop used while the player walks on that screen.
 
 ### Layout Editor
 
@@ -478,6 +483,7 @@ The `animtile` row is `spriteId cellX cellY layer stack`, where `layer` is 0 Flo
 - The selected screen's `.admap` can be edited directly in the Screens tab.
 - Directional buttons create or select connected screens north/south/east/west and write reciprocal screen links.
 - Screen list sidebar and inspector edit id, mapId, grid position, links, respawn flag, and deletion.
+- `Edit Music/SFX` edits per-screen music and walking SFX. Walking SFX assets are selected from `assets/game/sfx/walking` and loop only while the player is moving on that screen.
 - `Edit Screen Graphics` opens the context-aware `WallFloorPaintPanel` subview for the selected screen.
 - Screen layout can show scaled graphics previews from `<mapId>_preview.png` behind the structural tile overlay.
 
@@ -532,7 +538,7 @@ end
 Obstacle fields: `id type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds damage damageIntervalSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`. `id` is present only in v7+ (v1–v6 obstacles load with a generated `obstacle_<n>` id); `damage`/`damageIntervalSeconds` are present only in v8+ (older obstacles default to `1` damage every `0.75` s).
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
 Non-respawning pickups set `item_collected.<chapter>.<screen>.<item>` in boolean game state and remain absent on later screen loads. Respawning pickups return when the screen is loaded again.
-Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath targetDoorId`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`. `targetDoorId` (v11+) is the id of the paired door on the target screen; when set, the runtime spawns the player at that door (stepped one tile toward the screen interior) instead of using `targetTileX/targetTileY`. The editor's door panel auto-creates and reciprocally links the paired door at the centre of the target screen (`DoorPlacementPanel::ensurePairedDoor`, written via load-merge).
+Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath targetDoorId`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`. `targetTileX/targetTileY` is the explicit spawn tile for the destination screen. `targetDoorId` (v11+) is the id of the paired door on the target screen; the editor uses it to auto-create and reciprocally link return doors (`DoorPlacementPanel::ensurePairedDoor`, written via load-merge), but runtime spawning still uses the configured target tile.
 Backward compat: v1–v10 files still load; `targetDoorId` and missing sections/door SFX default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
 
 ### Map Editor
@@ -568,7 +574,7 @@ Implemented in `src/editor/panels/door_placement_panel.*`.
 - Permanently Locked doors may omit a target screen when they are used only as same-screen barriers.
 - Requires Item doors may also omit a target screen. On successful key use, runtime stores `door_unlocked.<chapter>.<screen>.<door>` in boolean game state and treats the door as Free Use for collision. An unanimated unlocked door stores a matching hidden state once the player enters its rectangle, so its sprite stays removed across screen changes and continued saves.
 - Door sprite ID is rendered at runtime when a matching sprite exists. Opening animation IDs are stored for future animation playback.
-- Open, Close, and Locked SFX use dropdowns populated recursively from project-relative `.ogg` or `.wav` files under `assets/game/sfx/doors`. New and opened projects ensure this folder exists.
+- Open, Close, and Locked SFX use dropdowns populated recursively from project-relative `.ogg` or `.wav` files under `assets/game/sfx/doors`. Walking SFX uses the Music/SFX screen editor and scans `assets/game/sfx/walking`. New and opened projects ensure both folders exist.
 - The inspector warns about duplicate/empty door IDs, missing required-item IDs, required items not defined in the Items tab, invalid/missing Free Use destinations, unloadable target maps, out-of-bounds target tiles, and target tiles blocked by the target map wall layer.
 
 ---
@@ -686,8 +692,8 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - **Cone auto-aim** (`updateAimTargets`): with a ranged weapon equipped, living enemies within `WeaponDef::range` and inside `aimConeDegrees` (default 45°) of player facing form a candidate list sorted left-to-right; the most central is auto-locked. Every candidate is drawn with a scope-style reticle centred on it (`renderAimTargets` + `renderArc`) — two segmented circles spinning in counter directions with cardinal crosshair ticks; pulsing yellow for the locked target, faint white for the rest. The reticle radius scales with current spread (wide when inaccurate, closing onto the enemy as aim steadies) and the spin rate slows as accuracy sharpens. Tab / Q (or RB / LB) cycle the lock next/prev. **Lock-on facing:** while drawing, the player turns to face the locked target and movement strafes; the lock holds as long as the target is alive and in range. Instant weapons snap player facing to the shot direction on fire. **Target lead:** shots at a locked target solve the ballistic intercept against the enemy's measured velocity (`RuntimePathEntity::velocityX/Y`, bracketed around `updatePaths`) and blend from current position toward the intercept as accuracy sharpens — full anticipation at 0° spread, none at ≥ `kLeadMaxSpreadDegrees`. Without a lock, shots fly straight ahead; each pellet rolls its own spread angle, and projectile impact damage applies the weapon's distance falloff.
 - Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.
 - Shop NPCs open a two-panel buy/sell overlay. The shop panel spends `Money` and transfers stock into the player inventory; the player panel sells one selected inventory item and adds `Money`. Limited shop rows decrement on buy and increment when sold back. NPC placements can override the reusable NPC type stock, and the runtime scrolls both shop and player inventory lists.
-- Door triggers render as sprites or colored rectangles, show the interaction prompt when the player stands on or near their tile rectangle, and activate on E/controller south. Free-use doors remain walkable triggers and transition to the target screen/tile. Locked and required-item rectangles block player movement; interaction still works from beside the rectangle. A key door without a destination unlocks in place, becomes walkable, and stops prompting; without an opening animation it disappears when crossed. Destination transitions mix Open over screen music, then play Close after the slide. Permanently locked and missing-key interactions play Locked.
-- `MusicPlayer::play` enforces exclusive screen music: when the requested path/loop key changes it calls `stop()` before decoding and installing replacement PCM. The effect PCM buffer remains separate, so door and other one-shot SFX can mix over the single active track.
+- Door triggers render as sprites or colored rectangles, tint slightly green when the player stands on or near their tile rectangle, and activate on E/controller south. Free-use doors remain walkable triggers and transition to the target screen/tile. Locked and required-item rectangles block player movement; interaction still works from beside the rectangle. A key door without a destination unlocks in place, becomes walkable, and stops prompting; without an opening animation it disappears when crossed. Destination transitions mix Open over screen music, then play Close after the slide. Permanently locked and missing-key interactions play Locked.
+- `MusicPlayer::play` enforces exclusive screen music: when the requested path/loop key changes it calls `stop()` before decoding and installing replacement PCM. The one-shot effect PCM buffer and looping walking-SFX PCM buffer remain separate, so door sounds and footsteps can mix over the single active track.
 - Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay and pauses player/world updates while it is open. Inventory rows use each item definition's sprite as a pictogram and render stack/value counts as a pictogram/number pair. Up/Down, W/S, D-pad, or left stick changes selection; E, Space, Enter, or controller south face button uses usable item types.
 - NPC dialogue: E key or controller south face button triggers interaction. Legacy dialogue advances line-by-line; graph dialogue follows nodes, conditions, choices, and actions. Up/Down, W/S, D-pad, or left stick selects graph responses. Speech bubble / dialogue box renders above NPC and dialogue text is bounded, wrapped, and scrollable.
 - **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults. **By default that is the whole story — every launch is a new game.** Saved progress in `assets/game/save.adstate` is merged over the defaults only when the runtime is started with `--continue` (gated by `continueSave_`, default false). State is still written on every screen transition and on quit (so a future continue works), and within a session defeated enemies persist in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"`, filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
@@ -939,7 +945,7 @@ Runtime behavior:
 
 ## Asset Directories
 
-`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot`. Its `requiredPaths()` manifest and `ensureRequiredPaths()` create the complete generic `assets/raw` and `assets/game` tree, including `assets/game/sfx/doors`, whenever a project is created or opened. Chapter creation also creates `assets/game/dialogue/<chapter-id>`.
+`AssetDirectories` centralises editor asset paths. All paths are relative to `projectRoot`. Its `requiredPaths()` manifest and `ensureRequiredPaths()` create the complete generic `assets/raw` and `assets/game` tree, including `assets/game/sfx/doors` and `assets/game/sfx/walking`, whenever a project is created or opened. Chapter creation also creates `assets/game/dialogue/<chapter-id>`.
 
 | Field | Default |
 |-------|---------|
@@ -960,6 +966,7 @@ Runtime behavior:
 | `gameMusic` | `assets/game/music` |
 | `gameSfx` | `assets/game/sfx` |
 | Door SFX subfolder | `assets/game/sfx/doors` |
+| Walking SFX subfolder | `assets/game/sfx/walking` |
 
 ---
 

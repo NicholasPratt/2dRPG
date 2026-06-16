@@ -107,6 +107,7 @@ std::vector<std::filesystem::path> AssetDirectories::requiredPaths() const
         gameMusicPath(),
         gameSfxPath(),
         gameSfxPath() / "doors",
+        gameSfxPath() / "walking",
     };
 }
 

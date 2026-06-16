@@ -26,7 +26,7 @@ public:
     void saveDirtyMaps(EditorContext& context);
     void applyContextSelectedScreenData(EditorContext& context);
     bool selectScreenById(EditorContext& context, const std::string& screenId);
-    void drawScreenMusic(EditorContext& context);
+    void drawScreenMusicSfx(EditorContext& context);
 
 private:
     game::Chapter chapter_;
@@ -60,6 +60,7 @@ private:
     void drawWallOutlines(ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize, ImU32 color) const;
     void drawScreenInspector(EditorContext& context);
     void drawMusicFilePicker(EditorContext& context, game::ChapterScreen& screen);
+    void drawWalkingSfxFilePicker(EditorContext& context, game::ChapterScreen& screen);
     void addScreen();
     void addConnectedScreen(EditorContext& context, const char* direction, int dx, int dy);
     void deleteSelectedScreen();

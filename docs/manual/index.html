@@ -86,7 +86,7 @@ chapter-specific. Every project is isolated under <code>projects/&lt;project&gt;
 Pick an existing project + chapter, or type a new project/chapter name to create <code>projects/&lt;project&gt;/</code>
 with its complete asset folder structure. This includes raw and game folders for sprites, character sprites,
 characters, tilesets, chapters, maps, animations, palettes, paths, dialogue, fonts, music, and
-<code>sfx/doors</code>. The <strong>Project</strong> menu → <strong>Project Manager…</strong> lets you open, create,
+<code>sfx/doors</code> plus <code>sfx/walking</code>. The <strong>Project</strong> menu → <strong>Project Manager…</strong> lets you open, create,
 or delete projects at any time (deleting asks for confirmation and is permanent). Closing the editor or switching
 chapters/projects prompts you to save or discard unsaved work.</p>
 
@@ -443,9 +443,17 @@ questions.</p>
   <code>kEnemyKnockbackBasePxPerSecond</code>, <code>kProjectileReboundRestitution</code>) and require a rebuild.</p>
 </div>
 
-<div class="note"><strong>Music playback:</strong> only one screen-music track plays at a time. Entering a screen with
+<div class="note"><strong>Music/SFX playback:</strong> only one screen-music track plays at a time. Entering a screen with
 different music stops the previous track before loading the replacement. Door and other one-shot sound effects can
-still play over the active music.</div>
+still play over the active music. A screen's walking SFX loops only while the player is moving.</div>
+
+<div class="recipe" id="recipe-walking-sfx">
+  <h4>R16b. Set walking sounds per screen</h4>
+  <p>Put <code>.wav</code> or <code>.ogg</code> files under <code>assets/game/sfx/walking</code>. Open the screen's
+  <strong>Edit Music/SFX</strong> panel, choose a walking SFX file, and save the chapter. The selected loop is stored
+  on the chapter screen, can be reused across chapters in the same project, and plays only while the player is walking
+  on that screen.</p>
+</div>
 
 <div class="recipe" id="recipe-not-appearing">
   <h4>R17. A placed NPC/enemy doesn’t appear, or doesn’t react</h4>
@@ -563,12 +571,12 @@ still play over the active music.</div>
     <li><strong>Target screen ID:</strong> the text field below the lock controls is the destination screen id. Leave
     it empty for a permanently Locked barrier or for a Requires Item door that should unlock within the current
     screen.</li>
-    <li><strong>Destination &amp; paired door:</strong> set the <strong>Target screen ID</strong>, then press
+    <li><strong>Destination &amp; paired door:</strong> set the <strong>Target screen ID</strong> and the
+    <strong>Target Tile X/Y</strong> spawn tile, then press
     <strong>Apply Door</strong> (or <strong>Link / create paired door</strong>). The editor automatically creates a
     matching <em>paired door</em> at the centre of the target screen and links the two together; open that screen to
-    drag the paired door to where the player should arrive. At runtime the player spawns at the paired door, stepped one
-    tile toward the screen interior so they stand just in front of it. The <strong>Target Tile X/Y</strong> fields are
-    only a fallback used when a door has no paired door.</li>
+    reposition the return door. At runtime the player spawns at the configured <strong>Target Tile X/Y</strong>; use
+    <strong>Set Spawn Tile On Target Screen</strong> to point-and-click that tile.</li>
     <li><strong>Optional visuals:</strong> set a door sprite id. The door sprite draws above the Wall layer, so a
     doorway opening carved into the wall art stays visible instead of being painted over. Opening animation ids are
     stored for future animation playback.</li>
@@ -579,7 +587,7 @@ still play over the active music.</div>
   <div class="note"><strong>Runtime behavior:</strong> stand on or next to the door and press
   <span class="kbd">E</span>. Locked and required-item doors block movement. Locked doors show feedback,
   required-item doors check the player inventory, consumed keys are removed, and valid doors transition to the target
-  screen, spawning the player at the paired door (or the fallback target tile). A key door without a destination unlocks in place and becomes walkable; if it has no opening animation,
+  screen, spawning the player at the configured target tile. A key door without a destination unlocks in place and becomes walkable; if it has no opening animation,
   the door disappears when the player enters its tiles. Free-use doors remain walkable triggers. A successful
   transition plays Open when activated and Close after the slide; permanently locked and missing-key interactions
   play Locked.</div>
@@ -620,13 +628,12 @@ still play over the active music.</div>
     <li>In <code>Edit Doors</code>, choose <code>Free Use</code> or <code>Requires Item</code>.</li>
     <li>Set <code>Target screen ID</code>, then press <code>Apply Door</code> (or <code>Link / create paired door</code>).
     A paired door is created at the centre of the target screen and linked back to this one.</li>
-    <li>Open the target screen in <code>Edit Doors</code> and drag the paired door to where the player should arrive.</li>
+    <li>Use <code>Set Spawn Tile On Target Screen</code> and click the exact target tile where the player should arrive.</li>
     <li>For a key door, set <code>Required item ID</code> to the project item’s ID and optionally enable
     <code>Consume Key</code>.</li>
     <li>Save, stand beside the door, and press <span class="kbd">E</span>.</li>
   </ol>
-  <div class="note">The player spawns at the paired door (stepped one tile inward). <code>Target Tile X/Y</code> is only
-  used as a fallback when a door has no paired door, and must be inside the destination map and clear of its wall layer.
+  <div class="note"><code>Target Tile X/Y</code> is the destination spawn point and must be inside the destination map and clear of its wall layer.
   A Free Use door without a destination is invalid; use Locked or Requires Item for a same-screen barrier.</div>
 </div>
 

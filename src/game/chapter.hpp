@@ -99,6 +99,7 @@ struct ChapterScreen {
     bool respawnEnemies = false;
     std::string musicPath;
     bool musicLoop = true;
+    std::string walkingSfxPath;
     std::vector<EnemyPlacement> enemies;
     std::vector<NpcPlacement> npcs;
     std::vector<AnimatedTilePlacement> animatedTiles;

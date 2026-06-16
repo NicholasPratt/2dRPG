@@ -132,6 +132,7 @@ int main(int argc, char** argv)
               << " screen(s)] start [" << chapter.startScreenId << "]\n";
 
     adventure::game::Chapter actionChapter = chapter;
+    actionChapter.screens.front().walkingSfxPath = "assets/game/sfx/walking/grass.wav";
     adventure::game::EnemyPlacement actionEnemy;
     actionEnemy.id = "action_enemy";
     actionEnemy.typeId = "crow";
@@ -192,6 +193,7 @@ int main(int argc, char** argv)
         loadedActionEnemy.waypoints[1].speechDurationSeconds != 1.5f ||
         loadedActionEnemy.waypoints[1].speechText != "You cannot escape!" ||
         loadedActionEnemy.waypoints.back().action != adventure::game::PathWaypointAction::Leave ||
+        loadedActionChapter.screens.front().walkingSfxPath != "assets/game/sfx/walking/grass.wav" ||
         loadedActionNpc.curveMode != adventure::game::PathCurveMode::Spline ||
         loadedActionChapter.screens.front().animatedTiles.size() <
             actionChapter.screens.front().animatedTiles.size() ||
@@ -201,7 +203,7 @@ int main(int argc, char** argv)
         std::cerr << "Chapter waypoint action round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped waypoint actions and animation stacks (ADCHAPTER v13)\n";
+    std::cout << "Round-tripped waypoint actions, animation stacks, and walking SFX (ADCHAPTER v14)\n";
 
     adventure::game::SpriteMetadata sprite;
     const std::filesystem::path spritePath = "assets/game/sprites/new_sprite.sprite.json";

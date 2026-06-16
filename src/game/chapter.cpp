@@ -122,7 +122,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 13\n";
+    output << "ADCHAPTER 14\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -141,6 +141,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         output << "respawn " << (screen.respawnEnemies ? 1 : 0) << "\n";
         output << "music " << std::quoted(screen.musicPath.empty() ? std::string{"-"} : screen.musicPath)
                << ' ' << (screen.musicLoop ? 1 : 0) << "\n";
+        output << "walking_sfx " << std::quoted(screen.walkingSfxPath.empty() ? std::string{"-"} : screen.walkingSfxPath) << "\n";
         output << "enemies " << screen.enemies.size() << "\n";
         for (const EnemyPlacement& enemy : screen.enemies) {
             output << "enemy " << enemy.id << ' ' << enemy.typeId << ' '
@@ -218,7 +219,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 13) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 14) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -328,6 +329,17 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                 screen.musicPath.clear();
             }
             screen.musicLoop = loopVal != 0;
+        }
+        if (version >= 14) {
+            std::string walkingSfxKey;
+            input >> walkingSfxKey >> std::quoted(screen.walkingSfxPath);
+            if (walkingSfxKey != "walking_sfx" || !input) {
+                setError(errorMessage, "Expected screen walking SFX.");
+                return false;
+            }
+            if (screen.walkingSfxPath == "-") {
+                screen.walkingSfxPath.clear();
+            }
         }
 
         if (version >= 4) {
