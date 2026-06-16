@@ -100,6 +100,7 @@ private:
     SpriteDocument document_;
     std::unordered_map<std::string, SpriteDocumentBuffer> documentBuffers_;
     bool showGrid_ = true;
+    bool showTileGuide_ = false;
     bool onionSkin_ = false;
     bool showPivot_ = true;
     bool showBodyGuide_ = true;

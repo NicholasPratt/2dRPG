@@ -35,6 +35,7 @@ int main(int argc, char** argv)
     smokeDoor.targetScreenId = "screen_2";
     smokeDoor.targetTileX = 6;
     smokeDoor.targetTileY = 7;
+    smokeDoor.targetDoorId = "door_back_to_1";
     smokeDoor.spriteId = "door_sprite";
     smokeDoor.openingAnimation = "open";
     smokeDoor.openSoundPath = "assets/game/sfx/doors/door_open.ogg";
@@ -90,6 +91,7 @@ int main(int argc, char** argv)
         loadedDoorMap.doors.front().targetScreenId != "screen_2" ||
         loadedDoorMap.doors.front().targetTileX != 6 ||
         loadedDoorMap.doors.front().targetTileY != 7 ||
+        loadedDoorMap.doors.front().targetDoorId != "door_back_to_1" ||
         loadedDoorMap.doors.front().spriteId != "door_sprite" ||
         loadedDoorMap.doors.front().openingAnimation != "open" ||
         loadedDoorMap.doors.front().openSoundPath != "assets/game/sfx/doors/door_open.ogg" ||

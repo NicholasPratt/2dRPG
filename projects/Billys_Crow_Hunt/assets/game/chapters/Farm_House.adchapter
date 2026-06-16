@@ -5,7 +5,7 @@ playable billy
 characters 2
 character billy
 character grandma_spelling
-screens 6
+screens 7
 screen screen_1 screen_1_map 0 0
 links - - screen_3 screen_2
 respawn 0
@@ -212,4 +212,11 @@ animtile tile_screen_6_map_10 32 8 0 0
 animtile tile_screen_6_map_10 29 10 0 0
 animtile tile_screen_6_map_10 33 10 0 0
 animtile tile_screen_6_map_10 35 10 0 0
+screen screen_7 screen_7_map 3 1
+links - - - -
+respawn 0
+music "-" 1
+enemies 0
+npcs 0
+animtiles 0
 end

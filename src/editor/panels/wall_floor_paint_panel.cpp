@@ -296,6 +296,37 @@ void WallFloorPaintPanel::draw(EditorContext& context)
                 selectionDragging_ = false;
             }
         }
+
+        // Single-key shortcuts (no modifier) for tool selection and brush size.
+        // Guarded against Ctrl/Cmd so they never collide with the copy/paste/undo
+        // combos handled above.
+        if (!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeySuper) {
+            auto selectTool = [&](PaintTool tool) {
+                if (tool_ != tool) {
+                    pasteMode_ = false;
+                    adjustmentStrokeBaseline_.clear();
+                    strokeCaptured_ = false;
+                    tool_ = tool;
+                }
+            };
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) { selectTool(PaintTool::Pencil); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) { selectTool(PaintTool::Eraser); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_D, false)) { selectTool(PaintTool::Darken); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_G, false)) { selectTool(PaintTool::Lighten); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_U, false)) { selectTool(PaintTool::Smudge); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_F, false)) { selectTool(PaintTool::Fill); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_L, false)) { selectTool(PaintTool::Line); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) { selectTool(PaintTool::Rect); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) { selectTool(PaintTool::Select); }
+            else if (ImGui::IsKeyPressed(ImGuiKey_I, false)) { selectTool(PaintTool::PickColor); }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false)) {
+                brushSize_ = std::max(1, brushSize_ - 1);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, false)) {
+                brushSize_ = std::min(32, brushSize_ + 1);
+            }
+        }
     }
 
     drawToolbar(context);
@@ -642,13 +673,13 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Tools");
-    drawToolButton("Pencil", PaintTool::Pencil);
+    drawToolButton("Pencil", PaintTool::Pencil, "B");
     ImGui::SameLine();
-    drawToolButton("Eraser", PaintTool::Eraser);
-    drawToolButton("Darken", PaintTool::Darken);
+    drawToolButton("Eraser", PaintTool::Eraser, "E");
+    drawToolButton("Darken", PaintTool::Darken, "D");
     ImGui::SameLine();
-    drawToolButton("Lighten", PaintTool::Lighten);
-    drawToolButton("Smudge", PaintTool::Smudge);
+    drawToolButton("Lighten", PaintTool::Lighten, "G");
+    drawToolButton("Smudge", PaintTool::Smudge, "U");
     if (tool_ == PaintTool::Darken || tool_ == PaintTool::Lighten || tool_ == PaintTool::Smudge) {
         ui::sliderInt(tool_ == PaintTool::Smudge ? "Strength" : "Intensity",
             "##AdjustmentBrushIntensity", &adjustmentIntensity_,
@@ -665,14 +696,14 @@ void WallFloorPaintPanel::drawLayerControls(EditorContext& context)
             ImGui::TextDisabled("Graduation controls the feathered outer edge.");
         }
     }
-    drawToolButton("Fill", PaintTool::Fill);
+    drawToolButton("Fill", PaintTool::Fill, "F");
     ImGui::SameLine();
-    drawToolButton("Line", PaintTool::Line);
-    drawToolButton("Rect", PaintTool::Rect);
+    drawToolButton("Line", PaintTool::Line, "L");
+    drawToolButton("Rect", PaintTool::Rect, "R");
     ImGui::SameLine();
-    drawToolButton("Select", PaintTool::Select);
+    drawToolButton("Select", PaintTool::Select, "S");
     ImGui::SameLine();
-    drawToolButton("Pick", PaintTool::PickColor);
+    drawToolButton("Pick", PaintTool::PickColor, "I");
     if (tool_ == PaintTool::Select) {
         if (selectionActive_) {
             if (ImGui::Button("Copy", ImVec2(132.0f, 0.0f))) {
@@ -1615,7 +1646,7 @@ void WallFloorPaintPanel::drawParallaxPreview()
     drawList->AddRect(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(220, 220, 220, 255));
 }
 
-void WallFloorPaintPanel::drawToolButton(const char* label, PaintTool tool)
+void WallFloorPaintPanel::drawToolButton(const char* label, PaintTool tool, const char* shortcut)
 {
     const bool selected = tool_ == tool;
     if (selected) {
@@ -1628,6 +1659,9 @@ void WallFloorPaintPanel::drawToolButton(const char* label, PaintTool tool)
             strokeCaptured_ = false;
         }
         tool_ = tool;
+    }
+    if (shortcut != nullptr && shortcut[0] != '\0' && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s (%s)", label, shortcut);
     }
     if (selected) {
         ImGui::PopStyleColor();

@@ -60,7 +60,7 @@ The asset architecture separates reusable game-library assets from chapter usage
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
       dialogue_graph.hpp/.cpp       # DialogueGraph type and .addialogue load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
-      map.hpp/.cpp                  # TileMap type and .admap load/save (v10 adds door locked SFX)
+      map.hpp/.cpp                  # TileMap type and .admap load/save (v11 adds door pairing targetDoorId)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
       project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v15)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
@@ -503,10 +503,10 @@ struct TileMap {
 };
 ```
 
-### `.admap` format (v10)
+### `.admap` format (v11)
 
 ```text
-ADMAP 10
+ADMAP 11
 id new_map
 tileset overworld
 size 48 32
@@ -525,15 +525,15 @@ obstacle obstacle_2 2 timed_spikes 8 5 2 1 1.0 1.0 0.5 2 0.50
 items 1
 item item_1 1 ammo_stone 5 384.0 256.0 0 ammo_pickup
 doors 1
-door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open assets/game/sfx/doors/open.wav assets/game/sfx/doors/close.wav assets/game/sfx/doors/locked.wav
+door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open assets/game/sfx/doors/open.wav assets/game/sfx/doors/close.wav assets/game/sfx/doors/locked.wav door_to_screen_1
 end
 ```
 
 Obstacle fields: `id type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds damage damageIntervalSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`. `id` is present only in v7+ (v1–v6 obstacles load with a generated `obstacle_<n>` id); `damage`/`damageIntervalSeconds` are present only in v8+ (older obstacles default to `1` damage every `0.75` s).
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
 Non-respawning pickups set `item_collected.<chapter>.<screen>.<item>` in boolean game state and remain absent on later screen loads. Respawning pickups return when the screen is loaded again.
-Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`.
-Backward compat: v1–v9 files still load; missing sections and door SFX default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
+Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath targetDoorId`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`. `targetDoorId` (v11+) is the id of the paired door on the target screen; when set, the runtime spawns the player at that door (stepped one tile toward the screen interior) instead of using `targetTileX/targetTileY`. The editor's door panel auto-creates and reciprocally links the paired door at the centre of the target screen (`DoorPlacementPanel::ensurePairedDoor`, written via load-merge).
+Backward compat: v1–v10 files still load; `targetDoorId` and missing sections/door SFX default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
 
 ### Map Editor
 
@@ -673,14 +673,15 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 ### Other runtime behavior
 
 - Initializes GLFW/OpenGL window and runs fixed 60 Hz update loop.
-- Uses a 768 x 540 logical canvas (768 x 512 playfield plus 28-pixel HUD) and a centred integer-scaled viewport capped at 2x. Unused framebuffer space is cleared to black instead of stretching the game.
-- Escape opens a paused display menu with Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. F11 toggles between Fullscreen 2x and Windowed 2x. Fullscreen uses an undecorated monitor-sized window, with the 1536 x 1080 game image centred when the monitor is wider.
+- Uses a 768 x 540 logical canvas (768 x 512 playfield plus 28-pixel HUD) and a centred integer-scaled viewport. `Engine::render` picks the largest whole-number scale that fits the current framebuffer (`min(fbWidth/logicalWidth, fbHeight/logicalHeight)`, floored at 1), so resizing the window grows the play area in integer steps rather than capping at a fixed multiple. Unused framebuffer space is cleared to black instead of stretching the game.
+- Render order within the translated screen matrix: floor texture → floor animated tiles → entities/items/NPCs/player/melee/projectiles → wall texture → **doors** (drawn above the wall so doorway art carved into the wall stays visible) → overlay animated tiles. Sprite-backed projectiles draw at a fixed on-screen size (`kProjectileSpriteDisplaySize`, matching the ammo pickup) with the frame's aspect ratio preserved, so high-resolution ammo art is not oversized in flight.
+- Escape (or the gamepad Select/Back button) opens a paused display menu with Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. F11 toggles between Fullscreen 2x and Windowed 2x. Fullscreen uses an undecorated monitor-sized window, with the 1536 x 1080 game image centred when the monitor is wider.
 - Direct launch opens project/chapter picker; explicit chapter path skips it.
 - Loads `.admap`, resolves playable character, loads per-screen enemy and NPC placements from `ChapterScreen`.
 - Collision against nonzero cells in `.admap` layer 1.
 - Screen-boundary crossings with 30% threshold trigger sliding transition to linked screen.
 - Obstacle hazards (spikes, pits, timed spikes) deal each obstacle's configured `damage` to the player while overlapping, repeating no faster than that obstacle's `damageIntervalSeconds` (tracked per-obstacle in `hazardCooldowns_`, keyed by id, and cleared on screen load). Damage routes through `damagePlayer`, so the player respawns at the map spawn only when HP reaches 0. Obstacles with `damage <= 0` are harmless.
-- Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged (hold to draw on charge weapons), bumpers (LB/RB) for aim-target cycling, and north face button/Select/Start for inventory.
+- Runtime input goes through `Engine::inputDown`, combining keyboard and GLFW gamepad state. Controller mapping is D-pad/left stick for movement and menus, south face button for interact/confirm/use, west face button for melee, east face button for ranged (hold to draw on charge weapons), bumpers (LB/RB) for aim-target cycling, north face button (Y)/Start for inventory, and the Select/Back button (`GLFW_GAMEPAD_BUTTON_BACK`) mapped to `InputAction::Exit` so it opens the display menu like Escape.
 - Melee attack (Z / west face button): hitbox sweep in facing direction, brief yellow flash. Ranged (X / east face button): projectile(s) from `WeaponDef` data. Attacks play the weapon's `attackAnimState` sprite action when set (`playerAttackAnimOverride_` in `playerActionName`), else `attack_1` (melee) / `cast` (ranged). Instant weapons fire on press; hold-to-draw weapons (`chargeTimeSeconds`/`steadyTimeSeconds > 0`) charge while held — movement slows to the attack speed scale, a charge meter renders above the player (green → gold at full draw → flashing red when overheld) — and fire on release with charge-scaled damage and steady-scaled spread. Overholding applies the weapon's `OverchargeEffect` (WildShot spread growth, Misfire dud shot, or Break: weapon unequipped).
 - **Cone auto-aim** (`updateAimTargets`): with a ranged weapon equipped, living enemies within `WeaponDef::range` and inside `aimConeDegrees` (default 45°) of player facing form a candidate list sorted left-to-right; the most central is auto-locked. Every candidate is drawn with a scope-style reticle centred on it (`renderAimTargets` + `renderArc`) — two segmented circles spinning in counter directions with cardinal crosshair ticks; pulsing yellow for the locked target, faint white for the rest. The reticle radius scales with current spread (wide when inaccurate, closing onto the enemy as aim steadies) and the spin rate slows as accuracy sharpens. Tab / Q (or RB / LB) cycle the lock next/prev. **Lock-on facing:** while drawing, the player turns to face the locked target and movement strafes; the lock holds as long as the target is alive and in range. Instant weapons snap player facing to the shot direction on fire. **Target lead:** shots at a locked target solve the ballistic intercept against the enemy's measured velocity (`RuntimePathEntity::velocityX/Y`, bracketed around `updatePaths`) and blend from current position toward the intercept as accuracy sharpens — full anticipation at 0° spread, none at ≥ `kLeadMaxSpreadDegrees`. Without a lock, shots fly straight ahead; each pellet rolls its own spread angle, and projectile impact damage applies the weapon's distance falloff.
 - Item pickups equip weapons, add ammo, restore HP, or collect project item definitions. Project item pickups add to the inventory and write ownership to `GameState`; currency items also update the configured money variable. **Ammo lives in the inventory** (there is no separate ammo pool): a ranged weapon fires the matching `Ammo`-type item directly (resolved by `ammoItemIdForWeapon` from the weapon's `ammoTypeId` against item `id`/`targetId`), consumed via `consumeAmmoForWeapon`. The inventory overlay renders a dedicated AMMO section; ammo bought from a shop or picked up is immediately usable.

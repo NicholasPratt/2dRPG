@@ -149,7 +149,7 @@ private:
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawObstacleOverlay(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawParallaxPreview();
-    void drawToolButton(const char* label, PaintTool tool);
+    void drawToolButton(const char* label, PaintTool tool, const char* shortcut = nullptr);
     void drawBrushShapeButton(const char* label, BrushShape shape);
     void drawLayerPixels(ImDrawList* drawList, const PaintLayer& layer, ImVec2 origin, float pixelSize, ImVec2 offset = {0.0f, 0.0f}, bool wrap = false) const;
     void drawCompositePixel(ImDrawList* drawList, ImVec2 min, ImVec2 max, std::uint32_t color, float layerOpacity) const;

@@ -51,6 +51,9 @@ constexpr float kPlayerKnockbackPxPerSecond = 160.0f;
 constexpr float kPlayerKnockbackDecayPerSecond = 8.0f;
 constexpr float kItemPickupRadius = 12.0f;
 constexpr float kProjectileHalfSize = 4.0f;
+// On-screen size of a sprite-backed projectile, matching the ammo pickup so
+// high-resolution sprite art (e.g. a 32x32 slingshot stone) is not oversized.
+constexpr float kProjectileSpriteDisplaySize = 14.0f;
 // Rebounding projectiles (e.g. slingshot stone): bounce, lose energy, then settle on the ground.
 constexpr float kProjectileReboundRestitution = 0.55f;  // velocity retained per bounce
 constexpr int kProjectileMaxBounces = 2;
@@ -72,7 +75,6 @@ constexpr float kGamepadDeadZone = 0.35f;
 constexpr float kHudBarHeightPx = 28.0f;
 constexpr int kWindowWorkAreaMarginXPx = 32;
 constexpr int kWindowWorkAreaMarginYPx = 64;
-constexpr int kPreferredFullscreenScale = 2;
 
 struct RuntimeWindowLayout {
     int width = kScreenTilesW * kTileSize;
@@ -1564,10 +1566,10 @@ bool Engine::inputDown(InputAction action) const
         case InputAction::Inventory:
             return glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS ||
                 gamepadButtonDown(GLFW_GAMEPAD_BUTTON_Y) ||
-                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_START) ||
-                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_BACK);
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_START);
         case InputAction::Exit:
-            return glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+            return glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS ||
+                gamepadButtonDown(GLFW_GAMEPAD_BUTTON_BACK);
     }
     return false;
 }
@@ -2861,8 +2863,47 @@ bool Engine::activateDoor(const MapDoorPlacement& door)
         return false;
     }
 
-    const float spawnX = static_cast<float>(door.targetTileX * kTileSize + kTileSize / 2);
-    const float spawnY = static_cast<float>(door.targetTileY * kTileSize + kTileSize / 2);
+    // Spawn point: when this door is paired with a door on the target screen,
+    // arrive at that door (stepped one tile toward the screen interior so the
+    // player stands just in front of it). Otherwise use the legacy target tile.
+    float spawnX = static_cast<float>(door.targetTileX * kTileSize + kTileSize / 2);
+    float spawnY = static_cast<float>(door.targetTileY * kTileSize + kTileSize / 2);
+    if (!door.targetDoorId.empty()) {
+        const ChapterScreen* targetScreen = findScreen(chapter_, door.targetScreenId);
+        if (targetScreen != nullptr) {
+            TileMap targetMap;
+            const std::filesystem::path mapPath =
+                assetPath(projectRoot_, "assets/game/maps") / (targetScreen->mapId + ".admap");
+            if (loadTileMap(mapPath, targetMap, nullptr)) {
+                for (const MapDoorPlacement& paired : targetMap.doors) {
+                    if (paired.id != door.targetDoorId) {
+                        continue;
+                    }
+                    const float cx = (static_cast<float>(paired.x) +
+                        std::max(1, paired.widthTiles) * 0.5f) * kTileSize;
+                    const float cy = (static_cast<float>(paired.y) +
+                        std::max(1, paired.heightTiles) * 0.5f) * kTileSize;
+                    const float screenCx = static_cast<float>(targetMap.width) * kTileSize * 0.5f;
+                    const float screenCy = static_cast<float>(targetMap.height) * kTileSize * 0.5f;
+                    float steppedX = cx;
+                    float steppedY = cy;
+                    if (std::abs(screenCx - cx) >= std::abs(screenCy - cy)) {
+                        steppedX += (screenCx - cx >= 0.0f ? 1.0f : -1.0f) * kTileSize;
+                    } else {
+                        steppedY += (screenCy - cy >= 0.0f ? 1.0f : -1.0f) * kTileSize;
+                    }
+                    if (playerCanOccupyInMap(targetMap, steppedX, steppedY)) {
+                        spawnX = steppedX;
+                        spawnY = steppedY;
+                    } else {
+                        spawnX = cx;
+                        spawnY = cy;
+                    }
+                    break;
+                }
+            }
+        }
+    }
     float fromX = 0.0f;
     float fromY = 0.0f;
     if (std::abs(playerFacingX_) >= std::abs(playerFacingY_)) {
@@ -4721,8 +4762,7 @@ void Engine::render()
 
     const int logicalWidth = static_cast<int>(screenWidthPx());
     const int logicalHeight = static_cast<int>(screenHeightPx() + kHudBarHeightPx);
-    const int availableScale = std::max(1, std::min(fbWidth / logicalWidth, fbHeight / logicalHeight));
-    const int integerScale = std::min(kPreferredFullscreenScale, availableScale);
+    const int integerScale = std::max(1, std::min(fbWidth / logicalWidth, fbHeight / logicalHeight));
     const int viewportWidth = logicalWidth * integerScale;
     const int viewportHeight = logicalHeight * integerScale;
     const int viewportX = (fbWidth - viewportWidth) / 2;
@@ -4773,7 +4813,6 @@ void Engine::render()
 
     // Floor-layer animated tiles sit above the floor but below entities/player.
     renderAnimatedTiles(0);
-    renderDoors();
 
     for (const RuntimePathEntity& entity : pathEntities_) {
         if (!entity.pathHidden && !entity.path.renderAboveWalls) {
@@ -4838,6 +4877,10 @@ void Engine::render()
     if (wallTexture_.id != 0) {
         renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
     }
+
+    // Doors draw above the wall texture so a doorway carved into the wall art
+    // stays visible instead of being painted over.
+    renderDoors();
 
     // Overlay-layer animated tiles draw above the walls (player walks behind them).
     renderAnimatedTiles(1);
@@ -5315,9 +5358,14 @@ void Engine::renderProjectiles() const
         auto spriteIt = loadedSprites_.find(proj.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
             const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
-            if (frame != nullptr) {
-                const float drawW = static_cast<float>(frame->width);
-                const float drawH = static_cast<float>(frame->height);
+            if (frame != nullptr && frame->width > 0 && frame->height > 0) {
+                // Display the projectile at the same on-screen size as the ammo
+                // pickup (kProjectileSpriteDisplaySize), preserving the frame's
+                // aspect ratio so high-resolution sprite art is not oversized.
+                const float longest = static_cast<float>(std::max(frame->width, frame->height));
+                const float displayScale = kProjectileSpriteDisplaySize / longest;
+                const float drawW = static_cast<float>(frame->width) * displayScale;
+                const float drawH = static_cast<float>(frame->height) * displayScale;
                 const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
                 const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
                 const float u1 = static_cast<float>(frame->x + frame->width) / static_cast<float>(spriteIt->second.texture.width);

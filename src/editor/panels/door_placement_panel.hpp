@@ -51,6 +51,12 @@ private:
     void writeInspectorToSelected(EditorContext& context);
     void requestEditDoorSprite(EditorContext& context);
     void placeDoorAt(EditorContext& context, int tileX, int tileY);
+    // Creates (or reconciles) the paired door on the target screen and links the
+    // two together via targetDoorId. The paired door is the player's spawn point
+    // when crossing through this door. No-op for same-screen or untargeted doors.
+    void ensurePairedDoor(EditorContext& context, int doorIndex);
+
+    std::string pairingStatus_;
 };
 
 } // namespace adventure::editor

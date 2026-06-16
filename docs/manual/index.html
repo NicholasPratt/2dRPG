@@ -161,12 +161,17 @@ in ms. Multiple frames sharing an action+direction loop as a clip. The runtime a
 west-facing frames it flips the east ones (same for NW↔NE, SW↔SE). This direction system is identical for the
 player, enemies, and NPCs. The runtime drives action state automatically (idle/walk, attack/hurt/dead), so to make
 an animation appear you just provide frames with the matching action-type label.</p>
-<p>All frames in a sprite share one canvas size. Use <strong>Resize</strong> to rescale every frame and layer
-together (nearest-neighbour). <strong>Move up</strong>/<strong>Move down</strong> reorder the selected frame within the
-animation. Two non-rendered authoring overlays help you keep poses aligned: the <strong>Pivot</strong> toggle marks the
-sprite anchor (a crosshair), and the <strong>Body</strong> toggle shows a user-defined <em>body guide</em> rectangle
-(x, y, width, height in canvas pixels; the <code>= canvas</code> button fills the whole frame). Both are saved per
-sprite in the <code>.sprite.json</code> and are never drawn in the running game — they are alignment guides only.</p>
+<p>All frames in a sprite share one canvas size. Use <strong>Resize</strong> to change it: enter a pixel size in
+<strong>Dimensions (px)</strong> or a whole-tile count in <strong>Size in tiles</strong> (1 tile = 16&nbsp;px), and the
+two fields stay in sync so you can author multi-tile sprites by tile count. Choose <em>Keep pixels</em> to grow/crop the
+canvas around centred art, or <em>Scale pixels</em> to rescale every frame and layer together (nearest-neighbour).
+<strong>Move up</strong>/<strong>Move down</strong> reorder the selected frame within the animation. Several
+non-rendered authoring overlays help you keep poses aligned: the <strong>Grid</strong> toggle draws the per-pixel grid,
+the <strong>Tiles</strong> toggle overlays brighter tile-boundary lines every 16&nbsp;px to aid drawing accuracy on
+multi-tile sprites, the <strong>Pivot</strong> toggle marks the sprite anchor (a crosshair), and the
+<strong>Body</strong> toggle shows a user-defined <em>body guide</em> rectangle (x, y, width, height in canvas pixels;
+the <code>= canvas</code> button fills the whole frame). Pivot and body guide are saved per sprite in the
+<code>.sprite.json</code>; none of these overlays are ever drawn in the running game — they are alignment guides only.</p>
 
 <h3 id="atari-colors">Atari 2600 NTSC colors</h3>
 <p>The Screen Graphics and Sprite editors use a fixed set of 128 Atari 2600 NTSC colors based on Stella's standard
@@ -194,6 +199,14 @@ of the dithered feather around the brush edge: 0% is a hard edge and 100% gradua
 painting the Floor or Wall beneath them. This is useful when transparent animation frames should reveal authored
 background pixels. The placements remain in the chapter and reappear when the checkbox is enabled; an active Stamp
 preview is still shown.</p>
+<p><strong>Keyboard shortcuts (Screen Graphics):</strong> select pixel tools without leaving the canvas —
+<span class="kbd">B</span> Pencil, <span class="kbd">E</span> Eraser, <span class="kbd">D</span> Darken,
+<span class="kbd">G</span> Lighten, <span class="kbd">U</span> Smudge, <span class="kbd">F</span> Fill,
+<span class="kbd">L</span> Line, <span class="kbd">R</span> Rect, <span class="kbd">S</span> Select,
+<span class="kbd">I</span> Pick. <span class="kbd">[</span> and <span class="kbd">]</span> shrink/grow the brush;
+<span class="kbd">=</span>/<span class="kbd">-</span> zoom; <span class="kbd">Ctrl+Z</span> undo,
+<span class="kbd">Ctrl+C</span>/<span class="kbd">Ctrl+V</span> copy/paste, <span class="kbd">Esc</span> clears a
+selection. Hovering a tool button shows its key. Shortcuts are ignored while a text field is focused.</p>
 
 <h3 id="screen-graphics-placement">Screen Graphics paste and stamp reference</h3>
 <p>When pasting a copied pixel selection or placing a Tile Palette entry with <strong>Stamp</strong>, the mouse can
@@ -256,6 +269,9 @@ knockback). Each ranged weapon’s <code>On wall hit</code> setting controls wha
   <tr><td><code>Break</code></td><td>Vanishes on contact.</td><td>Arrow, bullet</td></tr>
   <tr><td><code>Rebound</code></td><td>Bounces off the wall, loses energy each bounce, then settles on the ground and fades.</td><td>Slingshot stone</td></tr>
 </table>
+<p>A fired projectile draws its ammo sprite at the same on-screen size as the ammo pickup (preserving the frame's
+aspect ratio), so high-resolution ammo art is not oversized in flight. Authoring the ammo sprite at any canvas
+size renders at a consistent in-world size.</p>
 
 <h3>Enemy type fields (Hit Reaction &amp; AI)</h3>
 <table>
@@ -547,9 +563,15 @@ still play over the active music.</div>
     <li><strong>Target screen ID:</strong> the text field below the lock controls is the destination screen id. Leave
     it empty for a permanently Locked barrier or for a Requires Item door that should unlock within the current
     screen.</li>
-    <li><strong>Destination:</strong> enter the target screen id and target tile X/Y where the player should arrive.</li>
-    <li><strong>Optional visuals:</strong> set a door sprite id. Opening animation ids are stored for future animation
-    playback.</li>
+    <li><strong>Destination &amp; paired door:</strong> set the <strong>Target screen ID</strong>, then press
+    <strong>Apply Door</strong> (or <strong>Link / create paired door</strong>). The editor automatically creates a
+    matching <em>paired door</em> at the centre of the target screen and links the two together; open that screen to
+    drag the paired door to where the player should arrive. At runtime the player spawns at the paired door, stepped one
+    tile toward the screen interior so they stand just in front of it. The <strong>Target Tile X/Y</strong> fields are
+    only a fallback used when a door has no paired door.</li>
+    <li><strong>Optional visuals:</strong> set a door sprite id. The door sprite draws above the Wall layer, so a
+    doorway opening carved into the wall art stays visible instead of being painted over. Opening animation ids are
+    stored for future animation playback.</li>
     <li><strong>Door sounds:</strong> put <code>.ogg</code> or <code>.wav</code> files in
     <code>assets/game/sfx/doors</code>, then choose the Open, Close, and Locked sounds from their dropdowns. The folder
     is created automatically for each project.</li>
@@ -557,7 +579,7 @@ still play over the active music.</div>
   <div class="note"><strong>Runtime behavior:</strong> stand on or next to the door and press
   <span class="kbd">E</span>. Locked and required-item doors block movement. Locked doors show feedback,
   required-item doors check the player inventory, consumed keys are removed, and valid doors transition to the target
-  screen/tile. A key door without a destination unlocks in place and becomes walkable; if it has no opening animation,
+  screen, spawning the player at the paired door (or the fallback target tile). A key door without a destination unlocks in place and becomes walkable; if it has no opening animation,
   the door disappears when the player enters its tiles. Free-use doors remain walkable triggers. A successful
   transition plays Open when activated and Close after the slide; permanently locked and missing-key interactions
   play Locked.</div>
@@ -596,13 +618,16 @@ still play over the active music.</div>
   <ol>
     <li>Create the destination screen first and note its exact screen ID.</li>
     <li>In <code>Edit Doors</code>, choose <code>Free Use</code> or <code>Requires Item</code>.</li>
-    <li>Set <code>Target screen ID</code> and a clear <code>Target Tile X/Y</code>.</li>
+    <li>Set <code>Target screen ID</code>, then press <code>Apply Door</code> (or <code>Link / create paired door</code>).
+    A paired door is created at the centre of the target screen and linked back to this one.</li>
+    <li>Open the target screen in <code>Edit Doors</code> and drag the paired door to where the player should arrive.</li>
     <li>For a key door, set <code>Required item ID</code> to the project item’s ID and optionally enable
     <code>Consume Key</code>.</li>
     <li>Save, stand beside the door, and press <span class="kbd">E</span>.</li>
   </ol>
-  <div class="note">The target tile must be inside the destination map and clear of its wall layer. A Free Use door
-  without a destination is invalid; use Locked or Requires Item for a same-screen barrier.</div>
+  <div class="note">The player spawns at the paired door (stepped one tile inward). <code>Target Tile X/Y</code> is only
+  used as a fallback when a door has no paired door, and must be inside the destination map and clear of its wall layer.
+  A Free Use door without a destination is invalid; use Locked or Requires Item for a same-screen barrier.</div>
 </div>
 
 <div class="recipe" id="recipe-key-barrier">
@@ -654,15 +679,17 @@ still play over the active music.</div>
   <tr><td>Interact / confirm / use</td><td><span class="kbd">E</span></td><td>South face button</td></tr>
   <tr><td>Melee attack</td><td><span class="kbd">Z</span></td><td>West face button</td></tr>
   <tr><td>Ranged attack</td><td><span class="kbd">X</span></td><td>East face button</td></tr>
-  <tr><td>Toggle inventory</td><td><span class="kbd">I</span></td><td>North / Select / Start</td></tr>
+  <tr><td>Toggle inventory</td><td><span class="kbd">I</span></td><td>North / Start</td></tr>
   <tr><td>Scroll dialogue / select response</td><td>Up/Down or W/S</td><td>D-pad / left stick</td></tr>
-  <tr><td>Open / close display menu</td><td><span class="kbd">Esc</span></td><td>—</td></tr>
+  <tr><td>Open / close display menu</td><td><span class="kbd">Esc</span></td><td>Select (Back) button</td></tr>
   <tr><td>Toggle Fullscreen 2x</td><td><span class="kbd">F11</span></td><td>—</td></tr>
 </table>
 <p>The game renders a fixed 768&times;540 logical canvas: a 768&times;512 playfield and compact
 28-pixel HUD. It uses centred integer scaling with black letterboxing, so resizing never stretches
-the pixels. The display menu offers Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game.
-Fullscreen 2x renders at 1536&times;1080 and remains centred on wider monitors.</p>
+the pixels: the playfield grows to the largest whole-number multiple that fits the current window,
+so enlarging the window enlarges the play area in crisp integer steps. The display menu offers
+Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. Fullscreen 2x renders at 1536&times;1080 and
+remains centred on wider monitors.</p>
 
 <!-- ============================================================ -->
 <h2 id="glossary">8. Glossary</h2>

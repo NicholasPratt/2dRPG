@@ -788,6 +788,11 @@ void SpriteEditorPanel::drawTopBar()
     ImGui::SameLine(controlsStart);
     ui::checkbox("Grid", "##SpriteGrid", &showGrid_, 42.0f);
     ImGui::SameLine();
+    ui::checkbox("Tiles", "##SpriteTileGuide", &showTileGuide_, 44.0f);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Overlay tile boundaries every %dpx to aid drawing multi-tile sprites.", game::kTileSize);
+    }
+    ImGui::SameLine();
     ui::checkbox("Onion", "##SpriteOnion", &onionSkin_, 50.0f);
     ImGui::SameLine();
     ui::checkbox("Pivot", "##SpritePivot", &showPivot_, 48.0f);
@@ -838,10 +843,25 @@ void SpriteEditorPanel::drawTopBar()
 
     if (ImGui::BeginPopupModal("Resize Sprite", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         int size[2]{resizeSpriteSize_[0], resizeSpriteSize_[1]};
-        if (ImGui::InputInt2("Dimensions", size)) {
+        if (ImGui::InputInt2("Dimensions (px)", size)) {
             resizeSpriteSize_[0] = clampDimension(size[0]);
             resizeSpriteSize_[1] = clampDimension(size[1]);
         }
+        int tiles[2]{
+            std::max(1, resizeSpriteSize_[0] / game::kTileSize),
+            std::max(1, resizeSpriteSize_[1] / game::kTileSize),
+        };
+        if (ImGui::InputInt2("Size in tiles", tiles)) {
+            resizeSpriteSize_[0] = clampDimension(std::max(1, tiles[0]) * game::kTileSize);
+            resizeSpriteSize_[1] = clampDimension(std::max(1, tiles[1]) * game::kTileSize);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Resize by whole tiles (1 tile = %dpx).", game::kTileSize);
+        }
+        ImGui::TextDisabled("= %dx%d px  (%d x %d tiles, tile = %dpx)",
+            resizeSpriteSize_[0], resizeSpriteSize_[1],
+            resizeSpriteSize_[0] / game::kTileSize, resizeSpriteSize_[1] / game::kTileSize,
+            game::kTileSize);
         for (int preset : kSpriteSizePresets) {
             ImGui::PushID(preset);
             if (ImGui::Button((std::to_string(preset) + "x" + std::to_string(preset)).c_str(), ImVec2(64.0f, 0.0f))) {
@@ -1195,6 +1215,21 @@ void SpriteEditorPanel::drawCanvas(const ImVec2& availableSize)
         for (int y = 0; y <= document_.canvasSize[1]; ++y) {
             const float sy = canvasOrigin.y + static_cast<float>(y) * pixelSize;
             drawList->AddLine({canvasOrigin.x, sy}, {canvasOrigin.x + canvasSize.x, sy}, IM_COL32(68, 74, 82, 255));
+        }
+    }
+
+    // Tile guide: brighter lines on every kTileSize boundary so multi-tile
+    // sprites can be drawn with accurate per-tile alignment. Independent of the
+    // per-pixel grid above.
+    if (showTileGuide_ && game::kTileSize > 0) {
+        const ImU32 tileLineColor = IM_COL32(255, 196, 64, 200);
+        for (int x = 0; x <= document_.canvasSize[0]; x += game::kTileSize) {
+            const float sx = canvasOrigin.x + static_cast<float>(x) * pixelSize;
+            drawList->AddLine({sx, canvasOrigin.y}, {sx, canvasOrigin.y + canvasSize.y}, tileLineColor, 1.5f);
+        }
+        for (int y = 0; y <= document_.canvasSize[1]; y += game::kTileSize) {
+            const float sy = canvasOrigin.y + static_cast<float>(y) * pixelSize;
+            drawList->AddLine({canvasOrigin.x, sy}, {canvasOrigin.x + canvasSize.x, sy}, tileLineColor, 1.5f);
         }
     }
 

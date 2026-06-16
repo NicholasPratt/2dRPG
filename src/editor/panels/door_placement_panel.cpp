@@ -72,6 +72,11 @@ void DoorPlacementPanel::openForScreen(EditorContext& context)
 void DoorPlacementPanel::saveForScreen(EditorContext& context)
 {
     writeInspectorToSelected(context);
+    // Reconcile paired doors before persisting so each linked door's targetDoorId
+    // is written and the partner door exists on its target screen.
+    for (int i = 0; i < static_cast<int>(context.selectedScreenDoors.size()); ++i) {
+        ensurePairedDoor(context, i);
+    }
     if (context.selectedScreenDoorsMapId.empty()) {
         return;
     }
@@ -189,6 +194,24 @@ void DoorPlacementPanel::drawInspector(EditorContext& context)
     ImGui::TextUnformatted("Target screen ID");
     ImGui::SetNextItemWidth(-1.0f);
     if (ui::inputTextString("##door_target", targetScreenId_.data(), targetScreenId_.size())) { context.markDirty(); }
+
+    // Paired-door linking: the player spawns at the linked door on the target
+    // screen. The paired door is created automatically (centre of that screen).
+    const std::string pairedDoorId = context.selectedScreenDoors[static_cast<std::size_t>(selectedDoor_)].targetDoorId;
+    if (pairedDoorId.empty()) {
+        ImGui::TextDisabled("Paired door: none yet");
+    } else {
+        ImGui::TextDisabled("Paired door: %s", pairedDoorId.c_str());
+    }
+    if (ImGui::Button("Link / create paired door##door_pair", ImVec2(-1.0f, 0.0f))) {
+        writeInspectorToSelected(context);
+        ensurePairedDoor(context, selectedDoor_);
+    }
+    if (!pairingStatus_.empty()) {
+        ImGui::TextWrapped("%s", pairingStatus_.c_str());
+    }
+
+    ImGui::TextDisabled("Fallback target tile (used only when no paired door):");
     if (ImGui::DragInt("Target Tile X##door_tx", &targetTileX_, 1.0f, 0, game::kScreenTilesW - 1)) { context.markDirty(); }
     if (ImGui::DragInt("Target Tile Y##door_ty", &targetTileY_, 1.0f, 0, game::kScreenTilesH - 1)) { context.markDirty(); }
     ImGui::TextUnformatted("Sprite ID");
@@ -204,6 +227,7 @@ void DoorPlacementPanel::drawInspector(EditorContext& context)
 
     if (ImGui::Button("Apply Door##door_apply", ImVec2(-1.0f, 0.0f))) {
         writeInspectorToSelected(context);
+        ensurePairedDoor(context, selectedDoor_);
     }
     ImGui::TextDisabled("Mode: %s", lockModeLabel(lockMode_));
     drawValidation(context);
@@ -508,6 +532,89 @@ void DoorPlacementPanel::placeDoorAt(EditorContext& context, int tileX, int tile
     selectedDoor_ = static_cast<int>(context.selectedScreenDoors.size()) - 1;
     syncInspectorFromSelected(context);
     context.markDirty();
+}
+
+void DoorPlacementPanel::ensurePairedDoor(EditorContext& context, int doorIndex)
+{
+    if (doorIndex < 0 || doorIndex >= static_cast<int>(context.selectedScreenDoors.size())) {
+        return;
+    }
+    game::MapDoorPlacement& door = context.selectedScreenDoors[static_cast<std::size_t>(doorIndex)];
+    if (door.targetScreenId.empty()) {
+        pairingStatus_.clear();
+        return;
+    }
+    const std::string currentScreenId = context.selectedScreenId;
+    if (door.targetScreenId == currentScreenId) {
+        pairingStatus_ = "Same-screen door: no paired door is created.";
+        return;
+    }
+    if (door.id.empty()) {
+        pairingStatus_ = "Give the door an id before linking screens.";
+        return;
+    }
+    const auto targetIt = std::find_if(context.chapterScreens.begin(), context.chapterScreens.end(),
+        [&door](const ChapterScreenEntry& screen) { return screen.id == door.targetScreenId; });
+    if (targetIt == context.chapterScreens.end()) {
+        pairingStatus_ = "Target screen is not in this chapter.";
+        return;
+    }
+
+    // Load-merge: read the whole target map so appending a door preserves its
+    // layers, obstacles, items, and existing doors.
+    const auto mapPath = context.assets.gameMapPath() / (targetIt->mapId + ".admap");
+    game::TileMap targetMap;
+    if (!game::loadTileMap(mapPath, targetMap, nullptr)) {
+        pairingStatus_ = "Could not load the target screen map.";
+        return;
+    }
+
+    // Already paired and the partner still exists: only reconcile its back-links.
+    if (!door.targetDoorId.empty()) {
+        const auto pairedIt = std::find_if(targetMap.doors.begin(), targetMap.doors.end(),
+            [&door](const game::MapDoorPlacement& other) { return other.id == door.targetDoorId; });
+        if (pairedIt != targetMap.doors.end()) {
+            bool changed = false;
+            if (pairedIt->targetScreenId != currentScreenId) { pairedIt->targetScreenId = currentScreenId; changed = true; }
+            if (pairedIt->targetDoorId != door.id) { pairedIt->targetDoorId = door.id; changed = true; }
+            if (changed) {
+                (void)game::saveTileMap(mapPath, targetMap, nullptr);
+            }
+            pairingStatus_ = "Linked to '" + door.targetDoorId + "' on " + door.targetScreenId + ".";
+            return;
+        }
+        // The referenced partner is gone; fall through and create a fresh one.
+    }
+
+    // Create the paired door at the centre of the target screen with a unique id.
+    std::string pairedId = "door_to_" + currentScreenId;
+    {
+        const std::string base = pairedId;
+        int suffix = 1;
+        while (std::any_of(targetMap.doors.begin(), targetMap.doors.end(),
+            [&pairedId](const game::MapDoorPlacement& other) { return other.id == pairedId; })) {
+            pairedId = base + "_" + std::to_string(++suffix);
+        }
+    }
+    game::MapDoorPlacement paired;
+    paired.id = pairedId;
+    paired.widthTiles = std::clamp(door.widthTiles, 1, targetMap.width);
+    paired.heightTiles = std::clamp(door.heightTiles, 1, targetMap.height);
+    paired.x = std::clamp(targetMap.width / 2 - paired.widthTiles / 2, 0, targetMap.width - paired.widthTiles);
+    paired.y = std::clamp(targetMap.height / 2 - paired.heightTiles / 2, 0, targetMap.height - paired.heightTiles);
+    paired.lockMode = game::DoorLockMode::FreeUse;
+    paired.targetScreenId = currentScreenId;
+    paired.targetDoorId = door.id;
+    paired.spriteId = door.spriteId;
+    targetMap.doors.push_back(paired);
+    if (!game::saveTileMap(mapPath, targetMap, nullptr)) {
+        pairingStatus_ = "Failed to write the paired door to the target screen.";
+        return;
+    }
+    door.targetDoorId = pairedId;
+    context.markDirty();
+    pairingStatus_ = "Created paired door '" + pairedId + "' at the centre of " +
+        door.targetScreenId + ". Open that screen to reposition it.";
 }
 
 void DoorPlacementPanel::syncInspectorFromSelected(const EditorContext& context)

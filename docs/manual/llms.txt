@@ -33,11 +33,12 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Slingshot/bow won't use ammo → ammo lives in the INVENTORY (shown in an "AMMO" section), fired directly; weapon ammoTypeId must match an Ammo item id/targetId. No separate ammo pool.  (R20)
 - Editor opens last project automatically (projects/.editor_session); Project Manager opens/creates/deletes projects. Creating or opening ensures the complete declared assets/raw and assets/game folder tree, including sfx/doors; chapters get dialogue/<chapter-id>.  (R21)
 - Obstacles / hazards → Screens → Edit Screen Graphics → Map Logic; add Spike/Pit/Timed Spike rectangles, set tile position/size, optional sprite id, and timed spike cycle fields. Obstacles do not have a top-level tab.  (R22)
-- Door behavior overview → Screens → Edit Doors; Free Use+target transfers, Locked is permanent, Requires Item+target transfers, Requires Item without target unlocks in place. Required Item uses the key item ID, not Target.  (R23)
+- Door behavior overview → Screens → Edit Doors; Free Use+target transfers, Locked is permanent, Requires Item+target transfers, Requires Item without target unlocks in place. Required Item uses the key item ID, not Target. Door sprites draw above the Wall layer so a doorway carved into wall art stays visible.  (R23)
+- Linked screen doors → set a door's Target screen, then Apply (or "Link / create paired door"). The editor auto-creates a matching paired door at the centre of the target screen and links both via targetDoorId; open that screen to drag the paired door into place. At runtime the player spawns at the paired door (stepped one tile toward the screen interior). Target Tile X/Y is only a fallback used when a door has no paired door. (.admap is v11.)  (R30)
 - NPC/enemy enters, speaks, or leaves on a path → edit its path/spline; use off-screen X/Y coordinates, Enter/Speak/Leave waypoint actions, and Speech time.  (R24)
 - Draw a polygon in a sprite → Sprite editor → Polygon; click vertices, double-click/Enter to close, right-click/Esc to cancel. Reorder frames by dragging thumbnails or Earlier/Later.  (R25)
 - Choose paint/sprite colors → Screen Graphics and Sprite editor use the fixed 128-color Atari 2600 NTSC palette. Screen Graphics also has Transparent; Sprite palette swatches can be replaced and Add color opens the same selector. Existing legacy colors are preserved until replaced.
-- Destination door → set Target screen ID and clear Target Tile X/Y; optionally require/consume a key.  (R26)
+- Destination door → set Target screen ID and Apply; a paired door is auto-created on the target screen and becomes the spawn point (drag it into place on that screen). Target Tile X/Y is a fallback only; optionally require/consume a key.  (R26/R30)
 - Same-screen key barrier → Requires Item + key item ID + empty Target screen; unlock persists and an unanimated door disappears when crossed.  (R27)
 - Door SFX → put `.wav`/`.ogg` under assets/game/sfx/doors and select Open, Close, Locked dropdowns.  (R28)
 - Audio: only one screen-music track is active per game process. Changing tracks stops the previous music first; one-shot SFX still mix over the active track.
@@ -59,14 +60,19 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Runtime collision tiles do not draw a yellow debug overlay. The optional yellow Wall guide exists only in Screen Graphics.
 - Screen Graphics animated-tile overlay: clear the "Animated tiles" checkbox to hide existing placement markers while painting Floor/Wall pixels beneath transparent animation frames. This is visibility-only and does not delete placements; the active Stamp ghost remains visible.
 - Editor zoom: `=`/keypad `+` zooms in and `-`/keypad `-` zooms out in the Sprite and Screen Graphics editors. Shortcuts are ignored while editing a field.
+- Screen Graphics tool shortcuts: B Pencil, E Eraser, D Darken, G Lighten, U Smudge, F Fill, L Line, R Rect, S Select, I Pick; `[`/`]` shrink/grow the brush; Ctrl+Z undo, Ctrl+C/Ctrl+V copy/paste, Esc clears a selection. Tool buttons show their key on hover; single-key shortcuts only fire without Ctrl/Cmd and not while a field is focused.
+- Sprite resize: the Resize dialog accepts either pixels ("Dimensions (px)") or whole tiles ("Size in tiles", 1 tile = 16px); the fields stay in sync. Keep-pixels grows/crops centred art, Scale-pixels rescales all frames/layers (nearest-neighbour).
+- Sprite overlays: the "Tiles" toggle overlays brighter tile-boundary lines every 16px (separate from the per-pixel "Grid") to aid drawing accuracy on multi-tile sprites; Pivot and Body guides are also overlay-only. None render in game.
+- Projectile size: a fired projectile draws its ammo sprite at the same on-screen size as the ammo pickup (aspect-ratio preserved), so high-resolution ammo art (e.g. a 32x32 slingshot stone) is not oversized in flight.
 - Combat: melee has windup→active→recovery; hits cause knockback + hitstun + flash; lethal → dead/fade.
   Projectiles are team-tagged (enemy shots hit the player). Aggro enemies chase then return to nearest path point.
 
 ## Runtime controls
-Move WASD/arrows; Z melee; X ranged; E interact/confirm/use; I inventory; Esc display menu; F11 toggle 2x fullscreen.
+Keyboard: Move WASD/arrows; Z melee; X ranged; E interact/confirm/use; I inventory; Esc display menu; F11 toggle 2x fullscreen.
+Gamepad: D-pad/left stick move; South (A) interact; West (X) melee; East (B) ranged; bumpers cycle aim; North (Y)/Start inventory; Select/Back opens the display menu (same as Esc).
 
 ## Runtime display
-The game uses a 768x540 logical canvas (768x512 playfield plus 28px HUD), centred integer scaling, and black letterboxing. Escape opens Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. Fullscreen 2x presents a 1536x1080 image without stretching.
+The game uses a 768x540 logical canvas (768x512 playfield plus 28px HUD), centred integer scaling, and black letterboxing. The playfield scales to the largest whole-number multiple that fits the window, so enlarging the window enlarges the play area in crisp integer steps (never stretched). Escape (or gamepad Select/Back) opens Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. Fullscreen 2x presents a 1536x1080 image without stretching.
 
 ## Files in this folder
 - index.html — full human + LLM readable manual
