@@ -61,6 +61,10 @@ struct MapDoorPlacement {
     std::string openSoundPath;
     std::string closeSoundPath;
     std::string lockedSoundPath;
+    // When true the door sprite draws above the wall texture (for doors set into
+    // wall art). Default false: the door draws below the player and wall, so the
+    // player passes in front of the door.
+    bool renderAboveWalls = false;
 };
 
 struct MapObstacle {

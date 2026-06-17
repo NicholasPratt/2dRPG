@@ -381,6 +381,8 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
         wallGuideWidth_ = map.width;
         wallGuideHeight_ = map.height;
         obstacleOverlay_ = map.obstacles;
+        doorOverlay_ = map.doors;
+        doorSpriteCache_.clear();
         wallGuide_.assign(static_cast<std::size_t>(wallGuideWidth_ * wallGuideHeight_), 0u);
         for (int y = 0; y < wallGuideHeight_; ++y) {
             for (int x = 0; x < wallGuideWidth_; ++x) {
@@ -394,6 +396,8 @@ void WallFloorPaintPanel::openScreenGraphics(EditorContext& context, const std::
         wallGuideHeight_ = 0;
         wallGuideMapId_.clear();
         obstacleOverlay_.clear();
+        doorOverlay_.clear();
+        doorSpriteCache_.clear();
     }
 
     const int pw = game::kScreenTilesW * game::kTileSize;
@@ -636,6 +640,12 @@ void WallFloorPaintPanel::drawToolbar(EditorContext& context)
     ui::checkbox("Animated tiles", "##ScreenGraphicsAnimatedTiles", &showAnimatedTileOverlay_);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Show or hide placed animated-tile overlays. Hiding does not delete placements.");
+    }
+    ImGui::SameLine();
+    ui::checkbox("Doors", "##ScreenGraphicsDoors", &showDoorOverlay_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Overlay the %d placed door sprite%s so wall art can be cut to blend with the doorway. Reference only; not painted into the texture.",
+            static_cast<int>(doorOverlay_.size()), doorOverlay_.size() == 1 ? "" : "s");
     }
     ImGui::SameLine();
     if (ImGui::Button("Undo")) {
@@ -1277,6 +1287,9 @@ void WallFloorPaintPanel::drawCanvas(EditorContext& context)
     if (showObstacleOverlay_) {
         drawObstacleOverlay(drawList, origin, pixelSize);
     }
+    if (showDoorOverlay_) {
+        drawDoorOverlay(context, drawList, origin, pixelSize);
+    }
 
     if ((tool_ == PaintTool::TileDraw || tool_ == PaintTool::TileSelect || tool_ == PaintTool::TilePaste ||
             tool_ == PaintTool::TileFill || tool_ == PaintTool::TileRotate) && ImGui::IsItemHovered()) {
@@ -1611,6 +1624,102 @@ void WallFloorPaintPanel::drawObstacleOverlay(ImDrawList* drawList, ImVec2 origi
         drawList->AddText({min.x + 3.0f, min.y + 2.0f}, border, typeLabel);
         if (!obstacle.id.empty() && tileScreen >= 20.0f) {
             drawList->AddText({min.x + 3.0f, min.y + 16.0f}, border, obstacle.id.c_str());
+        }
+    }
+}
+
+const WallFloorPaintPanel::DoorSpriteImage* WallFloorPaintPanel::doorSpriteImage(EditorContext& context, const std::string& spriteId)
+{
+    auto it = doorSpriteCache_.find(spriteId);
+    if (it != doorSpriteCache_.end()) {
+        return it->second.valid ? &it->second : nullptr;
+    }
+
+    DoorSpriteImage& slot = doorSpriteCache_[spriteId];  // valid == false until decoded
+    if (spriteId.empty()) {
+        return nullptr;
+    }
+
+    const std::filesystem::path metaPath = context.assets.gameSpritePath() / (spriteId + ".sprite.json");
+    game::SpriteMetadata meta;
+    if (!game::loadSpriteMetadata(metaPath, meta, nullptr) || meta.frames.empty()) {
+        return nullptr;
+    }
+
+    const std::filesystem::path pngPath = context.assets.projectRoot / meta.source;
+    int w = 0, h = 0, ch = 0;
+    unsigned char* data = stbi_load(pngPath.string().c_str(), &w, &h, &ch, 4);
+    if (data == nullptr || w <= 0 || h <= 0) {
+        if (data != nullptr) {
+            stbi_image_free(data);
+        }
+        return nullptr;
+    }
+
+    // Use the first frame ("closed" door) — that is the state wall art must blend with.
+    const game::SpriteFrameDef& f = meta.frames.front();
+    const int fx = std::clamp(f.x, 0, w);
+    const int fy = std::clamp(f.y, 0, h);
+    const int fw = std::clamp(f.width, 0, w - fx);
+    const int fh = std::clamp(f.height, 0, h - fy);
+    if (fw > 0 && fh > 0) {
+        slot.width = fw;
+        slot.height = fh;
+        slot.pixels.resize(static_cast<std::size_t>(fw * fh));
+        for (int yy = 0; yy < fh; ++yy) {
+            for (int xx = 0; xx < fw; ++xx) {
+                const int sj = ((fy + yy) * w + (fx + xx)) * 4;
+                slot.pixels[static_cast<std::size_t>(yy * fw + xx)] =
+                    (static_cast<std::uint32_t>(data[sj + 3]) << 24) |
+                    (static_cast<std::uint32_t>(data[sj + 2]) << 16) |
+                    (static_cast<std::uint32_t>(data[sj + 1]) << 8) |
+                     static_cast<std::uint32_t>(data[sj + 0]);
+            }
+        }
+        slot.valid = true;
+    }
+    stbi_image_free(data);
+    return slot.valid ? &slot : nullptr;
+}
+
+void WallFloorPaintPanel::drawDoorOverlay(EditorContext& context, ImDrawList* drawList, ImVec2 origin, float pixelSize)
+{
+    const float ts = static_cast<float>(game::kTileSize);
+    for (const game::MapDoorPlacement& door : doorOverlay_) {
+        const float dx0 = static_cast<float>(door.x) * ts;
+        const float dy0 = static_cast<float>(door.y) * ts;
+        const float dw = static_cast<float>(std::max(1, door.widthTiles)) * ts;
+        const float dh = static_cast<float>(std::max(1, door.heightTiles)) * ts;
+        const ImVec2 rMin{origin.x + dx0 * pixelSize, origin.y + dy0 * pixelSize};
+        const ImVec2 rMax{origin.x + (dx0 + dw) * pixelSize, origin.y + (dy0 + dh) * pixelSize};
+
+        const DoorSpriteImage* image = doorSpriteImage(context, door.spriteId);
+        if (image != nullptr && image->width > 0 && image->height > 0) {
+            // Blit the sprite stretched into the door's tile rect — the same rect the
+            // game draws the door into — so the art lines up exactly in-engine.
+            const int destW = static_cast<int>(dw);
+            const int destH = static_cast<int>(dh);
+            for (int ny = 0; ny < destH; ++ny) {
+                const int sy = std::min(image->height - 1, ny * image->height / std::max(1, destH));
+                for (int nx = 0; nx < destW; ++nx) {
+                    const int sx = std::min(image->width - 1, nx * image->width / std::max(1, destW));
+                    const std::uint32_t color = image->pixels[static_cast<std::size_t>(sy * image->width + sx)];
+                    if ((color >> 24) == 0u) {
+                        continue;  // transparent sprite pixel
+                    }
+                    const ImVec2 pMin{origin.x + (dx0 + static_cast<float>(nx)) * pixelSize,
+                        origin.y + (dy0 + static_cast<float>(ny)) * pixelSize};
+                    const ImVec2 pMax{pMin.x + pixelSize, pMin.y + pixelSize};
+                    // Semi-transparent so the wall art being painted shows through.
+                    drawCompositePixel(drawList, pMin, pMax, color, 0.5f);
+                }
+            }
+            drawList->AddRect(rMin, rMax, IM_COL32(120, 200, 255, 110), 0.0f, 0, 1.0f);
+        } else {
+            // No sprite art resolved: fall back to a labelled footprint rectangle.
+            drawList->AddRectFilled(rMin, rMax, IM_COL32(80, 170, 255, 70));
+            drawList->AddRect(rMin, rMax, IM_COL32(120, 200, 255, 230), 0.0f, 0, 2.0f);
+            drawList->AddText({rMin.x + 3.0f, rMin.y + 2.0f}, IM_COL32(150, 215, 255, 235), "door");
         }
     }
 }

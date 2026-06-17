@@ -24,6 +24,11 @@ struct SpriteFrame {
     int durationMs = 100;
     std::string type = "idle";
     std::string direction;  // empty = any; "E","W","N","S","NE","NW","SE","SW"
+    // Per-frame collision rectangles in canvas pixels [x, y, w, h]. width/height <= 0
+    // means "unset" (runtime falls back to the entity default box). Copied with the
+    // frame, so duplicating a frame carries its boxes.
+    std::array<int, 4> wallBox{0, 0, 0, 0};  // movement / wall collision
+    std::array<int, 4> hitBox{0, 0, 0, 0};   // damage reception / being hit
 };
 
 struct SpriteLayer {
@@ -104,6 +109,8 @@ private:
     bool onionSkin_ = false;
     bool showPivot_ = true;
     bool showBodyGuide_ = true;
+    bool showWallBox_ = true;
+    bool showHitBox_ = true;
     int zoom_ = 8;
     int selectedFrame_ = 0;
     int selectedLayer_ = 0;

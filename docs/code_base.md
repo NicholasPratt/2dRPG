@@ -60,7 +60,7 @@ The asset architecture separates reusable game-library assets from chapter usage
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
       dialogue_graph.hpp/.cpp       # DialogueGraph type and .addialogue load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
-      map.hpp/.cpp                  # TileMap type and .admap load/save (v11 adds door pairing targetDoorId)
+      map.hpp/.cpp                  # TileMap type and .admap load/save (v12 adds door renderAboveWalls; v11 added door pairing targetDoorId)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
       project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v15)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
@@ -509,10 +509,10 @@ struct TileMap {
 };
 ```
 
-### `.admap` format (v11)
+### `.admap` format (v12)
 
 ```text
-ADMAP 11
+ADMAP 12
 id new_map
 tileset overworld
 size 48 32
@@ -531,15 +531,15 @@ obstacle obstacle_2 2 timed_spikes 8 5 2 1 1.0 1.0 0.5 2 0.50
 items 1
 item item_1 1 ammo_stone 5 384.0 256.0 0 ammo_pickup
 doors 1
-door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open assets/game/sfx/doors/open.wav assets/game/sfx/doors/close.wav assets/game/sfx/doors/locked.wav door_to_screen_1
+door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open assets/game/sfx/doors/open.wav assets/game/sfx/doors/close.wav assets/game/sfx/doors/locked.wav door_to_screen_1 0
 end
 ```
 
 Obstacle fields: `id type spriteId x y width height activeSeconds inactiveSeconds phaseSeconds damage damageIntervalSeconds`, where type is `0=Spike`, `1=Pit`, `2=TimedSpike`. `id` is present only in v7+ (v1–v6 obstacles load with a generated `obstacle_<n>` id); `damage`/`damageIntervalSeconds` are present only in v8+ (older obstacles default to `1` damage every `0.75` s).
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
 Non-respawning pickups set `item_collected.<chapter>.<screen>.<item>` in boolean game state and remain absent on later screen loads. Respawning pickups return when the screen is loaded again.
-Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath targetDoorId`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`. `targetTileX/targetTileY` is the explicit spawn tile for the destination screen. `targetDoorId` (v11+) is the id of the paired door on the target screen; the editor uses it to auto-create and reciprocally link return doors (`DoorPlacementPanel::ensurePairedDoor`, written via load-merge), but runtime spawning still uses the configured target tile.
-Backward compat: v1–v10 files still load; `targetDoorId` and missing sections/door SFX default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
+Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath targetDoorId renderAboveWalls`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`. `targetTileX/targetTileY` is the explicit spawn tile for the destination screen. `targetDoorId` (v11+) is the id of the paired door on the target screen; the editor uses it to auto-create and reciprocally link return doors (`DoorPlacementPanel::ensurePairedDoor`, written via load-merge), but runtime spawning still uses the configured target tile. `renderAboveWalls` (v12+, `0`/`1`, default `0`) draws the door sprite above the wall texture (for doors set into wall art); the default draws the door below the player and wall so the player passes in front of it (a doorway is normally a transparent hole cut into the wall art).
+Backward compat: v1–v11 files still load; `renderAboveWalls` defaults to `0`, `targetDoorId` and missing sections/door SFX default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
 
 ### Map Editor
 
@@ -574,6 +574,7 @@ Implemented in `src/editor/panels/door_placement_panel.*`.
 - Permanently Locked doors may omit a target screen when they are used only as same-screen barriers.
 - Requires Item doors may also omit a target screen. On successful key use, runtime stores `door_unlocked.<chapter>.<screen>.<door>` in boolean game state and treats the door as Free Use for collision. An unanimated unlocked door stores a matching hidden state once the player enters its rectangle, so its sprite stays removed across screen changes and continued saves.
 - Door sprite ID is rendered at runtime when a matching sprite exists. Opening animation IDs are stored for future animation playback.
+- A `Render above walls` checkbox sets `MapDoorPlacement::renderAboveWalls` (default off). Off, the door draws below the player and wall texture, so the player passes in front of it (doorways are normally a transparent hole in the wall art); on, the door sprite draws above the wall texture, for doors set into opaque wall art.
 - Open, Close, and Locked SFX use dropdowns populated recursively from project-relative `.ogg` or `.wav` files under `assets/game/sfx/doors`. Walking SFX uses the Music/SFX screen editor and scans `assets/game/sfx/walking`. New and opened projects ensure both folders exist.
 - The inspector warns about duplicate/empty door IDs, missing required-item IDs, required items not defined in the Items tab, invalid/missing Free Use destinations, unloadable target maps, out-of-bounds target tiles, and target tiles blocked by the target map wall layer.
 
@@ -680,7 +681,7 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 
 - Initializes GLFW/OpenGL window and runs fixed 60 Hz update loop.
 - Uses a 768 x 540 logical canvas (768 x 512 playfield plus 28-pixel HUD) and a centred integer-scaled viewport. `Engine::render` picks the largest whole-number scale that fits the current framebuffer (`min(fbWidth/logicalWidth, fbHeight/logicalHeight)`, floored at 1), so resizing the window grows the play area in integer steps rather than capping at a fixed multiple. Unused framebuffer space is cleared to black instead of stretching the game.
-- Render order within the translated screen matrix: floor texture → floor animated tiles → entities/items/NPCs/player/melee/projectiles → wall texture → **doors** (drawn above the wall so doorway art carved into the wall stays visible) → overlay animated tiles. Sprite-backed projectiles draw at a fixed on-screen size (`kProjectileSpriteDisplaySize`, matching the ammo pickup) with the frame's aspect ratio preserved, so high-resolution ammo art is not oversized in flight.
+- Render order within the translated screen matrix: floor texture → floor animated tiles → entities/items/NPCs/melee/projectiles → **normal doors** (`renderAboveWalls == false`) → **player** → wall texture → **above-wall doors** (`renderAboveWalls == true`) → overlay animated tiles. The player therefore draws **behind the wall texture** (walls occlude the player for depth) and **in front of normal doors** (a doorway is normally a transparent hole in the wall art, so the door shows through); doors flagged `renderAboveWalls` draw on top of the wall instead. Sprite-backed projectiles draw at a fixed on-screen size (`kProjectileSpriteDisplaySize`, matching the ammo pickup) with the frame's aspect ratio preserved, so high-resolution ammo art is not oversized in flight.
 - Escape (or the gamepad Select/Back button) opens a paused display menu with Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. F11 toggles between Fullscreen 2x and Windowed 2x. Fullscreen uses an undecorated monitor-sized window, with the 1536 x 1080 game image centred when the monitor is wider.
 - Direct launch opens project/chapter picker; explicit chapter path skips it.
 - Loads `.admap`, resolves playable character, loads per-screen enemy and NPC placements from `ChapterScreen`.
@@ -736,6 +737,8 @@ struct SpriteFrameDef {
     int durationMs;
     std::string type;       // animation action: "idle", "walk", "attack_1", etc.
     std::string direction;  // "E","W","N","S","NE","NW","SE","SW", or empty = any direction
+    std::array<int,4> wallBox;  // [x,y,w,h] frame-local px; movement/wall collision; w/h<=0 = unset
+    std::array<int,4> hitBox;   // [x,y,w,h] frame-local px; damage reception/being hit; w/h<=0 = unset
 };
 struct SpriteMetadata {
     std::string id;
@@ -746,6 +749,8 @@ struct SpriteMetadata {
     std::vector<std::string> tags;
 };
 ```
+
+**Per-frame collision boxes.** Each frame may define a `wallBox` (movement / wall collision) and a `hitBox` (damage reception), in frame-local pixels `[x,y,w,h]` with `w<=0 || h<=0` meaning *unset*. They are authored in the sprite editor (per-frame `Wall box` / `Hit box` inputs plus a canvas overlay — blue = wall, red = hit — and `Wall`/`Hit` show toggles) and persist as `"wallBox"`/`"hitBox"` arrays in `.sprite.json`. Boxes copy with the frame (value copy), so duplicating/copying a frame carries them. At runtime the engine resolves a frame-local box to a world AABB with `Engine::frameBoxRect` (centred on the entity like its sprite, mirrored on horizontal flip) and tests walls with `mapRectClear` (samples a ≤tile-size grid). The **player** and **enemies** use `wallBox` for movement/wall collision and `hitBox` for taking/dealing damage (melee, projectiles, contact, hazards); **following NPCs** use `wallBox`. Unset boxes fall back to the legacy behaviour: player `kPlayerCollisionSizePx` (14 px), enemy wall = a point (old single-point check), enemy hit = `combat.hitboxWidth/Height`.
 
 ---
 
@@ -816,6 +821,7 @@ Implemented in `src/editor/panels/wall_floor_paint_panel.*`.
 - Paste/stamp reference: `PasteReference` cycles clockwise with `Ctrl+V` through top-left, top-right, bottom-right, and bottom-left while clipboard paste or palette Stamp placement is active. `placementOrigin` converts the mouse reference to the actual pixel origin; tile-aligned placement uses one tile as the reference span. The canvas ghost and committed placement share this calculation, and the active corner is exposed in the controls plus a yellow `Ctrl+V: corner` marker.
 - **Animated tiles (palette-driven):** each `TilePaletteEntry` carries an optional `spriteId`. An **Edit Sprite** button per palette row (`editTileSprite`) seeds a sprite from the tile's pixels (composite wall-over-floor → `PendingSpriteSeed` → `SpriteEditorPanel::createSpriteFromPixels`) and opens the Sprite editor; reopening an existing sprite skips the seed. A tile whose sprite has **≥2 frames** is *animated* (`tileIsAnimated`, cached in `spriteFrameCount_` via `refreshTileSpriteInfo`). Stamping a static tile bakes pixels (`stampTile`); stamping an animated tile calls `placeAnimatedTile`, which upserts a `game::AnimatedTilePlacement` for the selected band and `animatedTileStack_` slot. Each Floor/Overlay band has stack slots 0–2; replacing/removing a selected slot leaves the other stacks intact, while Tile Erase removes all stacks at the cell. Tile Select chooses the highest visible band/stack under the cursor. Placements sync to/from the chapter via `LayoutEditorPanel::applyContextSelectedScreenData` (re-synced on screen switch through `context.requestScreenPlacementSync`). The tile↔sprite link is persisted in `.adeditor` v3.
 - `showAnimatedTileOverlay_` controls only the rendering of existing placement footprint markers in Screen Graphics. It does not mutate `selectedScreenAnimatedTiles`, and the selected Stamp ghost remains visible while the overlay is hidden so floor/wall art can be painted beneath transparent animation content.
+- **Door reference overlay (`showDoorOverlay_`, "Doors" toggle):** overlays each placed door's actual sprite (first/closed frame) stretched into the door's tile rect — the same rect the game draws into — so wall art can be cut to a transparent doorway that blends with the door. The door's screen doors are loaded into `doorOverlay_` on screen open; sprite frames are decoded once via `loadSpriteMetadata` + `stbi_load` and cached in `doorSpriteCache_` (keyed by sprite id, cleared on screen change). Drawn semi-transparent (≈50% × the sprite's own alpha) so the painted wall shows through; doors whose sprite can't be resolved fall back to a labelled footprint rectangle. Reference only — never painted into the texture.
 - Undo stack (up to 50 steps).
 
 ### Per-screen dirty buffer system

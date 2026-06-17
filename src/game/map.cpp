@@ -141,7 +141,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 11\n";
+    output << "ADMAP 12\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -191,7 +191,8 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
                << ' ' << encodedToken(door.openSoundPath)
                << ' ' << encodedToken(door.closeSoundPath)
                << ' ' << encodedToken(door.lockedSoundPath)
-               << ' ' << encodedToken(door.targetDoorId) << "\n";
+               << ' ' << encodedToken(door.targetDoorId)
+               << ' ' << (door.renderAboveWalls ? 1 : 0) << "\n";
     }
     output << "end\n";
 
@@ -213,7 +214,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 11) {
+    if (magic != "ADMAP" || version < 1 || version > 12) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -422,10 +423,15 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                 if (version >= 11) {
                     input >> targetDoorToken;
                 }
+                int renderAboveWallsValue = 0;
+                if (version >= 12) {
+                    input >> renderAboveWallsValue;
+                }
                 if (!input) {
                     setError(errorMessage, "Invalid door data.");
                     return false;
                 }
+                door.renderAboveWalls = renderAboveWallsValue != 0;
                 door.id = decodedToken(idToken);
                 door.lockMode = doorLockModeFromInt(lockModeValue);
                 door.requiredItemId = decodedToken(requiredItemToken);

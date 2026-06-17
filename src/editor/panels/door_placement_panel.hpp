@@ -35,6 +35,7 @@ private:
     int lockMode_ = 0;
     std::array<char, 64> requiredItemId_{'\0'};
     bool consumeKey_ = false;
+    bool renderAboveWalls_ = false;
     std::array<char, 64> targetScreenId_{'\0'};
     int targetTileX_ = 1;
     int targetTileY_ = 1;

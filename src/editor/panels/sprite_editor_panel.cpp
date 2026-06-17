@@ -799,6 +799,12 @@ void SpriteEditorPanel::drawTopBar()
     ImGui::SameLine();
     ui::checkbox("Body", "##SpriteBodyGuide", &showBodyGuide_, 46.0f);
     ImGui::SameLine();
+    ui::checkbox("Wall", "##SpriteWallBox", &showWallBox_, 44.0f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show this frame's wall-collision box (blue). Used in game for movement against walls.");
+    ImGui::SameLine();
+    ui::checkbox("Hit", "##SpriteHitBox", &showHitBox_, 40.0f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show this frame's hit box (red). Used in game for taking/dealing damage.");
+    ImGui::SameLine();
     ui::sliderInt("Zoom =/-", "##SpriteZoom", &zoom_, 2, 32, 90.0f, 48.0f);
     ImGui::EndChild();
 
@@ -1168,6 +1174,57 @@ void SpriteEditorPanel::drawCenterWorkspace()
         document_.bodyGuide = {0, 0, document_.canvasSize[0], document_.canvasSize[1]};
     }
 
+    // Per-frame collision boxes for the selected frame. Set width/height to 0 to
+    // leave a box unset (the game then falls back to the entity's default box).
+    if (selectedFrame_ >= 0 && selectedFrame_ < static_cast<int>(document_.frames.size())) {
+        SpriteFrame& frame = document_.frames[static_cast<std::size_t>(selectedFrame_)];
+        const auto clampBox = [this](std::array<int, 4>& box) {
+            box[0] = std::clamp(box[0], 0, document_.canvasSize[0]);
+            box[1] = std::clamp(box[1], 0, document_.canvasSize[1]);
+            box[2] = std::clamp(box[2], 0, document_.canvasSize[0] - box[0]);
+            box[3] = std::clamp(box[3], 0, document_.canvasSize[1] - box[1]);
+        };
+
+        int wall[4]{frame.wallBox[0], frame.wallBox[1], frame.wallBox[2], frame.wallBox[3]};
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::InputInt4("Wall box", wall)) {
+            frame.wallBox = {wall[0], wall[1], wall[2], wall[3]};
+            clampBox(frame.wallBox);
+            documentDirty_ = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("x, y, width, height (canvas px). Wall-collision box for this frame; 0 size = use default.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("= canvas##wall")) {
+            frame.wallBox = {0, 0, document_.canvasSize[0], document_.canvasSize[1]};
+            documentDirty_ = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("clear##wall")) {
+            frame.wallBox = {0, 0, 0, 0};
+            documentDirty_ = true;
+        }
+
+        ImGui::SameLine();
+        int hit[4]{frame.hitBox[0], frame.hitBox[1], frame.hitBox[2], frame.hitBox[3]};
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::InputInt4("Hit box", hit)) {
+            frame.hitBox = {hit[0], hit[1], hit[2], hit[3]};
+            clampBox(frame.hitBox);
+            documentDirty_ = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("x, y, width, height (canvas px). Damage hit box for this frame; 0 size = use default.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("= canvas##hit")) {
+            frame.hitBox = {0, 0, document_.canvasSize[0], document_.canvasSize[1]};
+            documentDirty_ = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("clear##hit")) {
+            frame.hitBox = {0, 0, 0, 0};
+            documentDirty_ = true;
+        }
+    }
+
     ImGui::Separator();
     drawCanvas(ImGui::GetContentRegionAvail());
 }
@@ -1249,6 +1306,33 @@ void SpriteEditorPanel::drawCanvas(const ImVec2& availableSize)
         };
         drawList->AddRectFilled(guideMin, guideMax, IM_COL32(80, 180, 255, 28));
         drawList->AddRect(guideMin, guideMax, IM_COL32(96, 196, 255, 230), 0.0f, 0, 1.5f);
+    }
+
+    // Per-frame collision boxes for the selected frame. Wall = blue, hit = red.
+    // These are consumed by the game runtime (unlike the body guide).
+    if (selectedFrame_ >= 0 && selectedFrame_ < static_cast<int>(document_.frames.size())) {
+        const SpriteFrame& frame = document_.frames[static_cast<std::size_t>(selectedFrame_)];
+        const auto drawBox = [&](const std::array<int, 4>& box, ImU32 fill, ImU32 line) {
+            if (box[2] <= 0 || box[3] <= 0) {
+                return;
+            }
+            const ImVec2 boxMin{
+                canvasOrigin.x + static_cast<float>(box[0]) * pixelSize,
+                canvasOrigin.y + static_cast<float>(box[1]) * pixelSize,
+            };
+            const ImVec2 boxMax{
+                boxMin.x + static_cast<float>(box[2]) * pixelSize,
+                boxMin.y + static_cast<float>(box[3]) * pixelSize,
+            };
+            drawList->AddRectFilled(boxMin, boxMax, fill);
+            drawList->AddRect(boxMin, boxMax, line, 0.0f, 0, 1.5f);
+        };
+        if (showWallBox_) {
+            drawBox(frame.wallBox, IM_COL32(64, 128, 255, 32), IM_COL32(96, 160, 255, 235));
+        }
+        if (showHitBox_) {
+            drawBox(frame.hitBox, IM_COL32(255, 80, 80, 32), IM_COL32(255, 110, 110, 235));
+        }
     }
 
     // Pivot crosshair: marks the sprite anchor. Overlay only, not rendered in game.
@@ -1761,7 +1845,8 @@ bool SpriteEditorPanel::loadDocumentFromMetadata(const std::filesystem::path& me
     document_.frames.clear();
     document_.frames.reserve(metadata.frames.size());
     for (const game::SpriteFrameDef& frame : metadata.frames) {
-        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs, frame.type, frame.direction});
+        document_.frames.push_back(SpriteFrame{frame.x, frame.y, frame.width, frame.height, frame.durationMs,
+            frame.type, frame.direction, frame.wallBox, frame.hitBox});
     }
     document_.tags = metadata.tags;
     document_.layers.assign(1, SpriteLayer{});
@@ -1860,6 +1945,8 @@ bool SpriteEditorPanel::importFramesFromSpriteMetadata(const EditorContext& cont
         frame.durationMs = sourceFrame.durationMs;
         frame.type = sourceFrame.type.empty() ? "idle" : sourceFrame.type;
         frame.direction = sourceFrame.direction;
+        frame.wallBox = sourceFrame.wallBox;
+        frame.hitBox = sourceFrame.hitBox;
         document_.frames.push_back(std::move(frame));
 
         std::vector<SpriteCel> frameCels(document_.layers.size());
@@ -1908,7 +1995,8 @@ void SpriteEditorPanel::saveSpriteMetadata(const EditorContext& context) const
     metadata.frames.reserve(document_.frames.size());
     for (int i = 0; i < static_cast<int>(document_.frames.size()); ++i) {
         const SpriteFrame& frame = document_.frames[static_cast<std::size_t>(i)];
-        metadata.frames.push_back({i * document_.canvasSize[0], 0, document_.canvasSize[0], document_.canvasSize[1], frame.durationMs, frame.type, frame.direction});
+        metadata.frames.push_back({i * document_.canvasSize[0], 0, document_.canvasSize[0], document_.canvasSize[1],
+            frame.durationMs, frame.type, frame.direction, frame.wallBox, frame.hitBox});
     }
 
     std::string ignoredError;

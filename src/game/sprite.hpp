@@ -15,6 +15,11 @@ struct SpriteFrameDef {
     int durationMs = 100;
     std::string type = "idle";
     std::string direction;  // empty = any direction; "E","W","N","S","NE","NW","SE","SW"
+    // Per-frame collision rectangles in frame-local pixels [x, y, w, h], origin at
+    // the frame's top-left (same space as the frame's own width/height). width<=0 or
+    // height<=0 means "unset" — the runtime falls back to the entity's default box.
+    std::array<int, 4> wallBox{0, 0, 0, 0};  // movement / wall collision
+    std::array<int, 4> hitBox{0, 0, 0, 0};   // damage reception / being hit
 };
 
 struct SpriteMetadata {

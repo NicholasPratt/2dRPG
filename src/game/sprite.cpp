@@ -217,6 +217,14 @@ bool readFrame(const std::string& s, std::size_t& pos, SpriteFrameDef& frame)
             if (!expect(s, pos, '"') || !readJsonString(s, pos, frame.direction)) {
                 return false;
             }
+        } else if (key == "wallBox") {
+            if (!readIntArray4(s, pos, frame.wallBox)) {
+                return false;
+            }
+        } else if (key == "hitBox") {
+            if (!readIntArray4(s, pos, frame.hitBox)) {
+                return false;
+            }
         } else {
             skipJsonValue(s, pos);
         }
@@ -311,6 +319,10 @@ bool saveSpriteMetadata(const std::filesystem::path& path, const SpriteMetadata&
         if (!frame.direction.empty()) {
             output << ", \"direction\": \"" << jsonEscape(frame.direction) << "\"";
         }
+        output << ", \"wallBox\": [" << frame.wallBox[0] << ", " << frame.wallBox[1]
+               << ", " << frame.wallBox[2] << ", " << frame.wallBox[3] << "]";
+        output << ", \"hitBox\": [" << frame.hitBox[0] << ", " << frame.hitBox[1]
+               << ", " << frame.hitBox[2] << ", " << frame.hitBox[3] << "]";
         output << "}";
         output << (i + 1 == metadata.frames.size() ? "\n" : ",\n");
     }

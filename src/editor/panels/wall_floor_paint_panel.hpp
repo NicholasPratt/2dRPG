@@ -58,6 +58,15 @@ private:
         bool dirty = false;
     };
 
+    // Decoded first frame of a door's sprite (0xAABBGGRR, row-major), cached per
+    // sprite id for the door reference overlay.
+    struct DoorSpriteImage {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint32_t> pixels;
+        bool valid = false;
+    };
+
     std::array<char, 64> assetId_{'r', 'o', 'o', 'm', '_', 'p', 'a', 'i', 'n', 't', '\0'};
     int width_ = game::kScreenTilesW * game::kTileSize;
     int height_ = game::kScreenTilesH * game::kTileSize;
@@ -74,11 +83,14 @@ private:
     bool showWallGuide_ = true;
     bool showObstacleOverlay_ = true;
     bool showAnimatedTileOverlay_ = true;
+    bool showDoorOverlay_ = true;
     std::string wallGuideMapId_;
     int wallGuideWidth_ = 0;
     int wallGuideHeight_ = 0;
     std::vector<std::uint8_t> wallGuide_;
     std::vector<game::MapObstacle> obstacleOverlay_;
+    std::vector<game::MapDoorPlacement> doorOverlay_;
+    std::unordered_map<std::string, DoorSpriteImage> doorSpriteCache_;
     bool animatePreview_ = true;
     float previewScrollX_ = 0.0f;
     float previewScrollY_ = 0.0f;
@@ -148,6 +160,8 @@ private:
     void drawCanvas(EditorContext& context);
     void drawWallGuide(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
     void drawObstacleOverlay(ImDrawList* drawList, ImVec2 origin, float pixelSize) const;
+    void drawDoorOverlay(EditorContext& context, ImDrawList* drawList, ImVec2 origin, float pixelSize);
+    [[nodiscard]] const DoorSpriteImage* doorSpriteImage(EditorContext& context, const std::string& spriteId);
     void drawParallaxPreview();
     void drawToolButton(const char* label, PaintTool tool, const char* shortcut = nullptr);
     void drawBrushShapeButton(const char* label, BrushShape shape);

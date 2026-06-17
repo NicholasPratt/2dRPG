@@ -46,6 +46,15 @@ private:
         int height = 0;
     };
 
+    // Axis-aligned world-space rectangle (pixels) used for per-frame collision and
+    // hit testing.
+    struct WorldRect {
+        float minX = 0.0f;
+        float minY = 0.0f;
+        float maxX = 0.0f;
+        float maxY = 0.0f;
+    };
+
     struct RuntimePathEntity {
         EnemyPath path;
         float x = 0.0f;
@@ -416,6 +425,21 @@ private:
     [[nodiscard]] bool solidAtPixel(float x, float y) const;
     [[nodiscard]] bool playerCanOccupyInMap(const TileMap& map, float x, float y) const;
     [[nodiscard]] bool solidAtPixelInMap(const TileMap& map, float x, float y) const;
+    // Per-frame collision/hit box resolution. A frame-local box [x,y,w,h] is mapped
+    // to a world rect using the same offset the sprite is drawn at (entity centered
+    // on its frame), mirrored on X when the frame is horizontally flipped. An unset
+    // box (w<=0 or h<=0) falls back to a centered box of the given half-extents.
+    [[nodiscard]] static WorldRect frameBoxRect(const SpriteFrameDef& frame, const std::array<int, 4>& box,
+        float worldX, float worldY, bool flipHorizontal, float fallbackHalfW, float fallbackHalfH);
+    [[nodiscard]] static bool rectsOverlap(const WorldRect& a, const WorldRect& b);
+    [[nodiscard]] bool mapRectClear(const TileMap& map, const WorldRect& rect) const;
+    [[nodiscard]] WorldRect playerWallRectAt(float x, float y) const;
+    [[nodiscard]] WorldRect playerHitRect() const;
+    [[nodiscard]] WorldRect enemyWallRectAt(const RuntimePathEntity& entity, float x, float y) const;
+    [[nodiscard]] WorldRect enemyHitRect(const RuntimePathEntity& entity) const;
+    [[nodiscard]] WorldRect npcWallRectAt(const RuntimeNpcEntity& npc, float x, float y) const;
+    [[nodiscard]] bool entityCanOccupy(const RuntimePathEntity& entity, float x, float y) const;
+    [[nodiscard]] bool npcCanOccupy(const RuntimeNpcEntity& npc, float x, float y) const;
     [[nodiscard]] bool obstacleIsActive(const MapObstacle& obstacle) const;
     [[nodiscard]] bool playerOverlapsObstacle(const MapObstacle& obstacle) const;
     [[nodiscard]] bool playerOverlapsEnemy(const RuntimePathEntity& entity) const;
@@ -453,7 +477,7 @@ private:
     void renderFilledRect(float x, float y, float width, float height, float r, float g, float b, float a) const;
     void renderArc(float cx, float cy, float radius, float thickness,
         float startRadians, float spanRadians, float r, float g, float b, float a) const;
-    void renderDoors() const;
+    void renderDoors(bool aboveWalls) const;
     void renderNpcs() const;
     void renderInteractionPrompt() const;
     void renderNotice() const;

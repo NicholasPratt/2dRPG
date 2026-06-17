@@ -2741,7 +2741,6 @@ int projectileImpactDamage(int damage, float distanceTraveled,
 
 void Engine::updateProjectiles(float dt)
 {
-    const float playerHalf = kPlayerCollisionSizePx * 0.5f;
     for (RuntimeProjectile& proj : projectiles_) {
         if (proj.dead) {
             continue;
@@ -2809,11 +2808,13 @@ void Engine::updateProjectiles(float dt)
         const float dirX = (vlen > 0.0f) ? proj.vx / vlen : 0.0f;
         const float dirY = (vlen > 0.0f) ? proj.vy / vlen : 0.0f;
 
+        const WorldRect projRect{
+            proj.x - kProjectileHalfSize, proj.y - kProjectileHalfSize,
+            proj.x + kProjectileHalfSize, proj.y + kProjectileHalfSize,
+        };
+
         if (proj.fromEnemy) {
-            if (proj.x + kProjectileHalfSize > playerX_ - playerHalf &&
-                proj.x - kProjectileHalfSize < playerX_ + playerHalf &&
-                proj.y + kProjectileHalfSize > playerY_ - playerHalf &&
-                proj.y - kProjectileHalfSize < playerY_ + playerHalf) {
+            if (rectsOverlap(projRect, playerHitRect())) {
                 const int impactDamage = projectileImpactDamage(proj.damage, proj.distanceTraveled,
                     proj.falloffStartPx, proj.falloffEndPx, proj.falloffMinScale);
                 if (impactDamage > 0) {
@@ -2828,12 +2829,7 @@ void Engine::updateProjectiles(float dt)
             if (entity.pathHidden || entity.health <= 0 || entity.deathSeconds >= 0.0f) {
                 continue;
             }
-            const float halfW = entity.path.combat.hitboxWidth * 0.5f;
-            const float halfH = entity.path.combat.hitboxHeight * 0.5f;
-            if (proj.x + kProjectileHalfSize > entity.x - halfW &&
-                proj.x - kProjectileHalfSize < entity.x + halfW &&
-                proj.y + kProjectileHalfSize > entity.y - halfH &&
-                proj.y - kProjectileHalfSize < entity.y + halfH) {
+            if (rectsOverlap(projRect, enemyHitRect(entity))) {
                 const int impactDamage = projectileImpactDamage(proj.damage, proj.distanceTraveled,
                     proj.falloffStartPx, proj.falloffEndPx, proj.falloffMinScale);
                 if (impactDamage > 0) {
@@ -3330,8 +3326,10 @@ void Engine::updateNpcs(float dt)
             if (dist > 28.0f) {
                 npc.facingX = dx / dist;
                 npc.facingY = dy / dist;
-                npc.x += npc.facingX * 56.0f * dt;
-                npc.y += npc.facingY * 56.0f * dt;
+                const float nx = npc.x + npc.facingX * 56.0f * dt;
+                const float ny = npc.y + npc.facingY * 56.0f * dt;
+                if (npcCanOccupy(npc, nx, npc.y)) npc.x = nx;
+                if (npcCanOccupy(npc, npc.x, ny)) npc.y = ny;
                 npc.actionType = "walk";
             } else {
                 npc.actionType = "idle";
@@ -4039,11 +4037,11 @@ void Engine::renderNpcs() const
     }
 }
 
-void Engine::renderDoors() const
+void Engine::renderDoors(bool aboveWalls) const
 {
     for (int i = 0; i < static_cast<int>(activeMap_.doors.size()); ++i) {
         const MapDoorPlacement& door = activeMap_.doors[static_cast<std::size_t>(i)];
-        if (doorIsHidden(door)) {
+        if (doorIsHidden(door) || door.renderAboveWalls != aboveWalls) {
             continue;
         }
         const float x = static_cast<float>(door.x * kTileSize);
@@ -4313,8 +4311,8 @@ void Engine::updatePaths(float dt)
         if (entity.knockbackVx != 0.0f || entity.knockbackVy != 0.0f) {
             const float nx = entity.x + entity.knockbackVx * dt;
             const float ny = entity.y + entity.knockbackVy * dt;
-            if (!solidAtPixel(nx, entity.y)) { entity.x = nx; } else { entity.knockbackVx = 0.0f; }
-            if (!solidAtPixel(entity.x, ny)) { entity.y = ny; } else { entity.knockbackVy = 0.0f; }
+            if (entityCanOccupy(entity, nx, entity.y)) { entity.x = nx; } else { entity.knockbackVx = 0.0f; }
+            if (entityCanOccupy(entity, entity.x, ny)) { entity.y = ny; } else { entity.knockbackVy = 0.0f; }
             const float decay = std::exp(-kEnemyKnockbackDecayPerSecond * dt);
             entity.knockbackVx *= decay;
             entity.knockbackVy *= decay;
@@ -4349,8 +4347,8 @@ void Engine::updatePaths(float dt)
                     const float step = std::min(distP, speed * dt);
                     const float nx = entity.x + dxp / distP * step;
                     const float ny = entity.y + dyp / distP * step;
-                    if (!solidAtPixel(nx, entity.y)) entity.x = nx;
-                    if (!solidAtPixel(entity.x, ny)) entity.y = ny;
+                    if (entityCanOccupy(entity, nx, entity.y)) entity.x = nx;
+                    if (entityCanOccupy(entity, entity.x, ny)) entity.y = ny;
                     entity.facingX = dxp / distP;
                     entity.facingY = dyp / distP;
                 }
@@ -4390,8 +4388,8 @@ void Engine::updatePaths(float dt)
                     const float step = speed * dt;
                     const float nx = entity.x + dx / dist * step;
                     const float ny = entity.y + dy / dist * step;
-                    if (!solidAtPixel(nx, entity.y)) entity.x = nx;
-                    if (!solidAtPixel(entity.x, ny)) entity.y = ny;
+                    if (entityCanOccupy(entity, nx, entity.y)) entity.x = nx;
+                    if (entityCanOccupy(entity, entity.x, ny)) entity.y = ny;
                     entity.facingX = dx / dist;
                     entity.facingY = dy / dist;
                     continue;  // still returning to the path
@@ -4701,12 +4699,7 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
 
 bool Engine::playerCanOccupy(float x, float y) const
 {
-    const float half = kPlayerCollisionSizePx * 0.5f;
-    const bool mapIsClear = !solidAtPixel(x - half, y - half) &&
-        !solidAtPixel(x + half, y - half) &&
-        !solidAtPixel(x - half, y + half) &&
-        !solidAtPixel(x + half, y + half);
-    if (!mapIsClear) {
+    if (!mapRectClear(activeMap_, playerWallRectAt(x, y))) {
         return false;
     }
     return std::none_of(activeMap_.doors.begin(), activeMap_.doors.end(),
@@ -4722,11 +4715,7 @@ bool Engine::solidAtPixel(float x, float y) const
 
 bool Engine::playerCanOccupyInMap(const TileMap& map, float x, float y) const
 {
-    const float half = kPlayerCollisionSizePx * 0.5f;
-    return !solidAtPixelInMap(map, x - half, y - half) &&
-        !solidAtPixelInMap(map, x + half, y - half) &&
-        !solidAtPixelInMap(map, x - half, y + half) &&
-        !solidAtPixelInMap(map, x + half, y + half);
+    return mapRectClear(map, playerWallRectAt(x, y));
 }
 
 bool Engine::solidAtPixelInMap(const TileMap& map, float x, float y) const
@@ -4742,6 +4731,132 @@ bool Engine::solidAtPixelInMap(const TileMap& map, float x, float y) const
     return map.layers[1][index] != 0u;
 }
 
+Engine::WorldRect Engine::frameBoxRect(const SpriteFrameDef& frame, const std::array<int, 4>& box,
+    float worldX, float worldY, bool flipHorizontal, float fallbackHalfW, float fallbackHalfH)
+{
+    if (box[2] <= 0 || box[3] <= 0) {
+        return {worldX - fallbackHalfW, worldY - fallbackHalfH, worldX + fallbackHalfW, worldY + fallbackHalfH};
+    }
+    const float fw = static_cast<float>(frame.width);
+    const float fh = static_cast<float>(frame.height);
+    const float bw = static_cast<float>(box[2]);
+    const float bh = static_cast<float>(box[3]);
+    // Sprite is drawn with its frame centered on the entity; map the frame-local
+    // box into that space, mirroring X about the frame center when flipped.
+    const float localLeft = flipHorizontal ? (fw - static_cast<float>(box[0]) - bw) : static_cast<float>(box[0]);
+    const float left = worldX - fw * 0.5f + localLeft;
+    const float top = worldY - fh * 0.5f + static_cast<float>(box[1]);
+    return {left, top, left + bw, top + bh};
+}
+
+bool Engine::rectsOverlap(const WorldRect& a, const WorldRect& b)
+{
+    return a.maxX > b.minX && a.minX < b.maxX && a.maxY > b.minY && a.minY < b.maxY;
+}
+
+bool Engine::mapRectClear(const TileMap& map, const WorldRect& rect) const
+{
+    // Sample on a grid no coarser than a tile so a box larger than one tile cannot
+    // tunnel past a solid between its corners. The far edges are nudged just inside
+    // the box so a box ending exactly on a tile boundary doesn't pick up the next
+    // tile. A zero-area rect samples its single point exactly, matching the old
+    // single-point entity collision.
+    const float step = static_cast<float>(kTileSize);
+    const float right = rect.maxX > rect.minX ? rect.maxX - 0.01f : rect.minX;
+    const float bottom = rect.maxY > rect.minY ? rect.maxY - 0.01f : rect.minY;
+    for (float y = rect.minY;; y += step) {
+        const float sy = std::min(y, bottom);
+        for (float x = rect.minX;; x += step) {
+            const float sx = std::min(x, right);
+            if (solidAtPixelInMap(map, sx, sy)) {
+                return false;
+            }
+            if (x >= right) {
+                break;
+            }
+        }
+        if (y >= bottom) {
+            break;
+        }
+    }
+    return true;
+}
+
+Engine::WorldRect Engine::playerWallRectAt(float x, float y) const
+{
+    bool flip = false;
+    const SpriteFrameDef* frame = playerSpriteFrame(flip);
+    const float half = kPlayerCollisionSizePx * 0.5f;
+    if (frame == nullptr) {
+        return {x - half, y - half, x + half, y + half};
+    }
+    return frameBoxRect(*frame, frame->wallBox, x, y, flip, half, half);
+}
+
+Engine::WorldRect Engine::playerHitRect() const
+{
+    bool flip = false;
+    const SpriteFrameDef* frame = playerSpriteFrame(flip);
+    const float half = kPlayerCollisionSizePx * 0.5f;
+    if (frame == nullptr) {
+        return {playerX_ - half, playerY_ - half, playerX_ + half, playerY_ + half};
+    }
+    return frameBoxRect(*frame, frame->hitBox, playerX_, playerY_, flip, half, half);
+}
+
+Engine::WorldRect Engine::enemyWallRectAt(const RuntimePathEntity& entity, float x, float y) const
+{
+    auto spriteIt = loadedSprites_.find(entity.path.spriteId);
+    if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded) {
+        bool flip = false;
+        const SpriteFrameDef* frame = spriteFrameForEntity(spriteIt->second, entity, flip);
+        if (frame != nullptr) {
+            // Unset wall box => point collision (0 half-extents), preserving the old
+            // single-point enemy/wall behavior for un-authored sprites.
+            return frameBoxRect(*frame, frame->wallBox, x, y, flip, 0.0f, 0.0f);
+        }
+    }
+    return {x, y, x, y};
+}
+
+Engine::WorldRect Engine::enemyHitRect(const RuntimePathEntity& entity) const
+{
+    const float fbW = entity.path.combat.hitboxWidth * 0.5f;
+    const float fbH = entity.path.combat.hitboxHeight * 0.5f;
+    auto spriteIt = loadedSprites_.find(entity.path.spriteId);
+    if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded) {
+        bool flip = false;
+        const SpriteFrameDef* frame = spriteFrameForEntity(spriteIt->second, entity, flip);
+        if (frame != nullptr) {
+            return frameBoxRect(*frame, frame->hitBox, entity.x, entity.y, flip, fbW, fbH);
+        }
+    }
+    return {entity.x - fbW, entity.y - fbH, entity.x + fbW, entity.y + fbH};
+}
+
+Engine::WorldRect Engine::npcWallRectAt(const RuntimeNpcEntity& npc, float x, float y) const
+{
+    auto spriteIt = loadedSprites_.find(npc.spriteId);
+    if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded) {
+        bool flip = false;
+        const SpriteFrameDef* frame = spriteFrameForNpc(spriteIt->second, npc, flip);
+        if (frame != nullptr) {
+            return frameBoxRect(*frame, frame->wallBox, x, y, flip, 0.0f, 0.0f);
+        }
+    }
+    return {x, y, x, y};
+}
+
+bool Engine::entityCanOccupy(const RuntimePathEntity& entity, float x, float y) const
+{
+    return mapRectClear(activeMap_, enemyWallRectAt(entity, x, y));
+}
+
+bool Engine::npcCanOccupy(const RuntimeNpcEntity& npc, float x, float y) const
+{
+    return mapRectClear(activeMap_, npcWallRectAt(npc, x, y));
+}
+
 bool Engine::obstacleIsActive(const MapObstacle& obstacle) const
 {
     if (obstacle.type != ObstacleType::TimedSpike) {
@@ -4754,34 +4869,19 @@ bool Engine::obstacleIsActive(const MapObstacle& obstacle) const
 
 bool Engine::playerOverlapsObstacle(const MapObstacle& obstacle) const
 {
-    const float half = kPlayerCollisionSizePx * 0.5f;
-    const float playerMinX = playerX_ - half;
-    const float playerMinY = playerY_ - half;
-    const float playerMaxX = playerX_ + half;
-    const float playerMaxY = playerY_ + half;
-    const float obstacleMinX = static_cast<float>(obstacle.x * kTileSize);
-    const float obstacleMinY = static_cast<float>(obstacle.y * kTileSize);
-    const float obstacleMaxX = static_cast<float>((obstacle.x + obstacle.width) * kTileSize);
-    const float obstacleMaxY = static_cast<float>((obstacle.y + obstacle.height) * kTileSize);
-    return playerMaxX > obstacleMinX && playerMaxY > obstacleMinY &&
-        playerMinX < obstacleMaxX && playerMinY < obstacleMaxY;
+    const WorldRect playerRect = playerHitRect();
+    const WorldRect obstacleRect{
+        static_cast<float>(obstacle.x * kTileSize),
+        static_cast<float>(obstacle.y * kTileSize),
+        static_cast<float>((obstacle.x + obstacle.width) * kTileSize),
+        static_cast<float>((obstacle.y + obstacle.height) * kTileSize),
+    };
+    return rectsOverlap(playerRect, obstacleRect);
 }
 
 bool Engine::playerOverlapsEnemy(const RuntimePathEntity& entity) const
 {
-    const float half = kPlayerCollisionSizePx * 0.5f;
-    const float playerMinX = playerX_ - half;
-    const float playerMinY = playerY_ - half;
-    const float playerMaxX = playerX_ + half;
-    const float playerMaxY = playerY_ + half;
-    const float enemyHalfW = entity.path.combat.hitboxWidth * 0.5f;
-    const float enemyHalfH = entity.path.combat.hitboxHeight * 0.5f;
-    const float enemyMinX = entity.x - enemyHalfW;
-    const float enemyMinY = entity.y - enemyHalfH;
-    const float enemyMaxX = entity.x + enemyHalfW;
-    const float enemyMaxY = entity.y + enemyHalfH;
-    return playerMaxX > enemyMinX && playerMaxY > enemyMinY &&
-        playerMinX < enemyMaxX && playerMinY < enemyMaxY;
+    return rectsOverlap(playerHitRect(), enemyHitRect(entity));
 }
 
 void Engine::damagePlayer(int amount)
@@ -4935,13 +5035,9 @@ void Engine::render()
     renderMeleeFlash();
     renderProjectiles();
 
-    if (wallTexture_.id != 0) {
-        renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
-    }
-
-    // Doors draw above the wall texture so a doorway carved into the wall art
-    // stays visible instead of being painted over.
-    renderDoors();
+    // Normal doors draw below the player and wall, so the player passes in front
+    // of the door sprite.
+    renderDoors(false);
 
     bool flipH = false;
     const SpriteFrameDef* pf = playerSpriteFrame(flipH);
@@ -4966,6 +5062,16 @@ void Engine::render()
             kPlayerFallbackDrawSizePx, kPlayerFallbackDrawSizePx,
             hitFlash ? 1.0f : 0.20f, hitFlash ? 0.18f : 0.62f, hitFlash ? 0.18f : 1.0f, 1.0f);
     }
+
+    // Walls draw above the player so they occlude it (depth). The player walks
+    // behind wall art.
+    if (wallTexture_.id != 0) {
+        renderTexture(wallTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
+    }
+
+    // Doors flagged "render above walls" (set into wall art) draw on top of the
+    // wall texture so the doorway stays visible.
+    renderDoors(true);
 
     // Overlay-layer animated tiles draw above the walls (player walks behind them).
     renderAnimatedTiles(1);

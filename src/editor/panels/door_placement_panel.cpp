@@ -232,6 +232,10 @@ void DoorPlacementPanel::drawInspector(EditorContext& context)
     if (ImGui::Button("Edit Door Sprite##door_sprite_edit", ImVec2(-1.0f, 0.0f))) {
         requestEditDoorSprite(context);
     }
+    if (ImGui::Checkbox("Render above walls##door_above_walls", &renderAboveWalls_)) { context.markDirty(); }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("On: door sprite draws over the wall texture (for doors set into wall art).\nOff (default): player draws in front of the door.");
+    }
     ImGui::TextUnformatted("Opening animation ID");
     ImGui::SetNextItemWidth(-1.0f);
     if (ui::inputTextString("##door_anim", openingAnimation_.data(), openingAnimation_.size())) { context.markDirty(); }
@@ -593,6 +597,7 @@ void DoorPlacementPanel::placeDoorAt(EditorContext& context, int tileX, int tile
     door.lockMode = static_cast<game::DoorLockMode>(std::clamp(lockMode_, 0, 2));
     door.requiredItemId = requiredItemId_.data();
     door.consumeKey = consumeKey_;
+    door.renderAboveWalls = renderAboveWalls_;
     door.targetScreenId = targetScreenId_.data();
     door.targetTileX = targetTileX_;
     door.targetTileY = targetTileY_;
@@ -706,6 +711,7 @@ void DoorPlacementPanel::syncInspectorFromSelected(const EditorContext& context)
     lockMode_ = static_cast<int>(door.lockMode);
     copyToBuffer(requiredItemId_, door.requiredItemId);
     consumeKey_ = door.consumeKey;
+    renderAboveWalls_ = door.renderAboveWalls;
     copyToBuffer(targetScreenId_, door.targetScreenId);
     targetTileX_ = door.targetTileX;
     targetTileY_ = door.targetTileY;
@@ -730,6 +736,7 @@ void DoorPlacementPanel::writeInspectorToSelected(EditorContext& context)
     door.lockMode = static_cast<game::DoorLockMode>(std::clamp(lockMode_, 0, 2));
     door.requiredItemId = requiredItemId_.data();
     door.consumeKey = consumeKey_;
+    door.renderAboveWalls = renderAboveWalls_;
     door.targetScreenId = targetScreenId_.data();
     door.targetTileX = std::clamp(targetTileX_, 0, game::kScreenTilesW - 1);
     door.targetTileY = std::clamp(targetTileY_, 0, game::kScreenTilesH - 1);
