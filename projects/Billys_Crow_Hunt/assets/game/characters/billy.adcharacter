@@ -48,7 +48,7 @@ anim "attack_17" "assets/game/sprites/billy.sprite.json"
 anim "attack_18" "assets/game/sprites/billy.sprite.json"
 anim "attack_19" "assets/game/sprites/billy.sprite.json"
 anim "attack_20" "assets/game/sprites/billy.sprite.json"
-frames 8
+frames 10
 frame 0 "idle" "assets/raw/sprites/billy_frame_1.png"
 frame 1 "walk" "assets/raw/sprites/billy_frame_2.png"
 frame 2 "attack_1" "assets/raw/sprites/billy_frame_3.png"
@@ -57,4 +57,6 @@ frame 4 "walk" "assets/raw/sprites/billy_frame_5.png"
 frame 5 "walk" "assets/raw/sprites/billy_frame_6.png"
 frame 6 "walk" "assets/raw/sprites/billy_frame_7.png"
 frame 7 "walk" "assets/raw/sprites/billy_frame_8.png"
+frame 8 "attack_3" "assets/raw/sprites/billy_frame_9.png"
+frame 9 "attack_3" "assets/raw/sprites/billy_frame_10.png"
 end

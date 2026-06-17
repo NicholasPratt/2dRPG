@@ -13,7 +13,9 @@
     {"rect": [256, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "N"},
     {"rect": [320, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "N"},
     {"rect": [384, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "S"},
-    {"rect": [448, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "S"}
+    {"rect": [448, 0, 64, 64], "durationMs": 100, "type": "walk", "direction": "S"},
+    {"rect": [512, 0, 64, 64], "durationMs": 100, "type": "attack_3", "direction": "E"},
+    {"rect": [576, 0, 64, 64], "durationMs": 100, "type": "attack_3", "direction": "E"}
   ],
   "tags": ["idle"]
 }
