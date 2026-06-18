@@ -21,7 +21,7 @@ public:
     void saveMap(EditorContext& context);
 
 private:
-    enum class EditMode { Paint, Select, Paste };
+    enum class EditMode { Paint, Select, Paste, WallLine, WallRect };
 
     int width_ = game::kScreenTilesW;
     int height_ = game::kScreenTilesH;
@@ -59,6 +59,9 @@ private:
     bool hasSelection_ = false;
     std::vector<uint16_t> clipboard_;
     int clipboardW_ = 0, clipboardH_ = 0;
+    bool wallShapeDragging_ = false;
+    bool wallShapeErase_ = false;
+    int wallShapeX0_ = 0, wallShapeY0_ = 0, wallShapeX1_ = 0, wallShapeY1_ = 0;
 
     // Undo stack
     static constexpr int kMaxUndoSteps = 50;
@@ -89,6 +92,9 @@ private:
     void startTestGame();
     void updateTestPlayer();
     void copySelection();
+    void paintWallLine(int x0, int y0, int x1, int y1, uint16_t tileId);
+    void paintWallRect(int x0, int y0, int x1, int y1, uint16_t tileId);
+    void drawWallShapePreview(ImDrawList* drawList, ImVec2 origin) const;
     [[nodiscard]] bool isSolid(uint16_t tileId) const;
     [[nodiscard]] bool playerCanMoveTo(float x, float y) const;
     [[nodiscard]] bool solidAtPixel(float x, float y) const;

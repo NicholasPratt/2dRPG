@@ -222,6 +222,33 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
     ImGui::SameLine();
     ImGui::TextDisabled("(%d)", static_cast<int>(undoStack_.size()));
 
+    auto wallToolButton = [this](const char* label, EditMode mode) {
+        const bool selected = editMode_ == mode;
+        if (selected) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.42f, 0.72f, 1.0f));
+        }
+        if (ImGui::Button(label)) {
+            editMode_ = mode;
+            activeLayer_ = 1;
+            obstacleMode_ = false;
+            playerPlacementMode_ = false;
+            selectionDragging_ = false;
+            hasSelection_ = false;
+            wallShapeDragging_ = false;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Drag on the grid to draw Mid-layer collision walls. Right-drag erases.");
+        }
+        if (selected) {
+            ImGui::PopStyleColor();
+        }
+    };
+
+    ImGui::SameLine();
+    wallToolButton("Wall line", EditMode::WallLine);
+    ImGui::SameLine();
+    wallToolButton("Wall rectangle", EditMode::WallRect);
+
     // Copy / paste controls
     ImGui::SameLine();
     if (editMode_ == EditMode::Paint) {
@@ -252,6 +279,11 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
         if (ImGui::Button("Done paste")) {
             editMode_ = EditMode::Paint;
         }
+    } else {
+        if (ImGui::Button("Freehand paint")) {
+            editMode_ = EditMode::Paint;
+            wallShapeDragging_ = false;
+        }
     }
 
     if (ImGui::Button("Save .admap")) {
@@ -271,11 +303,15 @@ void MapEditorPanel::drawToolbar(EditorContext& context)
         }
     }
 
+    const char* editingName = playerPlacementMode_ ? "player placement" :
+        (obstacleMode_ ? "obstacles" :
+            (editMode_ == EditMode::WallLine ? "wall line" :
+                (editMode_ == EditMode::WallRect ? "wall rectangle" : kLayerNames[activeLayer_])));
     ImGui::Text("Spawn: %d,%d   Active tile ID: %d   Editing: %s",
         spawnX_, spawnY_, static_cast<int>(selectedTileId_),
-        playerPlacementMode_ ? "player placement" : (obstacleMode_ ? "obstacles" : kLayerNames[activeLayer_]));
+        editingName);
     ImGui::Text("Map files: %s", context.assets.gameMapPath().string().c_str());
-    ImGui::TextDisabled("Tiles: left paint, right erase. Player place: left set spawn. Obstacles: left add/select, right delete. Ctrl+Z undo.");
+    ImGui::TextDisabled("Tiles: left paint, right erase. Wall tools: drag to draw, right-drag to erase. Player place: left set spawn. Obstacles: left add/select, right delete. Ctrl+Z undo.");
     if (!status_.empty()) {
         ImGui::TextWrapped("%s", status_.c_str());
     }
@@ -430,7 +466,29 @@ void MapEditorPanel::drawGrid(EditorContext& context)
         drawList->AddRectFilled(sMin, sMax, IM_COL32(255, 216, 64, 30));
     }
 
-    if (!ImGui::IsItemHovered()) {
+    const bool gridHovered = ImGui::IsItemHovered();
+    if (wallShapeDragging_) {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        wallShapeX1_ = std::clamp(static_cast<int>((mouse.x - origin.x) / static_cast<float>(tileSize_)), 0, width_ - 1);
+        wallShapeY1_ = std::clamp(static_cast<int>((mouse.y - origin.y) / static_cast<float>(tileSize_)), 0, height_ - 1);
+        drawWallShapePreview(drawList, origin);
+
+        const ImGuiMouseButton button = wallShapeErase_ ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
+        if (ImGui::IsMouseReleased(button)) {
+            const uint16_t tileId = wallShapeErase_ ? 0u : selectedTileId_;
+            if (editMode_ == EditMode::WallLine) {
+                paintWallLine(wallShapeX0_, wallShapeY0_, wallShapeX1_, wallShapeY1_, tileId);
+                status_ = std::string(wallShapeErase_ ? "Erased" : "Drew") + " wall line.";
+            } else {
+                paintWallRect(wallShapeX0_, wallShapeY0_, wallShapeX1_, wallShapeY1_, tileId);
+                status_ = std::string(wallShapeErase_ ? "Erased" : "Drew") + " wall rectangle.";
+            }
+            wallShapeDragging_ = false;
+            context.markDirty();
+        }
+    }
+
+    if (!gridHovered) {
         return;
     }
 
@@ -501,6 +559,20 @@ void MapEditorPanel::drawGrid(EditorContext& context)
             spawnY_ = y;
             context.markDirty();
             status_ = "Player spawn set to [" + std::to_string(x) + "," + std::to_string(y) + "].";
+        }
+        return;
+    }
+
+    if (editMode_ == EditMode::WallLine || editMode_ == EditMode::WallRect) {
+        ImGui::SetTooltip("%s wall from [%d,%d]", editMode_ == EditMode::WallLine ? "Draw line" : "Draw rectangle", x, y);
+        const bool leftClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        const bool rightClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        if (!wallShapeDragging_ && (leftClicked || rightClicked)) {
+            recordUndo();
+            wallShapeDragging_ = true;
+            wallShapeErase_ = rightClicked;
+            wallShapeX0_ = wallShapeX1_ = x;
+            wallShapeY0_ = wallShapeY1_ = y;
         }
         return;
     }
@@ -602,6 +674,105 @@ void MapEditorPanel::copySelection()
     }
     status_ = "Copied " + std::to_string(clipboardW_) + "x" + std::to_string(clipboardH_) +
         " region from " + kLayerNames[activeLayer_] + " layer.";
+}
+
+void MapEditorPanel::paintWallLine(int x0, int y0, int x1, int y1, uint16_t tileId)
+{
+    const int dx = std::abs(x1 - x0);
+    const int sx = x0 < x1 ? 1 : -1;
+    const int dy = -std::abs(y1 - y0);
+    const int sy = y0 < y1 ? 1 : -1;
+    int error = dx + dy;
+
+    for (;;) {
+        tileAt(x0, y0, 1) = tileId;
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        const int doubledError = error * 2;
+        if (doubledError >= dy) {
+            error += dy;
+            x0 += sx;
+        }
+        if (doubledError <= dx) {
+            error += dx;
+            y0 += sy;
+        }
+    }
+}
+
+void MapEditorPanel::paintWallRect(int x0, int y0, int x1, int y1, uint16_t tileId)
+{
+    const int left = std::min(x0, x1);
+    const int right = std::max(x0, x1);
+    const int top = std::min(y0, y1);
+    const int bottom = std::max(y0, y1);
+    for (int x = left; x <= right; ++x) {
+        tileAt(x, top, 1) = tileId;
+        tileAt(x, bottom, 1) = tileId;
+    }
+    for (int y = top; y <= bottom; ++y) {
+        tileAt(left, y, 1) = tileId;
+        tileAt(right, y, 1) = tileId;
+    }
+}
+
+void MapEditorPanel::drawWallShapePreview(ImDrawList* drawList, ImVec2 origin) const
+{
+    const ImU32 fill = wallShapeErase_ ? IM_COL32(255, 70, 70, 90) : IM_COL32(255, 216, 64, 105);
+    const ImU32 border = wallShapeErase_ ? IM_COL32(255, 70, 70, 235) : IM_COL32(255, 240, 150, 245);
+    auto drawCell = [&](int x, int y) {
+        const ImVec2 min{
+            origin.x + static_cast<float>(x * tileSize_),
+            origin.y + static_cast<float>(y * tileSize_),
+        };
+        const ImVec2 max{min.x + static_cast<float>(tileSize_), min.y + static_cast<float>(tileSize_)};
+        drawList->AddRectFilled(min, max, fill);
+        drawList->AddRect(min, max, border, 0.0f, 0, 2.0f);
+    };
+
+    if (editMode_ == EditMode::WallLine) {
+        int x0 = wallShapeX0_;
+        int y0 = wallShapeY0_;
+        const int dx = std::abs(wallShapeX1_ - x0);
+        const int sx = x0 < wallShapeX1_ ? 1 : -1;
+        const int dy = -std::abs(wallShapeY1_ - y0);
+        const int sy = y0 < wallShapeY1_ ? 1 : -1;
+        int error = dx + dy;
+        for (;;) {
+            drawCell(x0, y0);
+            if (x0 == wallShapeX1_ && y0 == wallShapeY1_) {
+                break;
+            }
+            const int doubledError = error * 2;
+            if (doubledError >= dy) {
+                error += dy;
+                x0 += sx;
+            }
+            if (doubledError <= dx) {
+                error += dx;
+                y0 += sy;
+            }
+        }
+        return;
+    }
+
+    const int left = std::min(wallShapeX0_, wallShapeX1_);
+    const int right = std::max(wallShapeX0_, wallShapeX1_);
+    const int top = std::min(wallShapeY0_, wallShapeY1_);
+    const int bottom = std::max(wallShapeY0_, wallShapeY1_);
+    for (int x = left; x <= right; ++x) {
+        drawCell(x, top);
+        if (bottom != top) {
+            drawCell(x, bottom);
+        }
+    }
+    for (int y = top + 1; y < bottom; ++y) {
+        drawCell(left, y);
+        if (right != left) {
+            drawCell(right, y);
+        }
+    }
 }
 
 void MapEditorPanel::drawObstacles(ImDrawList* drawList, ImVec2 origin) const
