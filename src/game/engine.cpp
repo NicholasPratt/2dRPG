@@ -922,55 +922,46 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     glfwSwapInterval(1);
 
     std::string error;
-    if (!loadChapter(chapterPath, chapter_, &error)) {
+    GameState savedState;
+    bool loadedSavedState = false;
+    std::filesystem::path effectiveChapterPath = chapterPath;
+    if (continueSave_ && !freshStart_) {
+        const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
+        std::error_code ec;
+        loadedSavedState = std::filesystem::exists(savePath, ec) &&
+            loadGameState(savePath, savedState, nullptr);
+        if (loadedSavedState && savedState.hasLocation() && startScreenOverride_.empty()) {
+            effectiveChapterPath = assetPath(projectRoot_, "assets/game/chapters") /
+                (savedState.chapterId() + ".adchapter");
+        }
+    }
+
+    if (!loadChapter(effectiveChapterPath, chapter_, &error)) {
         setError(errorMessage, "Failed to load chapter: " + error);
         return false;
     }
 
-    // Seed runtime state from project variable defaults, then merge in any saved progress.
-    // Must happen before loadScreen so the start screen filters out already-defeated enemies.
-    {
-        GameProject project;
-        if (loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
-            itemDefs_ = project.itemDefs;
-            effectDefs_ = project.effectDefs;
-            for (const StateVariableDef& def : project.stateVariables) {
-                if (def.scope == StateVariableScope::Chapter &&
-                    !def.chapterId.empty() && def.chapterId != chapter_.id) {
-                    continue;
-                }
-                const std::string stateId = def.type != StateVariableType::Item &&
-                    def.scope == StateVariableScope::Chapter
-                    ? "chapter." + chapter_.id + "." + def.id
-                    : def.id;
-                switch (def.type) {
-                    case StateVariableType::Integer: gameState_.setInt(stateId, def.defaultInt); break;
-                    case StateVariableType::Boolean: gameState_.setBool(stateId, def.defaultBool); break;
-                    case StateVariableType::Item: if (def.defaultBool) gameState_.giveItem(stateId); break;
-                }
-            }
-        }
-        // A normal launch starts a new game: state stays at the seeded defaults so
-        // previously defeated enemies and quest progress do NOT carry over. Saved
-        // progress is only merged in when explicitly continuing (and never for
-        // fresh test launches).
-        if (continueSave_ && !freshStart_) {
-            const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
-            std::error_code ec;
-            GameState saved;
-            if (std::filesystem::exists(savePath, ec) && loadGameState(savePath, saved, nullptr)) {
-                for (const auto& [id, value] : saved.ints()) gameState_.setInt(id, value);
-                for (const auto& [id, value] : saved.bools()) gameState_.setBool(id, value);
-                for (const std::string& id : saved.items()) gameState_.giveItem(id);
-                for (const std::string& key : saved.defeatedEnemies()) gameState_.markEnemyDefeated(key);
-            }
-        }
+    seedChapterStateDefaults();
+    if (loadedSavedState) {
+        for (const auto& [id, value] : savedState.ints()) gameState_.setInt(id, value);
+        for (const auto& [id, value] : savedState.bools()) gameState_.setBool(id, value);
+        for (const std::string& id : savedState.items()) gameState_.giveItem(id);
+        for (const std::string& key : savedState.defeatedEnemies()) gameState_.markEnemyDefeated(key);
     }
 
     // Pick the starting screen: an explicit override (editor test launch) or the chapter default.
     std::string startScreen = chapter_.startScreenId;
+    const bool explicitStartPosition = startPosX_ >= 0.0f && startPosY_ >= 0.0f;
     if (!startScreenOverride_.empty() && findScreen(chapter_, startScreenOverride_) != nullptr) {
         startScreen = startScreenOverride_;
+    } else if (loadedSavedState && savedState.hasLocation() &&
+        savedState.chapterId() == chapter_.id &&
+        findScreen(chapter_, savedState.screenId()) != nullptr) {
+        startScreen = savedState.screenId();
+        if (!explicitStartPosition) {
+            startPosX_ = savedState.playerX();
+            startPosY_ = savedState.playerY();
+        }
     }
     if (!loadScreen(startScreen, &error)) {
         setError(errorMessage, error);
@@ -993,7 +984,15 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
             playerY_ = static_cast<float>(activeMap_.spawnY * kTileSize + kTileSize / 2);
         }
     }
+    chapterExitConditionWasTrue_.clear();
+    chapterExitPlayerWasInside_.clear();
+    for (const MapChapterExitPlacement& exit : activeMap_.chapterExits) {
+        chapterExitConditionWasTrue_.push_back(gameConditionPasses(exit.condition));
+        chapterExitPlayerWasInside_.push_back(playerOverlapsChapterExit(exit));
+    }
+    chapterExitArrivalLockSeconds_ = 0.5f;
     writeCheckpoint(startScreen, playerX_, playerY_);
+    gameState_.setLocation(chapter_.id, startScreen, playerX_, playerY_);
     return true;
 }
 
@@ -1059,7 +1058,15 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     interactionState_ = InteractionState::None;
     interactingNpcIndex_ = -1;
     interactingDoorIndex_ = -1;
-    interactingDoorIndex_ = -1;
+    interactingChapterExitIndex_ = -1;
+    chapterExitConditionWasTrue_.clear();
+    chapterExitPlayerWasInside_.clear();
+    chapterExitConditionWasTrue_.reserve(activeMap_.chapterExits.size());
+    chapterExitPlayerWasInside_.reserve(activeMap_.chapterExits.size());
+    for (const MapChapterExitPlacement& exit : activeMap_.chapterExits) {
+        chapterExitConditionWasTrue_.push_back(gameConditionPasses(exit.condition));
+        chapterExitPlayerWasInside_.push_back(playerOverlapsChapterExit(exit));
+    }
     dialogueLineIndex_ = 0;
     loadAllSprites();
     updateScreenMusic();
@@ -1175,6 +1182,43 @@ void Engine::loadWeapons()
             loadSpriteById(w.spriteId);
             loadSpriteById(w.ammoSpriteId);
             break;
+        }
+    }
+}
+
+void Engine::seedChapterStateDefaults()
+{
+    GameProject project;
+    if (!loadGameProject(assetPath(projectRoot_, "assets/game/project.adgame"), project, nullptr)) {
+        return;
+    }
+    itemDefs_ = project.itemDefs;
+    effectDefs_ = project.effectDefs;
+    for (const StateVariableDef& def : project.stateVariables) {
+        if (def.scope == StateVariableScope::Chapter &&
+            !def.chapterId.empty() && def.chapterId != chapter_.id) {
+            continue;
+        }
+        const std::string stateId = def.type != StateVariableType::Item &&
+            def.scope == StateVariableScope::Chapter
+            ? "chapter." + chapter_.id + "." + def.id
+            : def.id;
+        switch (def.type) {
+            case StateVariableType::Integer:
+                if (gameState_.ints().find(stateId) == gameState_.ints().end()) {
+                    gameState_.setInt(stateId, def.defaultInt);
+                }
+                break;
+            case StateVariableType::Boolean:
+                if (gameState_.bools().find(stateId) == gameState_.bools().end()) {
+                    gameState_.setBool(stateId, def.defaultBool);
+                }
+                break;
+            case StateVariableType::Item:
+                if (def.defaultBool && !gameState_.hasItem(stateId)) {
+                    gameState_.giveItem(stateId);
+                }
+                break;
         }
     }
 }
@@ -1429,7 +1473,8 @@ void Engine::loadPathEntities()
             entity.pathHidden = pathStartsHidden(entity.path.waypoints);
             entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
             if (activeScreen_ != nullptr &&
-                gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id)) {
+                (gameState_.isEnemyDefeated(chapter_.id + "/" + activeScreen_->id + "/" + entity.path.id) ||
+                 gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id))) {
                 continue;
             }
             applyEnemyWaypointAction(entity, entity.path.waypoints.front());
@@ -1464,7 +1509,8 @@ void Engine::loadPathEntities()
         entity.pathHidden = pathStartsHidden(entity.path.waypoints);
         entity.attackCooldowns.assign(entity.path.combat.attacks.size(), 0.0f);
         if (activeScreen_ != nullptr &&
-            gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id)) {
+            (gameState_.isEnemyDefeated(chapter_.id + "/" + activeScreen_->id + "/" + entity.path.id) ||
+             gameState_.isEnemyDefeated(activeScreen_->id + "/" + entity.path.id))) {
             continue;
         }
         applyEnemyWaypointAction(entity, entity.path.waypoints.front());
@@ -1746,6 +1792,29 @@ void Engine::update(float dt)
         }
         return;
     }
+    if (transitionState_ == TransitionState::FadingOut ||
+        transitionState_ == TransitionState::FadingIn) {
+        playerIsMoving_ = false;
+        updateWalkingSfx();
+        transitionTime_ += dt;
+        if (transitionTime_ >= transitionDuration_) {
+            if (transitionState_ == TransitionState::FadingOut) {
+                if (!completeChapterTransition()) {
+                    transitionState_ = TransitionState::None;
+                    showNotice("Chapter transition failed");
+                    pendingChapterId_.clear();
+                    pendingChapterScreenId_.clear();
+                    return;
+                }
+                transitionState_ = TransitionState::FadingIn;
+                transitionTime_ = 0.0f;
+            } else {
+                transitionState_ = TransitionState::None;
+                transitionTime_ = 0.0f;
+            }
+        }
+        return;
+    }
 
     if (inventoryVisible_) {
         updateInventoryInput();
@@ -1787,6 +1856,8 @@ void Engine::update(float dt)
     updateDoors();
     updateInteraction();
     updateItemPickups();
+    updateChapterExits();
+    chapterExitArrivalLockSeconds_ = std::max(0.0f, chapterExitArrivalLockSeconds_ - dt);
     updateWalkingSfx();
 }
 
@@ -3047,6 +3118,139 @@ void Engine::updateDoors()
     }
 }
 
+bool Engine::playerOverlapsChapterExit(const MapChapterExitPlacement& exit) const
+{
+    const float x = static_cast<float>(exit.x * kTileSize);
+    const float y = static_cast<float>(exit.y * kTileSize);
+    const float w = static_cast<float>(std::max(1, exit.widthTiles) * kTileSize);
+    const float h = static_cast<float>(std::max(1, exit.heightTiles) * kTileSize);
+    const float half = kPlayerCollisionSizePx * 0.5f;
+    return playerX_ + half >= x && playerX_ - half <= x + w &&
+        playerY_ + half >= y && playerY_ - half <= y + h;
+}
+
+bool Engine::playerCanInteractWithChapterExit(const MapChapterExitPlacement& exit) const
+{
+    if (exit.activation != ChapterExitActivation::Interact ||
+        (exit.oneShot && gameState_.getBool(chapterExitStateId(exit), false))) {
+        return false;
+    }
+    const float x = static_cast<float>(exit.x * kTileSize);
+    const float y = static_cast<float>(exit.y * kTileSize);
+    const float w = static_cast<float>(std::max(1, exit.widthTiles) * kTileSize);
+    const float h = static_cast<float>(std::max(1, exit.heightTiles) * kTileSize);
+    const float closestX = std::clamp(playerX_, x, x + w);
+    const float closestY = std::clamp(playerY_, y, y + h);
+    const float dx = playerX_ - closestX;
+    const float dy = playerY_ - closestY;
+    return playerOverlapsChapterExit(exit) || std::sqrt(dx * dx + dy * dy) <= kItemPickupRadius;
+}
+
+int Engine::nearestInteractableChapterExit() const
+{
+    int nearest = -1;
+    float nearestDistance = 99999.0f;
+    for (int i = 0; i < static_cast<int>(activeMap_.chapterExits.size()); ++i) {
+        const MapChapterExitPlacement& exit = activeMap_.chapterExits[static_cast<std::size_t>(i)];
+        if (!playerCanInteractWithChapterExit(exit)) {
+            continue;
+        }
+        const float cx = static_cast<float>((exit.x + std::max(1, exit.widthTiles) * 0.5f) * kTileSize);
+        const float cy = static_cast<float>((exit.y + std::max(1, exit.heightTiles) * 0.5f) * kTileSize);
+        const float dx = playerX_ - cx;
+        const float dy = playerY_ - cy;
+        const float distance = std::sqrt(dx * dx + dy * dy);
+        if (distance < nearestDistance) {
+            nearest = i;
+            nearestDistance = distance;
+        }
+    }
+    return nearest;
+}
+
+std::string Engine::chapterExitStateId(const MapChapterExitPlacement& exit) const
+{
+    const auto safeToken = [](std::string value) {
+        for (char& c : value) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.') {
+                c = '_';
+            }
+        }
+        return value.empty() ? std::string{"unknown"} : value;
+    };
+    return "chapter_exit.used." + safeToken(chapter_.id) + "." +
+        safeToken(activeScreen_ == nullptr ? std::string{} : activeScreen_->id) + "." +
+        safeToken(exit.id);
+}
+
+bool Engine::activateChapterExit(const MapChapterExitPlacement& exit)
+{
+    if (transitionState_ != TransitionState::None || chapterExitArrivalLockSeconds_ > 0.0f) {
+        return false;
+    }
+    if (exit.oneShot && gameState_.getBool(chapterExitStateId(exit), false)) {
+        return false;
+    }
+    if (!gameConditionPasses(exit.condition)) {
+        if (exit.activation == ChapterExitActivation::Interact) {
+            showNotice("Requirements not met");
+        }
+        return false;
+    }
+    if (exit.targetChapterId.empty() || exit.targetScreenId.empty()) {
+        showNotice("No chapter destination");
+        return false;
+    }
+    if (!beginChapterTransition(exit)) {
+        return false;
+    }
+    if (exit.oneShot) {
+        gameState_.setBool(chapterExitStateId(exit), true);
+    }
+    playSoundEffect(exit.transitionSoundPath);
+    return true;
+}
+
+void Engine::updateChapterExits()
+{
+    if (transitionState_ != TransitionState::None || chapterExitArrivalLockSeconds_ > 0.0f) {
+        return;
+    }
+    if (chapterExitConditionWasTrue_.size() != activeMap_.chapterExits.size()) {
+        chapterExitConditionWasTrue_.assign(activeMap_.chapterExits.size(), false);
+    }
+    if (chapterExitPlayerWasInside_.size() != activeMap_.chapterExits.size()) {
+        chapterExitPlayerWasInside_.assign(activeMap_.chapterExits.size(), false);
+    }
+
+    for (std::size_t i = 0; i < activeMap_.chapterExits.size(); ++i) {
+        const MapChapterExitPlacement& exit = activeMap_.chapterExits[i];
+        const bool condition = gameConditionPasses(exit.condition);
+        const bool inside = playerOverlapsChapterExit(exit);
+        const bool conditionRose = condition && !chapterExitConditionWasTrue_[i];
+        const bool entered = inside && !chapterExitPlayerWasInside_[i];
+        bool shouldActivate = false;
+        switch (exit.activation) {
+            case ChapterExitActivation::Interact:
+                break;
+            case ChapterExitActivation::EnterArea:
+                shouldActivate = entered;
+                break;
+            case ChapterExitActivation::ConditionChange:
+                shouldActivate = conditionRose;
+                break;
+            case ChapterExitActivation::EnterAreaAndCondition:
+                shouldActivate = entered && condition;
+                break;
+        }
+        chapterExitConditionWasTrue_[i] = condition;
+        chapterExitPlayerWasInside_[i] = inside;
+        if (shouldActivate && activateChapterExit(exit)) {
+            return;
+        }
+    }
+}
+
 void Engine::playSoundEffect(const std::string& configuredPath)
 {
     if (configuredPath.empty() || musicPlayer_ == nullptr) {
@@ -3498,29 +3702,12 @@ const DialogueNode* Engine::dialogueNodeById(const RuntimeNpcEntity& npc, const 
 
 bool Engine::dialogueConditionPasses(const DialogueCondition& condition) const
 {
-    switch (condition.type) {
-        case DialogueConditionType::Always:
-            return true;
-        case DialogueConditionType::IntCompare: {
-            const int value = scopedInt(condition.scope, condition.variableId, 0);
-            switch (condition.op) {
-                case DialogueCompareOp::Equal: return value == condition.intValue;
-                case DialogueCompareOp::NotEqual: return value != condition.intValue;
-                case DialogueCompareOp::Less: return value < condition.intValue;
-                case DialogueCompareOp::LessOrEqual: return value <= condition.intValue;
-                case DialogueCompareOp::Greater: return value > condition.intValue;
-                case DialogueCompareOp::GreaterOrEqual: return value >= condition.intValue;
-            }
-            return false;
-        }
-        case DialogueConditionType::BoolEquals:
-            return scopedBool(condition.scope, condition.variableId, false) == condition.boolValue;
-        case DialogueConditionType::HasItem:
-            return gameState_.hasItem(condition.variableId) == condition.boolValue;
-        case DialogueConditionType::HasMoney:
-            return gameState_.getInt("Money", 0) >= condition.intValue;
-    }
-    return false;
+    return gameConditionPasses(condition);
+}
+
+bool Engine::gameConditionPasses(const GameCondition& condition) const
+{
+    return adventure::game::gameConditionPasses(condition, gameState_, chapter_.id);
 }
 
 void Engine::executeDialogueActions(const std::vector<DialogueAction>& actions, RuntimeNpcEntity& npc)
@@ -3593,6 +3780,8 @@ void Engine::endInteraction()
 {
     interactionState_ = InteractionState::None;
     interactingNpcIndex_ = -1;
+    interactingDoorIndex_ = -1;
+    interactingChapterExitIndex_ = -1;
     dialogueLineIndex_ = 0;
     dialogueScrollLine_ = 0;
     dialogueGraphNodeId_.clear();
@@ -3903,6 +4092,7 @@ void Engine::updateInteraction()
                 interactionState_ = InteractionState::PromptVisible;
                 interactingNpcIndex_ = nearest;
                 interactingDoorIndex_ = -1;
+                interactingChapterExitIndex_ = -1;
                 break;
             }
             const int nearestDoor = nearestInteractableDoor();
@@ -3910,10 +4100,37 @@ void Engine::updateInteraction()
                 interactionState_ = InteractionState::PromptVisible;
                 interactingNpcIndex_ = -1;
                 interactingDoorIndex_ = nearestDoor;
+                interactingChapterExitIndex_ = -1;
+                break;
+            }
+            const int nearestExit = nearestInteractableChapterExit();
+            if (nearestExit >= 0) {
+                interactionState_ = InteractionState::PromptVisible;
+                interactingNpcIndex_ = -1;
+                interactingDoorIndex_ = -1;
+                interactingChapterExitIndex_ = nearestExit;
             }
             break;
         }
         case InteractionState::PromptVisible: {
+            if (interactingChapterExitIndex_ >= 0) {
+                if (interactingChapterExitIndex_ >= static_cast<int>(activeMap_.chapterExits.size())) {
+                    interactionState_ = InteractionState::None;
+                    break;
+                }
+                const MapChapterExitPlacement& exit =
+                    activeMap_.chapterExits[static_cast<std::size_t>(interactingChapterExitIndex_)];
+                if (!playerCanInteractWithChapterExit(exit)) {
+                    endInteraction();
+                    break;
+                }
+                if (interactPressed) {
+                    if (!activateChapterExit(exit) && interactionState_ == InteractionState::PromptVisible) {
+                        interactionState_ = InteractionState::None;
+                    }
+                }
+                break;
+            }
             if (interactingDoorIndex_ >= 0) {
                 if (interactingDoorIndex_ >= static_cast<int>(activeMap_.doors.size())) {
                     interactionState_ = InteractionState::None;
@@ -4620,10 +4837,13 @@ void Engine::updateEnemyDeaths(float dt)
     }
 }
 
-void Engine::saveRuntimeState() const
+void Engine::saveRuntimeState()
 {
     if (freshStart_) {
         return;  // test launches must not clobber the player's real save
+    }
+    if (activeScreen_ != nullptr) {
+        gameState_.setLocation(chapter_.id, activeScreen_->id, playerX_, playerY_);
     }
     const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
     (void)saveGameState(savePath, gameState_, nullptr);
@@ -4638,6 +4858,7 @@ void Engine::writeCheckpoint(const std::string& screenId, float x, float y) cons
     std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream out(path);
     if (out) {
+        out << "chapter " << chapter_.id << "\n";
         out << "screen " << screenId << "\n";
         out << "pos " << x << ' ' << y << "\n";
     }
@@ -4645,7 +4866,89 @@ void Engine::writeCheckpoint(const std::string& screenId, float x, float y) cons
 
 void Engine::recordEnemyDefeated(const std::string& screenId, const RuntimePathEntity& entity)
 {
-    gameState_.markEnemyDefeated(screenId + "/" + entity.path.id);
+    gameState_.markEnemyDefeated(chapter_.id + "/" + screenId + "/" + entity.path.id);
+}
+
+bool Engine::beginChapterTransition(const MapChapterExitPlacement& exit)
+{
+    if (transitionState_ != TransitionState::None) {
+        return false;
+    }
+
+    Chapter targetChapter;
+    std::string error;
+    const std::filesystem::path chapterPath = assetPath(projectRoot_, "assets/game/chapters") /
+        (exit.targetChapterId + ".adchapter");
+    if (!loadChapter(chapterPath, targetChapter, &error)) {
+        std::cerr << "Failed to load target chapter: " << error << "\n";
+        return false;
+    }
+    const ChapterScreen* targetScreen = findScreen(targetChapter, exit.targetScreenId);
+    if (targetScreen == nullptr) {
+        std::cerr << "Target chapter screen not found: " << exit.targetScreenId << "\n";
+        return false;
+    }
+    TileMap targetMap;
+    if (!loadTileMap(assetPath(projectRoot_, "assets/game/maps") /
+            (targetScreen->mapId + ".admap"), targetMap, &error)) {
+        std::cerr << "Failed to load target chapter map: " << error << "\n";
+        return false;
+    }
+    const float half = kPlayerCollisionSizePx * 0.5f;
+    const float spawnX = std::clamp(
+        static_cast<float>(exit.targetTileX * kTileSize + kTileSize / 2),
+        half, static_cast<float>(targetMap.width * kTileSize) - half);
+    const float spawnY = std::clamp(
+        static_cast<float>(exit.targetTileY * kTileSize + kTileSize / 2),
+        half, static_cast<float>(targetMap.height * kTileSize) - half);
+    if (!playerCanOccupyInMap(targetMap, spawnX, spawnY)) {
+        std::cerr << "Target chapter spawn is blocked.\n";
+        return false;
+    }
+
+    pendingChapterId_ = exit.targetChapterId;
+    pendingChapterScreenId_ = exit.targetScreenId;
+    pendingChapterSpawnX_ = spawnX;
+    pendingChapterSpawnY_ = spawnY;
+    transitionState_ = TransitionState::FadingOut;
+    transitionTime_ = 0.0f;
+    endInteraction();
+    return true;
+}
+
+bool Engine::completeChapterTransition()
+{
+    Chapter targetChapter;
+    std::string error;
+    const std::filesystem::path chapterPath = assetPath(projectRoot_, "assets/game/chapters") /
+        (pendingChapterId_ + ".adchapter");
+    if (!loadChapter(chapterPath, targetChapter, &error)) {
+        std::cerr << "Failed to complete chapter transition: " << error << "\n";
+        return false;
+    }
+
+    chapter_ = std::move(targetChapter);
+    seedChapterStateDefaults();
+    if (!loadScreen(pendingChapterScreenId_, &error)) {
+        std::cerr << "Failed to load chapter destination: " << error << "\n";
+        return false;
+    }
+    playerX_ = pendingChapterSpawnX_;
+    playerY_ = pendingChapterSpawnY_;
+    loadPlayableCharacter();
+    chapterExitConditionWasTrue_.clear();
+    chapterExitPlayerWasInside_.clear();
+    for (const MapChapterExitPlacement& exit : activeMap_.chapterExits) {
+        chapterExitConditionWasTrue_.push_back(gameConditionPasses(exit.condition));
+        chapterExitPlayerWasInside_.push_back(playerOverlapsChapterExit(exit));
+    }
+    chapterExitArrivalLockSeconds_ = 0.75f;
+    gameState_.setLocation(chapter_.id, pendingChapterScreenId_, playerX_, playerY_);
+    saveRuntimeState();
+    writeCheckpoint(pendingChapterScreenId_, playerX_, playerY_);
+    pendingChapterId_.clear();
+    pendingChapterScreenId_.clear();
+    return true;
 }
 
 bool Engine::beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY)
@@ -4686,12 +4989,20 @@ bool Engine::beginScreenTransition(const std::string& targetScreenId, float spaw
     }
     playerX_ = spawnX;
     playerY_ = spawnY;
+    chapterExitConditionWasTrue_.clear();
+    chapterExitPlayerWasInside_.clear();
+    for (const MapChapterExitPlacement& exit : activeMap_.chapterExits) {
+        chapterExitConditionWasTrue_.push_back(gameConditionPasses(exit.condition));
+        chapterExitPlayerWasInside_.push_back(playerOverlapsChapterExit(exit));
+    }
+    chapterExitArrivalLockSeconds_ = 0.5f;
     transitionState_ = TransitionState::Sliding;
     transitionTime_ = 0.0f;
     transitionFromX_ = fromX;
     transitionFromY_ = fromY;
     transitionToX_ = 0.0f;
     transitionToY_ = 0.0f;
+    gameState_.setLocation(chapter_.id, targetScreenId, spawnX, spawnY);
     saveRuntimeState();  // persist progress (defeated enemies, quest state) on each screen change
     writeCheckpoint(targetScreenId, spawnX, spawnY);  // record last-entered screen for test launches
     return true;
@@ -5107,6 +5418,13 @@ void Engine::render()
     renderDialogueBox();
     renderShopMenu();
     renderDisplayMenu();
+    if (transitionState_ == TransitionState::FadingOut ||
+        transitionState_ == TransitionState::FadingIn) {
+        const float progress = std::clamp(transitionTime_ / transitionDuration_, 0.0f, 1.0f);
+        const float alpha = transitionState_ == TransitionState::FadingOut ? progress : 1.0f - progress;
+        renderFilledRect(0.0f, 0.0f, screenWidthPx(), screenHeightPx() + kHudBarHeightPx,
+            0.0f, 0.0f, 0.0f, alpha);
+    }
 }
 
 void Engine::renderTexture(const Texture& texture, float x, float y, float width, float height) const

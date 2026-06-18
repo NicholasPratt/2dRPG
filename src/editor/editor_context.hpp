@@ -88,6 +88,8 @@ struct EditorContext {
     std::string selectedScreenItemsMapId;
     std::vector<game::MapDoorPlacement> selectedScreenDoors;
     std::string selectedScreenDoorsMapId;
+    std::vector<game::MapChapterExitPlacement> selectedScreenChapterExits;
+    std::string selectedScreenChapterExitsMapId;
     std::vector<game::NpcPlacement> selectedScreenNpcs;
     std::string selectedScreenNpcsOwnerId;
     std::vector<game::AnimatedTilePlacement> selectedScreenAnimatedTiles;
@@ -98,6 +100,7 @@ struct EditorContext {
     bool requestEditItems = false;
     bool requestEditItemDetails = false;
     bool requestEditDoors = false;
+    bool requestEditChapterExits = false;
     bool requestEditNpcs = false;
     bool requestEditNpcTypes = false;
     bool requestVariablePicker = false;

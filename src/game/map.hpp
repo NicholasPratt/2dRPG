@@ -1,5 +1,6 @@
 #pragma once
 
+#include "game/condition.hpp"
 #include "game/constants.hpp"
 
 #include <array>
@@ -27,6 +28,13 @@ enum class DoorLockMode {
     FreeUse = 0,
     Locked = 1,
     RequiresItem = 2,
+};
+
+enum class ChapterExitActivation {
+    Interact = 0,
+    EnterArea = 1,
+    ConditionChange = 2,
+    EnterAreaAndCondition = 3,
 };
 
 struct MapItemPlacement {
@@ -67,6 +75,22 @@ struct MapDoorPlacement {
     bool renderAboveWalls = false;
 };
 
+struct MapChapterExitPlacement {
+    std::string id;
+    int x = 0;
+    int y = 0;
+    int widthTiles = 1;
+    int heightTiles = 1;
+    ChapterExitActivation activation = ChapterExitActivation::EnterAreaAndCondition;
+    GameCondition condition;
+    std::string targetChapterId;
+    std::string targetScreenId;
+    int targetTileX = 1;
+    int targetTileY = 1;
+    bool oneShot = false;
+    std::string transitionSoundPath;
+};
+
 struct MapObstacle {
     std::string id;
     ObstacleType type = ObstacleType::Spike;
@@ -98,6 +122,7 @@ struct TileMap {
     std::vector<MapObstacle> obstacles;
     std::vector<MapItemPlacement> items;
     std::vector<MapDoorPlacement> doors;
+    std::vector<MapChapterExitPlacement> chapterExits;
 };
 
 [[nodiscard]] bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::string* errorMessage = nullptr);

@@ -121,7 +121,7 @@ session, so all authored enemies always spawn. Progress is still written to <cod
   <tr><td><strong>Weapons</strong></td><td>Create/edit <code>WeaponDef</code>s (melee or ranged) and choose the project’s starting weapon. Ranged weapons expose damage, range, cooldown, projectile speed, ammo type, and an <code>On wall hit</code> behavior (Break / Rebound).</td></tr>
   <tr><td><strong>Items</strong></td><td>Create/edit project-wide <code>ItemDef</code>s (weapon, ammo, health, mana, currency, key, quest, consumable, material, equipment, or custom). Can seed common defaults; warns on empty/duplicate ids.</td></tr>
   <tr><td><strong>Quest State</strong></td><td>Define designer-named state variables (integer / boolean / item) and reusable effects. These are the variables quests, dialogue, and kill-counters read and write.</td></tr>
-  <tr><td><strong>Screens</strong></td><td>The chapter laid out as a continuous grid. Select/center a screen, create &amp; link neighbours (N/S/E/W), edit the selected screen’s tile map, and open the scoped sub-editors below.</td></tr>
+  <tr><td><strong>Screen Layout</strong></td><td>The chapter laid out as a continuous grid. Select/center a screen, create &amp; link neighbours (N/S/E/W), edit the selected screen’s tile map, and open the scoped sub-editors below.</td></tr>
   <tr><td><strong>Tilesets</strong></td><td>Generate tileset definitions from a source PNG grid.</td></tr>
   <tr><td><strong>Assets</strong></td><td>Asset directory listing.</td></tr>
 </table>
@@ -136,6 +136,7 @@ session, so all authored enemies always spawn. Progress is still written to <cod
   <tr><td><strong>Edit NPCs</strong></td><td>Screens (NPC context)</td><td>Place NPC instances, set awareness/interaction radius, patrol paths, and instance dialogue.</td></tr>
   <tr><td><strong>Edit Instance Dialogue</strong></td><td>NPC placement</td><td>Node/flow graph editor for that NPC instance’s conversation (Start/Dialogue/Choice/Condition/Action/End).</td></tr>
   <tr><td><strong>Edit Items</strong></td><td>Screens (item context)</td><td>Place item/ammo/health/weapon pickups on the screen.</td></tr>
+  <tr><td><strong>Edit Chapter Exits</strong></td><td>Screen Layout → selected screen</td><td>Place cross-chapter trigger rectangles, choose Interact/Enter Area/Condition Change activation, configure a variable/item condition, and pick the destination chapter, screen, and spawn tile.</td></tr>
   <tr><td><strong>Sprite Editor</strong></td><td>Characters / enemy / NPC sprite ids</td><td>Pixel-paint frames with the Atari 2600 NTSC palette; assign each frame an action type, facing direction, and duration.</td></tr>
 </table>
 

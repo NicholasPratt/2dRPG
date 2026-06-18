@@ -45,6 +45,7 @@ The asset architecture separates reusable game-library assets from chapter usage
       stb_image_impl.cpp            # stb_image implementation unit
       panels/
         character_editor_panel.hpp/.cpp
+        chapter_exit_panel.hpp/.cpp       # conditional cross-chapter trigger placement/editor
         dialogue_graph_editor_panel.hpp/.cpp  # scoped NPC dialogue graph editor
         door_placement_panel.hpp/.cpp    # per-screen door trigger placement/editor (ScreenEditMode::Doors)
         enemy_path_editor_panel.hpp/.cpp  # enemy type defs + per-screen enemy placements + spline editor
@@ -58,9 +59,10 @@ The asset architecture separates reusable game-library assets from chapter usage
         weapon_editor_panel.hpp/.cpp      # create/edit WeaponDef game-library assets (Weapons tab)
     game/
       chapter.hpp/.cpp              # Chapter / ChapterScreen / ScreenLink / EnemyPlacement / NpcPlacement types and .adchapter load/save
+      condition.hpp/.cpp            # shared typed state/item condition model and evaluator
       dialogue_graph.hpp/.cpp       # DialogueGraph type and .addialogue load/save
       engine.hpp/.cpp               # GLFW/OpenGL runtime loop, screen loading, rendering, collision, combat
-      map.hpp/.cpp                  # TileMap type and .admap load/save (v12 adds door renderAboveWalls; v11 added door pairing targetDoorId)
+      map.hpp/.cpp                  # TileMap type and .admap load/save (v13 adds conditional chapter exits)
       path.hpp/.cpp                 # EnemyPath type and .adpath load/save (legacy; new enemies use chapter placements)
       project.hpp/.cpp              # GameProject / EnemyType / EnemyAttackDef / NpcTypeDef / ItemDef and .adgame load/save (v15)
       sprite.hpp/.cpp               # Sprite metadata type and .sprite.json load/save
@@ -139,11 +141,11 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 | Weapons | `WeaponEditorPanel` | Create/edit project-level WeaponDefs (melee + ranged) and set starting weapon |
 | Items | inline `EditorApp` project-items view | Create/edit project-level ItemDefs and seed common RPG item defaults |
 | Quest State | inline `EditorApp` project-state view | Create/edit designer-defined state variables and reusable effects |
-| Screens | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
+| Screen Layout | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
 | Assets | *(inline)* | Asset directory listing |
 
-`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, `DialogueGraphEditorPanel`, `ItemPlacementPanel`, and `DoorPlacementPanel` are contextual subviews reached from Characters or Screens. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Enemies`, `Edit Enemy Types`, `Edit NPCs`, `Edit NPC Types`, `Edit Items`, and `Edit Doors` open scoped screen editors. `Edit Instance Dialogue` opens `DialogueGraphEditorPanel` as a sub-screen of NPC placement so the graph is tied to the selected NPC instance.
+`SpriteEditorPanel`, `WallFloorPaintPanel`, `MapEditorPanel`, `EnemyPathEditorPanel`, `NpcEditorPanel`, `DialogueGraphEditorPanel`, `ItemPlacementPanel`, `DoorPlacementPanel`, and `ChapterExitPanel` are contextual subviews reached from Characters or Screen Layout. `Edit Screen Graphics` opens Wall/Floor Paint, which can switch to map logic for the same screen. `Edit Chapter Exits` authors conditional cross-chapter transitions on the selected map.
 
 ---
 
@@ -512,7 +514,7 @@ struct TileMap {
 ### `.admap` format (v12)
 
 ```text
-ADMAP 12
+ADMAP 13
 id new_map
 tileset overworld
 size 48 32
@@ -532,6 +534,8 @@ items 1
 item item_1 1 ammo_stone 5 384.0 256.0 0 ammo_pickup
 doors 1
 door door_1 10 12 1 2 2 brass_key 1 screen_2 4 8 door_sprite open assets/game/sfx/doors/open.wav assets/game/sfx/doors/close.wav assets/game/sfx/doors/locked.wav door_to_screen_1 0
+chapter_exits 1
+chapter_exit exit_to_town 20 10 2 2 3 1 5 Crows_killed 1 10 1 Town town_gate 4 6 1 assets/game/sfx/doors/exit.wav
 end
 ```
 
@@ -539,7 +543,9 @@ Obstacle fields: `id type spriteId x y width height activeSeconds inactiveSecond
 Item fields: `id pickupType targetId quantity x y respawn spriteId`, where pickup type is `0=Weapon`, `1=Ammo`, `2=Health`, `3=ProjectItem`.
 Non-respawning pickups set `item_collected.<chapter>.<screen>.<item>` in boolean game state and remain absent on later screen loads. Respawning pickups return when the screen is loaded again.
 Door fields: `id x y widthTiles heightTiles lockMode requiredItemId consumeKey targetScreenId targetTileX targetTileY spriteId openingAnimation openSoundPath closeSoundPath lockedSoundPath targetDoorId renderAboveWalls`, where lock mode is `0=FreeUse`, `1=Locked`, `2=RequiresItem`. `targetTileX/targetTileY` is the explicit spawn tile for the destination screen. `targetDoorId` (v11+) is the id of the paired door on the target screen; the editor uses it to auto-create and reciprocally link return doors (`DoorPlacementPanel::ensurePairedDoor`, written via load-merge), but runtime spawning still uses the configured target tile. `renderAboveWalls` (v12+, `0`/`1`, default `0`) draws the door sprite above the wall texture (for doors set into wall art); the default draws the door below the player and wall so the player passes in front of it (a doorway is normally a transparent hole cut into the wall art).
-Backward compat: v1–v11 files still load; `renderAboveWalls` defaults to `0`, `targetDoorId` and missing sections/door SFX default to empty, pre-v7 obstacles get a generated id, and pre-v8 obstacles default to `damage=1`, `damageIntervalSeconds=0.75`.
+Chapter-exit fields are `id x y width height activation conditionType compareOp variableId scope intValue boolValue targetChapterId targetScreenId targetTileX targetTileY oneShot transitionSoundPath`. Activation is `0=Interact`, `1=EnterArea`, `2=ConditionChange`, `3=EnterAreaAndCondition`. Conditions reuse the dialogue condition model: Always, integer comparison, boolean equality, item possession, and money threshold.
+
+Backward compat: v1–v12 files still load with no chapter exits; older door/obstacle defaults remain unchanged.
 
 ### Map Editor
 
@@ -547,7 +553,7 @@ Backward compat: v1–v11 files still load; `renderAboveWalls` defaults to `0`, 
 - Copy/paste, tileset palette, obstacle edit mode, save/load.
 - Supports multiple obstacle types and multiple instances per screen.
 - **Per-obstacle editing:** every obstacle carries its own `id`. Obstacle edit mode shows a list of all obstacles (id + type) and an inspector for the selected one that edits its id, type, sprite id (with an Edit Sprite shortcut), tile position, size, **damage** (HP per tick; `0` = harmless), **damage rate** (seconds between damage ticks), and (for Timed Spikes) active/safe/phase timing. An **Add obstacle** button creates one at the spawn tile; clicking an obstacle on the canvas selects it; clicking an empty cell adds a new obstacle (auto-assigned `obstacle_<n>` id) of the chosen "New type" and selects it; right-click deletes the topmost obstacle under the cursor.
-- **Shared `.admap` slices:** a screen's `.admap` stores tile layers **and** obstacles, items, and doors, but each is authored in a different panel. Any panel that writes the whole `TileMap` first re-reads the file and preserves the slices it does not own — `MapEditorPanel::saveMap` keeps existing items/doors; `LayoutEditorPanel::saveDirtyMaps` re-reads obstacles/items/doors before writing its tile-layer cache; the item/door panels load-then-save. This prevents one editor from wiping another's data (previously obstacles were always saved as `obstacles 0`).
+- **Shared `.admap` slices:** a screen's `.admap` stores tile layers, obstacles, items, doors, and chapter exits. Whole-map writers re-read and preserve slices they do not own; the item, door, and chapter-exit panels use load-merge-save.
 
 ### Item Placement Editor
 
@@ -577,6 +583,18 @@ Implemented in `src/editor/panels/door_placement_panel.*`.
 - A `Render above walls` checkbox sets `MapDoorPlacement::renderAboveWalls` (default off). Off, the door draws below the player and wall texture, so the player passes in front of it (doorways are normally a transparent hole in the wall art); on, the door sprite draws above the wall texture, for doors set into opaque wall art.
 - Open, Close, and Locked SFX use dropdowns populated recursively from project-relative `.ogg` or `.wav` files under `assets/game/sfx/doors`. Walking SFX uses the Music/SFX screen editor and scans `assets/game/sfx/walking`. New and opened projects ensure both folders exist.
 - The inspector warns about duplicate/empty door IDs, missing required-item IDs, required items not defined in the Items tab, invalid/missing Free Use destinations, unloadable target maps, out-of-bounds target tiles, and target tiles blocked by the target map wall layer.
+
+### Chapter Exit Editor
+
+Implemented in `src/editor/panels/chapter_exit_panel.*` and opened from the selected Screen Layout screen via **Edit Chapter Exits**.
+
+- Chapter exits are rectangular map triggers with Interact, Enter Area, Condition Change, or Enter Area + Condition activation.
+- Conditions use the shared state-variable registry and support integer comparisons, boolean equality, item possession/non-possession, and money thresholds.
+- The destination picker loads another project chapter, lists its screens, and provides a target-map tile picker.
+- **Create Chapter** creates a destination chapter without switching the editor away from the source chapter. It creates the `.adchapter`, a chapter-prefixed first `.admap`, required project asset directories, `assets/game/dialogue/<chapterId>/`, registers the chapter in `project.adgame`, and selects its first screen/spawn as the exit destination.
+- Left-clicking an exit selects it; clicking empty space moves the selected exit. Width and height are edited numerically.
+- Optional one-shot exits persist a scoped used flag. Runtime arrival lockout and inside/condition edge tracking prevent immediate transition loops.
+- Cross-chapter transitions fade out, load the destination chapter and screen, re-seed only missing destination chapter defaults, restore inventory from persistent state, then fade in.
 
 ---
 
@@ -697,8 +715,8 @@ Runs each frame for all path entities. Advances `entity.animSeconds`. Ticks `ent
 - `MusicPlayer::play` enforces exclusive screen music: when the requested path/loop key changes it calls `stop()` before decoding and installing replacement PCM. The one-shot effect PCM buffer and looping walking-SFX PCM buffer remain separate, so door sounds and footsteps can mix over the single active track.
 - Pressing `I`, controller north face button, Select, or Start toggles a simple inventory overlay and pauses player/world updates while it is open. Inventory rows use each item definition's sprite as a pictogram and render stack/value counts as a pictogram/number pair. Up/Down, W/S, D-pad, or left stick changes selection; E, Space, Enter, or controller south face button uses usable item types.
 - NPC dialogue: E key or controller south face button triggers interaction. Legacy dialogue advances line-by-line; graph dialogue follows nodes, conditions, choices, and actions. Up/Down, W/S, D-pad, or left stick selects graph responses. Speech bubble / dialogue box renders above NPC and dialogue text is bounded, wrapped, and scrollable.
-- **Persistence:** at launch the engine seeds `GameState` from project `StateVariableDef` defaults. **By default that is the whole story — every launch is a new game.** Saved progress in `assets/game/save.adstate` is merged over the defaults only when the runtime is started with `--continue` (gated by `continueSave_`, default false). State is still written on every screen transition and on quit (so a future continue works), and within a session defeated enemies persist in `GameState::defeatedEnemies_` keyed `"<screenId>/<enemyId>"`, filtered out at screen load. A kill increments the enemy type's `killVariable` by `killAmount` on every death (independent of respawn/persistence), wiring the quest counter through the shared registry.
-- **Launch flags:** the runtime accepts `--continue` (load `save.adstate` to resume), `--fresh` (test launch: ignore *and* don't overwrite `save.adstate`), `--screen <id>` (start on a specific screen), and `--pos <x> <y>` (start at a position). On each screen entry it writes a lightweight `assets/game/test_checkpoint` (`screen <id>` / `pos <x> <y>`) recording where the player last entered a screen; the editor reads this for "Play From Last Entry". A `--fresh` run never writes `save.adstate` but still updates the checkpoint.
+- **Persistence:** at launch the engine seeds missing `GameState` values from project defaults. A normal launch starts fresh; `--continue` loads the saved chapter, screen, position, variables, items, and defeats. Defeated enemies use `"<chapterId>/<screenId>/<enemyId>"`; legacy two-part keys still load.
+- **Launch flags:** the runtime accepts `--continue`, `--fresh`, `--screen <id>`, and `--pos <x> <y>`. The test checkpoint now records `chapter`, `screen`, and `pos`, allowing **Play From Last Entry** to follow cross-chapter play.
 - **Animated tiles:** `Engine::loadAllSprites` also loads sprites referenced by the active screen's `animatedTiles`; `Engine::renderAnimatedTiles(layer)` draws each placement's current frame (via `spriteFrame()` + `renderTextureRegion()` at `cell*kTileSize`) — layer 0 after the floor texture (below the player), layer 1 after the wall texture (player walks behind). Within each band it renders stack 0, 1, then 2 so higher stacks composite over lower stacks.
 
 Current limitations:
@@ -791,7 +809,7 @@ std::string interpolateGameStateText(
     const std::string& chapterId = {});
 ```
 
-`.adstate` (current version **2**) stores runtime values: named ints, named bools, owned items, and a defeated-enemy key set. v1 files (no `defeated` block) still load. Variable names are designer-authored content, not hard-coded engine behavior. The runtime save file lives at `assets/game/save.adstate`.
+`.adstate` (current version **3**) stores runtime values plus `location <chapter> <screen> <x> <y>`. v1/v2 files still load and fall back to the selected chapter start when no location exists. Variable names are designer-authored content, not hard-coded engine behavior. The runtime save file lives at `assets/game/save.adstate`.
 
 `interpolateGameStateText` supports live state in authored text:
 

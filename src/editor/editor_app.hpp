@@ -2,6 +2,7 @@
 
 #include "editor/editor_context.hpp"
 #include "editor/panels/character_editor_panel.hpp"
+#include "editor/panels/chapter_exit_panel.hpp"
 #include "editor/panels/door_placement_panel.hpp"
 #include "editor/panels/dialogue_graph_editor_panel.hpp"
 #include "editor/panels/enemy_path_editor_panel.hpp"
@@ -50,6 +51,7 @@ private:
         Items,
         ItemEdit,
         Doors,
+        ChapterExits,
         Npcs,
         NpcTypes,
         DialogueGraph,
@@ -68,6 +70,7 @@ private:
     WeaponEditorPanel weaponEditor_;
     ItemPlacementPanel itemPlacementEditor_;
     DoorPlacementPanel doorPlacementEditor_;
+    ChapterExitPanel chapterExitEditor_;
     NpcEditorPanel npcEditor_;
     MainTab requestedTab_ = MainTab::Characters;
     bool hasRequestedTab_ = true;
@@ -80,6 +83,7 @@ private:
     std::vector<game::EnemyType> enemyTypeSnapshot_;
     std::vector<game::MapItemPlacement> itemPlacementSnapshot_;
     std::vector<game::MapDoorPlacement> doorPlacementSnapshot_;
+    std::vector<game::MapChapterExitPlacement> chapterExitSnapshot_;
     std::vector<game::NpcPlacement> npcPlacementSnapshot_;
     std::vector<game::NpcTypeDef> npcTypeSnapshot_;
     bool startupChapterChosen_ = false;

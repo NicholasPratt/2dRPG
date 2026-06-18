@@ -1,6 +1,6 @@
 #pragma once
 
-#include "game/state_types.hpp"
+#include "game/condition.hpp"
 
 #include <filesystem>
 #include <string>
@@ -17,22 +17,8 @@ enum class DialogueNodeType {
     End = 5,
 };
 
-enum class DialogueConditionType {
-    Always = 0,
-    IntCompare = 1,
-    BoolEquals = 2,
-    HasItem = 3,
-    HasMoney = 4,
-};
-
-enum class DialogueCompareOp {
-    Equal = 0,
-    NotEqual = 1,
-    Less = 2,
-    LessOrEqual = 3,
-    Greater = 4,
-    GreaterOrEqual = 5,
-};
+using DialogueConditionType = GameConditionType;
+using DialogueCompareOp = GameCompareOp;
 
 enum class DialogueActionType {
     SetInt = 0,
@@ -54,14 +40,7 @@ enum class DialogueActionType {
     CompleteQuest = 16,
 };
 
-struct DialogueCondition {
-    DialogueConditionType type = DialogueConditionType::Always;
-    DialogueCompareOp op = DialogueCompareOp::GreaterOrEqual;
-    std::string variableId;
-    StateVariableScope scope = StateVariableScope::Universal;
-    int intValue = 0;
-    bool boolValue = true;
-};
+using DialogueCondition = GameCondition;
 
 struct DialogueAction {
     DialogueActionType type = DialogueActionType::AddInt;

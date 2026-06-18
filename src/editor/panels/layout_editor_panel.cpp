@@ -214,10 +214,27 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
     ImGui::SameLine();
     ImGui::RadioButton("Ceiling", &layoutActiveLayer_, 2);
 
-    if (ImGui::Button("Wall Brush")) {
-        layoutActiveLayer_ = 1;
-        layoutSelectedTileId_ = 1;
-    }
+    auto paintToolButton = [this](const char* label, LayoutPaintTool tool) {
+        const bool selected = layoutPaintTool_ == tool;
+        if (selected) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.42f, 0.72f, 1.0f));
+        }
+        if (ImGui::Button(label)) {
+            layoutPaintTool_ = tool;
+            layoutActiveLayer_ = 1;
+            layoutSelectedTileId_ = 1;
+            layoutShapeDragging_ = false;
+        }
+        if (selected) {
+            ImGui::PopStyleColor();
+        }
+    };
+
+    paintToolButton("Wall Brush", LayoutPaintTool::Brush);
+    ImGui::SameLine();
+    paintToolButton("Wall Line", LayoutPaintTool::WallLine);
+    ImGui::SameLine();
+    paintToolButton("Wall Rectangle", LayoutPaintTool::WallRect);
     ImGui::SameLine();
     if (ImGui::Button("Save changed maps")) {
         saveDirtyMaps(context);
@@ -226,6 +243,9 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
     ui::checkbox("Graphics preview", "##LayoutGraphicsPreview", &showGraphicsPreview_, 128.0f);
     if (showGraphicsPreview_) {
         ui::sliderFloat("Preview alpha", "##LayoutPreviewAlpha", &graphicsPreviewOpacity_, 0.15f, 1.0f, "%.2f", 96.0f, 110.0f);
+    }
+    if (layoutPaintTool_ == LayoutPaintTool::WallLine || layoutPaintTool_ == LayoutPaintTool::WallRect) {
+        ImGui::TextDisabled("Drag on the selected screen to preview; release to apply. Right-drag erases.");
     }
     ImGui::Separator();
 
@@ -288,25 +308,159 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         if (!selected && ImGui::IsItemClicked()) {
             (void)selectScreenById(context, screen.id);
         }
+        if (selected && layoutShapeDragging_ && layoutShapeMapId_ == screen.mapId) {
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            layoutShapeX1_ = std::clamp(static_cast<int>((mouse.x - min.x) / tileSize), 0, map.width - 1);
+            layoutShapeY1_ = std::clamp(static_cast<int>((mouse.y - min.y) / tileSize), 0, map.height - 1);
+            drawLayoutShapePreview(drawList, min, tileSize);
+
+            const ImGuiMouseButton button = layoutShapeErase_ ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
+            if (ImGui::IsMouseReleased(button)) {
+                const std::uint16_t tileId = layoutShapeErase_ ? 0u : layoutSelectedTileId_;
+                if (layoutPaintTool_ == LayoutPaintTool::WallLine) {
+                    paintLayoutWallLine(map, tileId);
+                    status_ = std::string(layoutShapeErase_ ? "Erased" : "Drew") + " wall line on " + screen.mapId + ".";
+                } else {
+                    paintLayoutWallRect(map, tileId);
+                    status_ = std::string(layoutShapeErase_ ? "Erased" : "Drew") + " wall rectangle on " + screen.mapId + ".";
+                }
+                layoutShapeDragging_ = false;
+                dirtyMapIds_.insert(screen.mapId);
+                context.markDirty();
+            }
+        }
         if (selected && ImGui::IsItemHovered()) {
             const ImVec2 mouse = ImGui::GetIO().MousePos;
             const int tileX = std::clamp(static_cast<int>((mouse.x - min.x) / tileSize), 0, map.width - 1);
             const int tileY = std::clamp(static_cast<int>((mouse.y - min.y) / tileSize), 0, map.height - 1);
             const ImVec2 hoverMin{min.x + static_cast<float>(tileX) * tileSize, min.y + static_cast<float>(tileY) * tileSize};
             drawList->AddRect(hoverMin, {hoverMin.x + tileSize, hoverMin.y + tileSize}, IM_COL32(255, 255, 255, 220), 0.0f, 0, 2.0f);
-            ImGui::SetTooltip("%s [%d,%d] layer %d", screen.mapId.c_str(), tileX, tileY, layoutActiveLayer_);
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            const bool shapeTool = layoutPaintTool_ == LayoutPaintTool::WallLine ||
+                layoutPaintTool_ == LayoutPaintTool::WallRect;
+            ImGui::SetTooltip("%s [%d,%d] %s", screen.mapId.c_str(), tileX, tileY,
+                shapeTool ? "wall shape" : "brush");
+            if (!shapeTool && (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right))) {
                 const std::size_t index = static_cast<std::size_t>(tileY) * static_cast<std::size_t>(map.width) + static_cast<std::size_t>(tileX);
                 map.layers[static_cast<std::size_t>(layoutActiveLayer_)][index] =
                     ImGui::IsMouseDown(ImGuiMouseButton_Right) ? 0u : layoutSelectedTileId_;
                 dirtyMapIds_.insert(screen.mapId);
                 context.markDirty();
+            } else if (shapeTool && !layoutShapeDragging_) {
+                const bool leftClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                const bool rightClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+                if (leftClicked || rightClicked) {
+                    layoutActiveLayer_ = 1;
+                    layoutShapeDragging_ = true;
+                    layoutShapeErase_ = rightClicked;
+                    layoutShapeMapId_ = screen.mapId;
+                    layoutShapeX0_ = layoutShapeX1_ = tileX;
+                    layoutShapeY0_ = layoutShapeY1_ = tileY;
+                }
             }
         }
         else if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s -> %s", screen.id.c_str(), screen.mapId.c_str());
         }
         ImGui::PopID();
+    }
+}
+
+void LayoutEditorPanel::drawLayoutShapePreview(ImDrawList* drawList, ImVec2 min, float tileSize) const
+{
+    const ImU32 fill = layoutShapeErase_ ? IM_COL32(255, 70, 70, 95) : IM_COL32(255, 216, 64, 110);
+    const ImU32 border = layoutShapeErase_ ? IM_COL32(255, 70, 70, 240) : IM_COL32(255, 240, 150, 245);
+    auto drawCell = [&](int x, int y) {
+        const ImVec2 cellMin{
+            min.x + static_cast<float>(x) * tileSize,
+            min.y + static_cast<float>(y) * tileSize,
+        };
+        drawList->AddRectFilled(cellMin, {cellMin.x + tileSize, cellMin.y + tileSize}, fill);
+        drawList->AddRect(cellMin, {cellMin.x + tileSize, cellMin.y + tileSize}, border, 0.0f, 0, 2.0f);
+    };
+
+    if (layoutPaintTool_ == LayoutPaintTool::WallLine) {
+        int x = layoutShapeX0_;
+        int y = layoutShapeY0_;
+        const int dx = std::abs(layoutShapeX1_ - x);
+        const int sx = x < layoutShapeX1_ ? 1 : -1;
+        const int dy = -std::abs(layoutShapeY1_ - y);
+        const int sy = y < layoutShapeY1_ ? 1 : -1;
+        int error = dx + dy;
+        for (;;) {
+            drawCell(x, y);
+            if (x == layoutShapeX1_ && y == layoutShapeY1_) {
+                break;
+            }
+            const int doubledError = error * 2;
+            if (doubledError >= dy) {
+                error += dy;
+                x += sx;
+            }
+            if (doubledError <= dx) {
+                error += dx;
+                y += sy;
+            }
+        }
+        return;
+    }
+
+    const int left = std::min(layoutShapeX0_, layoutShapeX1_);
+    const int right = std::max(layoutShapeX0_, layoutShapeX1_);
+    const int top = std::min(layoutShapeY0_, layoutShapeY1_);
+    const int bottom = std::max(layoutShapeY0_, layoutShapeY1_);
+    for (int x = left; x <= right; ++x) {
+        drawCell(x, top);
+        if (bottom != top) {
+            drawCell(x, bottom);
+        }
+    }
+    for (int y = top + 1; y < bottom; ++y) {
+        drawCell(left, y);
+        if (right != left) {
+            drawCell(right, y);
+        }
+    }
+}
+
+void LayoutEditorPanel::paintLayoutWallLine(game::TileMap& map, std::uint16_t tileId)
+{
+    int x = layoutShapeX0_;
+    int y = layoutShapeY0_;
+    const int dx = std::abs(layoutShapeX1_ - x);
+    const int sx = x < layoutShapeX1_ ? 1 : -1;
+    const int dy = -std::abs(layoutShapeY1_ - y);
+    const int sy = y < layoutShapeY1_ ? 1 : -1;
+    int error = dx + dy;
+    for (;;) {
+        map.layers[1][static_cast<std::size_t>(y * map.width + x)] = tileId;
+        if (x == layoutShapeX1_ && y == layoutShapeY1_) {
+            break;
+        }
+        const int doubledError = error * 2;
+        if (doubledError >= dy) {
+            error += dy;
+            x += sx;
+        }
+        if (doubledError <= dx) {
+            error += dx;
+            y += sy;
+        }
+    }
+}
+
+void LayoutEditorPanel::paintLayoutWallRect(game::TileMap& map, std::uint16_t tileId)
+{
+    const int left = std::min(layoutShapeX0_, layoutShapeX1_);
+    const int right = std::max(layoutShapeX0_, layoutShapeX1_);
+    const int top = std::min(layoutShapeY0_, layoutShapeY1_);
+    const int bottom = std::max(layoutShapeY0_, layoutShapeY1_);
+    for (int x = left; x <= right; ++x) {
+        map.layers[1][static_cast<std::size_t>(top * map.width + x)] = tileId;
+        map.layers[1][static_cast<std::size_t>(bottom * map.width + x)] = tileId;
+    }
+    for (int y = top; y <= bottom; ++y) {
+        map.layers[1][static_cast<std::size_t>(y * map.width + left)] = tileId;
+        map.layers[1][static_cast<std::size_t>(y * map.width + right)] = tileId;
     }
 }
 
@@ -605,6 +759,12 @@ void LayoutEditorPanel::drawScreenInspector(EditorContext& context)
         context.selectedScreenId = screen.id;
         context.selectedScreenMapId = screen.mapId;
         context.requestEditDoors = true;
+    }
+
+    if (ImGui::Button("Edit Chapter Exits", ImVec2(-1.0f, 34.0f))) {
+        context.selectedScreenId = screen.id;
+        context.selectedScreenMapId = screen.mapId;
+        context.requestEditChapterExits = true;
     }
 
     if (ImGui::Button("Edit NPCs", ImVec2(-1.0f, 34.0f))) {
@@ -910,6 +1070,7 @@ void LayoutEditorPanel::saveDirtyMaps(EditorContext& context)
             it->second.obstacles = std::move(onDisk.obstacles);
             it->second.items = std::move(onDisk.items);
             it->second.doors = std::move(onDisk.doors);
+            it->second.chapterExits = std::move(onDisk.chapterExits);
         }
 
         if (game::saveTileMap(outputPath, it->second, &error)) {

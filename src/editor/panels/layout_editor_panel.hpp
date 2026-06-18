@@ -29,11 +29,21 @@ public:
     void drawScreenMusicSfx(EditorContext& context);
 
 private:
+    enum class LayoutPaintTool { Brush, WallLine, WallRect };
+
     game::Chapter chapter_;
     int selectedScreen_ = 0;
     int layoutTileSize_ = 10;
     int layoutActiveLayer_ = 1;
     std::uint16_t layoutSelectedTileId_ = 1;
+    LayoutPaintTool layoutPaintTool_ = LayoutPaintTool::Brush;
+    bool layoutShapeDragging_ = false;
+    bool layoutShapeErase_ = false;
+    std::string layoutShapeMapId_;
+    int layoutShapeX0_ = 0;
+    int layoutShapeY0_ = 0;
+    int layoutShapeX1_ = 0;
+    int layoutShapeY1_ = 0;
     bool showGraphicsPreview_ = true;
     float graphicsPreviewOpacity_ = 0.85f;
     std::array<char, 64> chapterId_{'c', 'h', 'a', 'p', 't', 'e', 'r', '_', '1', '\0'};
@@ -58,6 +68,9 @@ private:
     void drawGraphicsPreview(EditorContext& context, ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize);
     void drawMapTiles(ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize, bool selected) const;
     void drawWallOutlines(ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize, ImU32 color) const;
+    void drawLayoutShapePreview(ImDrawList* drawList, ImVec2 min, float tileSize) const;
+    void paintLayoutWallLine(game::TileMap& map, std::uint16_t tileId);
+    void paintLayoutWallRect(game::TileMap& map, std::uint16_t tileId);
     void drawScreenInspector(EditorContext& context);
     void drawMusicFilePicker(EditorContext& context, game::ChapterScreen& screen);
     void drawWalkingSfxFilePicker(EditorContext& context, game::ChapterScreen& screen);

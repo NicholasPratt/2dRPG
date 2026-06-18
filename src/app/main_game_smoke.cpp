@@ -7,6 +7,7 @@
 #include "game/state.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 int main(int argc, char** argv)
@@ -69,7 +70,26 @@ int main(int argc, char** argv)
     respawningItem.respawn = true;
     respawningItem.spriteId = "flower";
     adventure::game::TileMap doorMap = map;
+    adventure::game::MapChapterExitPlacement smokeExit;
+    smokeExit.id = "to_next_chapter";
+    smokeExit.x = 8;
+    smokeExit.y = 9;
+    smokeExit.widthTiles = 3;
+    smokeExit.heightTiles = 2;
+    smokeExit.activation = adventure::game::ChapterExitActivation::EnterAreaAndCondition;
+    smokeExit.condition.type = adventure::game::GameConditionType::IntCompare;
+    smokeExit.condition.op = adventure::game::GameCompareOp::GreaterOrEqual;
+    smokeExit.condition.variableId = "Crows_killed";
+    smokeExit.condition.scope = adventure::game::StateVariableScope::Chapter;
+    smokeExit.condition.intValue = 10;
+    smokeExit.targetChapterId = "Town";
+    smokeExit.targetScreenId = "town_gate";
+    smokeExit.targetTileX = 4;
+    smokeExit.targetTileY = 6;
+    smokeExit.oneShot = true;
+    smokeExit.transitionSoundPath = "assets/game/sfx/doors/chapter_exit.wav";
     doorMap.doors = {smokeDoor};
+    doorMap.chapterExits = {smokeExit};
     doorMap.obstacles = {smokeObstacle};
     doorMap.items = {oneTimeItem, respawningItem};
     const std::filesystem::path mapSmokePath = "build/smoke_map.admap";
@@ -119,7 +139,20 @@ int main(int argc, char** argv)
         std::cerr << "Map item respawn round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped map doors, obstacles, and item respawn flags (ADMAP v10)\n";
+    if (loadedDoorMap.chapterExits.size() != 1 ||
+        loadedDoorMap.chapterExits.front().id != "to_next_chapter" ||
+        loadedDoorMap.chapterExits.front().activation != adventure::game::ChapterExitActivation::EnterAreaAndCondition ||
+        loadedDoorMap.chapterExits.front().condition.type != adventure::game::GameConditionType::IntCompare ||
+        loadedDoorMap.chapterExits.front().condition.op != adventure::game::GameCompareOp::GreaterOrEqual ||
+        loadedDoorMap.chapterExits.front().condition.scope != adventure::game::StateVariableScope::Chapter ||
+        loadedDoorMap.chapterExits.front().condition.intValue != 10 ||
+        loadedDoorMap.chapterExits.front().targetChapterId != "Town" ||
+        loadedDoorMap.chapterExits.front().targetScreenId != "town_gate" ||
+        !loadedDoorMap.chapterExits.front().oneShot) {
+        std::cerr << "Map chapter exit round-trip values did not match.\n";
+        return 1;
+    }
+    std::cout << "Round-tripped map doors, chapter exits, obstacles, and items (ADMAP v13)\n";
 
     const std::filesystem::path chapterPath = argc > 2 ? std::filesystem::path(argv[2]) : std::filesystem::path("assets/game/chapters/chapter_1.adchapter");
     adventure::game::Chapter chapter;
@@ -247,6 +280,7 @@ int main(int argc, char** argv)
     state.setBool("Example_Complete", true);
     state.giveItem("example_reward");
     state.markEnemyDefeated("screen_1/crow_1");
+    state.setLocation("Farm_House", "screen_7", 123.5f, 88.25f);
     const std::filesystem::path stateSmokePath = "build/smoke_state.adstate";
     if (!adventure::game::saveGameState(stateSmokePath, state, &error)) {
         std::cerr << "Failed to save state smoke file: " << error << "\n";
@@ -260,12 +294,51 @@ int main(int argc, char** argv)
     if (loadedState.getInt("Example_Count") != 12 ||
         !loadedState.getBool("Example_Complete") ||
         !loadedState.hasItem("example_reward") ||
-        !loadedState.isEnemyDefeated("screen_1/crow_1")) {
+        !loadedState.isEnemyDefeated("screen_1/crow_1") ||
+        !loadedState.hasLocation() ||
+        loadedState.chapterId() != "Farm_House" ||
+        loadedState.screenId() != "screen_7" ||
+        loadedState.playerX() != 123.5f ||
+        loadedState.playerY() != 88.25f) {
         std::cerr << "State smoke round-trip values did not match.\n";
         return 1;
     }
     std::cout << "Round-tripped game state Example_Count=" << loadedState.getInt("Example_Count")
               << " defeated=" << loadedState.defeatedEnemies().size() << "\n";
+
+    adventure::game::GameCondition smokeCondition;
+    smokeCondition.type = adventure::game::GameConditionType::IntCompare;
+    smokeCondition.variableId = "Example_Count";
+    smokeCondition.op = adventure::game::GameCompareOp::GreaterOrEqual;
+    smokeCondition.intValue = 12;
+    if (!adventure::game::gameConditionPasses(smokeCondition, loadedState, "Farm_House")) {
+        std::cerr << "Integer game condition did not pass.\n";
+        return 1;
+    }
+    smokeCondition.type = adventure::game::GameConditionType::BoolEquals;
+    smokeCondition.variableId = "Example_Complete";
+    smokeCondition.boolValue = true;
+    if (!adventure::game::gameConditionPasses(smokeCondition, loadedState, "Farm_House")) {
+        std::cerr << "Boolean game condition did not pass.\n";
+        return 1;
+    }
+    smokeCondition.type = adventure::game::GameConditionType::HasItem;
+    smokeCondition.variableId = "example_reward";
+    if (!adventure::game::gameConditionPasses(smokeCondition, loadedState, "Farm_House")) {
+        std::cerr << "Item game condition did not pass.\n";
+        return 1;
+    }
+    const std::filesystem::path legacyStatePath = "build/smoke_state_v2.adstate";
+    {
+        std::ofstream legacy(legacyStatePath);
+        legacy << "ADSTATE 2\nints 1\nint Legacy_Count 3\nbools 0\nitems 0\ndefeated 0\nend\n";
+    }
+    adventure::game::GameState legacyState;
+    if (!adventure::game::loadGameState(legacyStatePath, legacyState, &error) ||
+        legacyState.getInt("Legacy_Count") != 3 || legacyState.hasLocation()) {
+        std::cerr << "Legacy ADSTATE v2 compatibility failed.\n";
+        return 1;
+    }
 
     loadedState.setInt("chapter.Farm_House.Crows_killed", 7);
     loadedState.setBool("Quest_Complete", true);

@@ -8,7 +8,7 @@ tile-based, screen-to-screen games. The repository includes the
 
 - Project and chapter management
 - 48 x 32 tile screens using 16 px tiles
-- Floor/wall painting, collision, hazards, destination/key doors with SFX, pickups, and stacked animated tiles
+- Floor/wall painting, collision, hazards, destination/key doors, conditional cross-chapter exits, pickups, and stacked animated tiles
 - Character, sprite, weapon, enemy, NPC, shop, quest-state, and dialogue editors
 - Linear/spline actor paths with enter, timed speech, and leave waypoint actions
 - Sprite polygon drawing, frame drag-reordering, and repeatable/one-time pickup placement
@@ -62,7 +62,7 @@ chapter directly:
 Runtime options:
 
 ```text
---continue        Load assets/game/save.adstate for the selected project
+--continue        Resume the saved chapter, screen, position, and game state
 --fresh           Ignore and do not overwrite save.adstate
 --screen <id>     Start on a specific chapter screen
 --pos <x> <y>     Override the initial pixel position

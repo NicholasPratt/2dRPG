@@ -13,6 +13,7 @@ constexpr int kLayerCount = 3;
 constexpr int kMaxObstacles = 2048;
 constexpr int kMaxItems = 1024;
 constexpr int kMaxDoors = 1024;
+constexpr int kMaxChapterExits = 256;
 
 void setError(std::string* errorMessage, const std::string& message)
 {
@@ -33,7 +34,8 @@ bool validMapShape(const TileMap& map)
             return false;
         }
     }
-    if (map.obstacles.size() > kMaxObstacles || map.items.size() > kMaxItems || map.doors.size() > kMaxDoors) {
+    if (map.obstacles.size() > kMaxObstacles || map.items.size() > kMaxItems ||
+        map.doors.size() > kMaxDoors || map.chapterExits.size() > kMaxChapterExits) {
         return false;
     }
     for (const MapObstacle& obstacle : map.obstacles) {
@@ -47,6 +49,13 @@ bool validMapShape(const TileMap& map)
         if (door.x < 0 || door.y < 0 || door.widthTiles <= 0 || door.heightTiles <= 0 ||
             door.x + door.widthTiles > map.width || door.y + door.heightTiles > map.height ||
             door.targetTileX < 0 || door.targetTileY < 0) {
+            return false;
+        }
+    }
+    for (const MapChapterExitPlacement& exit : map.chapterExits) {
+        if (exit.x < 0 || exit.y < 0 || exit.widthTiles <= 0 || exit.heightTiles <= 0 ||
+            exit.x + exit.widthTiles > map.width || exit.y + exit.heightTiles > map.height ||
+            exit.targetTileX < 0 || exit.targetTileY < 0) {
             return false;
         }
     }
@@ -141,7 +150,7 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
         return false;
     }
 
-    output << "ADMAP 12\n";
+    output << "ADMAP 13\n";
     output << "id " << map.id << "\n";
     if (!map.tilesetId.empty()) {
         output << "tileset " << map.tilesetId << "\n";
@@ -194,6 +203,27 @@ bool saveTileMap(const std::filesystem::path& path, const TileMap& map, std::str
                << ' ' << encodedToken(door.targetDoorId)
                << ' ' << (door.renderAboveWalls ? 1 : 0) << "\n";
     }
+    output << "chapter_exits " << map.chapterExits.size() << "\n";
+    for (const MapChapterExitPlacement& exit : map.chapterExits) {
+        output << "chapter_exit " << encodedToken(exit.id)
+               << ' ' << exit.x
+               << ' ' << exit.y
+               << ' ' << exit.widthTiles
+               << ' ' << exit.heightTiles
+               << ' ' << static_cast<int>(exit.activation)
+               << ' ' << static_cast<int>(exit.condition.type)
+               << ' ' << static_cast<int>(exit.condition.op)
+               << ' ' << encodedToken(exit.condition.variableId)
+               << ' ' << static_cast<int>(exit.condition.scope)
+               << ' ' << exit.condition.intValue
+               << ' ' << (exit.condition.boolValue ? 1 : 0)
+               << ' ' << encodedToken(exit.targetChapterId)
+               << ' ' << encodedToken(exit.targetScreenId)
+               << ' ' << exit.targetTileX
+               << ' ' << exit.targetTileY
+               << ' ' << (exit.oneShot ? 1 : 0)
+               << ' ' << encodedToken(exit.transitionSoundPath) << "\n";
+    }
     output << "end\n";
 
     if (!output) {
@@ -214,7 +244,7 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADMAP" || version < 1 || version > 12) {
+    if (magic != "ADMAP" || version < 1 || version > 13) {
         setError(errorMessage, "Unsupported map file type or version.");
         return false;
     }
@@ -444,6 +474,54 @@ bool loadTileMap(const std::filesystem::path& path, TileMap& map, std::string* e
                 door.lockedSoundPath = decodedToken(lockedSoundToken);
                 door.targetDoorId = decodedToken(targetDoorToken);
                 loaded.doors.push_back(std::move(door));
+            }
+            input >> key;
+        }
+        if (version >= 13 && key == "chapter_exits") {
+            int exitCount = 0;
+            input >> exitCount;
+            if (!input || exitCount < 0 || exitCount > kMaxChapterExits) {
+                setError(errorMessage, "Invalid chapter exit count.");
+                return false;
+            }
+            loaded.chapterExits.reserve(static_cast<std::size_t>(exitCount));
+            for (int i = 0; i < exitCount; ++i) {
+                if (!(input >> key) || key != "chapter_exit") {
+                    setError(errorMessage, "Expected chapter exit entry.");
+                    return false;
+                }
+                MapChapterExitPlacement exit;
+                std::string idToken;
+                std::string variableToken;
+                std::string chapterToken;
+                std::string screenToken;
+                std::string soundToken;
+                int activation = 0;
+                int conditionType = 0;
+                int compareOp = 0;
+                int scope = 0;
+                int boolValue = 1;
+                int oneShot = 0;
+                input >> idToken >> exit.x >> exit.y >> exit.widthTiles >> exit.heightTiles
+                      >> activation >> conditionType >> compareOp >> variableToken >> scope
+                      >> exit.condition.intValue >> boolValue >> chapterToken >> screenToken
+                      >> exit.targetTileX >> exit.targetTileY >> oneShot >> soundToken;
+                if (!input) {
+                    setError(errorMessage, "Invalid chapter exit data.");
+                    return false;
+                }
+                exit.id = decodedToken(idToken);
+                exit.activation = static_cast<ChapterExitActivation>(std::clamp(activation, 0, 3));
+                exit.condition.type = static_cast<GameConditionType>(std::clamp(conditionType, 0, 4));
+                exit.condition.op = static_cast<GameCompareOp>(std::clamp(compareOp, 0, 5));
+                exit.condition.variableId = decodedToken(variableToken);
+                exit.condition.scope = static_cast<StateVariableScope>(std::clamp(scope, 0, 1));
+                exit.condition.boolValue = boolValue != 0;
+                exit.targetChapterId = decodedToken(chapterToken);
+                exit.targetScreenId = decodedToken(screenToken);
+                exit.oneShot = oneShot != 0;
+                exit.transitionSoundPath = decodedToken(soundToken);
+                loaded.chapterExits.push_back(std::move(exit));
             }
             input >> key;
         }

@@ -19,6 +19,7 @@ target_include_directories(imgui PUBLIC
 
 add_library(adventure_game STATIC
     src/game/chapter.cpp
+    src/game/condition.cpp
     src/game/dialogue_graph.cpp
     src/game/path.cpp
     src/game/project.cpp
@@ -39,6 +40,7 @@ add_library(adventure_editor STATIC
     src/editor/editor_state.cpp
     src/editor/stb_image_impl.cpp
     src/editor/panels/character_editor_panel.cpp
+    src/editor/panels/chapter_exit_panel.cpp
     src/editor/panels/door_placement_panel.cpp
     src/editor/panels/dialogue_graph_editor_panel.cpp
     src/editor/panels/enemy_path_editor_panel.cpp

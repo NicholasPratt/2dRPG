@@ -182,6 +182,8 @@ private:
     enum class TransitionState {
         None,
         Sliding,
+        FadingOut,
+        FadingIn,
     };
 
     enum class PlayerActionState {
@@ -306,9 +308,17 @@ private:
     float transitionToX_ = 0.0f;
     float transitionToY_ = 0.0f;
     TransitionState transitionState_ = TransitionState::None;
+    std::string pendingChapterId_;
+    std::string pendingChapterScreenId_;
+    float pendingChapterSpawnX_ = 0.0f;
+    float pendingChapterSpawnY_ = 0.0f;
+    float chapterExitArrivalLockSeconds_ = 0.0f;
+    std::vector<bool> chapterExitConditionWasTrue_;
+    std::vector<bool> chapterExitPlayerWasInside_;
     InteractionState interactionState_ = InteractionState::None;
     int interactingNpcIndex_ = -1;
     int interactingDoorIndex_ = -1;
+    int interactingChapterExitIndex_ = -1;
     int dialogueLineIndex_ = 0;
     int dialogueScrollLine_ = 0;
     std::string dialogueGraphNodeId_;
@@ -339,6 +349,7 @@ private:
     void loadPlayableCharacter();
     void loadProjectFont();
     void loadWeapons();
+    void seedChapterStateDefaults();
     void syncInventoryFromGameState();
     [[nodiscard]] std::string scopedStateId(StateVariableScope scope, const std::string& id) const;
     [[nodiscard]] int scopedInt(StateVariableScope scope, const std::string& id, int fallback = 0) const;
@@ -394,6 +405,7 @@ private:
     void updateNpcStateRules(RuntimeNpcEntity& npc);
     void loadNpcGraph(RuntimeNpcEntity& npc, const std::string& graphId);
     void updateDoors();
+    void updateChapterExits();
     void applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypoint& waypoint);
     void applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint);
     void updateNpcAwareness();
@@ -415,12 +427,20 @@ private:
     void advanceDialogueGraph();
     void confirmDialogueGraph();
     [[nodiscard]] bool dialogueConditionPasses(const DialogueCondition& condition) const;
+    [[nodiscard]] bool gameConditionPasses(const GameCondition& condition) const;
     void executeDialogueActions(const std::vector<DialogueAction>& actions, RuntimeNpcEntity& npc);
     [[nodiscard]] const DialogueNode* dialogueNodeById(const RuntimeNpcEntity& npc, const std::string& nodeId) const;
     void endInteraction();
     void updateItemPickups();
     void checkMeleeHits();
     [[nodiscard]] bool beginScreenTransition(const std::string& targetScreenId, float spawnX, float spawnY, float fromX, float fromY);
+    [[nodiscard]] bool beginChapterTransition(const MapChapterExitPlacement& exit);
+    [[nodiscard]] bool completeChapterTransition();
+    [[nodiscard]] bool activateChapterExit(const MapChapterExitPlacement& exit);
+    [[nodiscard]] bool playerOverlapsChapterExit(const MapChapterExitPlacement& exit) const;
+    [[nodiscard]] bool playerCanInteractWithChapterExit(const MapChapterExitPlacement& exit) const;
+    [[nodiscard]] int nearestInteractableChapterExit() const;
+    [[nodiscard]] std::string chapterExitStateId(const MapChapterExitPlacement& exit) const;
     [[nodiscard]] bool playerCanOccupy(float x, float y) const;
     [[nodiscard]] bool solidAtPixel(float x, float y) const;
     [[nodiscard]] bool playerCanOccupyInMap(const TileMap& map, float x, float y) const;
@@ -452,7 +472,7 @@ private:
     void applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, float dirY);
     void damagePlayer(int amount, float sourceX, float sourceY);
     void damagePlayer(int amount);
-    void saveRuntimeState() const;
+    void saveRuntimeState();
     void writeCheckpoint(const std::string& screenId, float x, float y) const;
     void respawnPlayerAtMapSpawn();
     [[nodiscard]] float screenWidthPx() const;

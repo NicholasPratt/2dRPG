@@ -317,6 +317,13 @@ void EditorApp::draw()
         hasRequestedTab_ = true;
     }
 
+    if (context_.requestEditChapterExits) {
+        context_.requestEditChapterExits = false;
+        enterScreenMode(ScreenEditMode::ChapterExits);
+        requestedTab_ = MainTab::Layout;
+        hasRequestedTab_ = true;
+    }
+
     if (context_.requestEditItemDetails) {
         context_.requestEditItemDetails = false;
         enterScreenMode(ScreenEditMode::ItemEdit);
@@ -438,7 +445,7 @@ void EditorApp::draw()
         }
 
         ImGuiTabItemFlags layoutTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Layout ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Screens", nullptr, layoutTabFlags)) {
+        if (ImGui::BeginTabItem("Screen Layout", nullptr, layoutTabFlags)) {
             if (layoutTabFlags != 0) {
                 hasRequestedTab_ = false;
             }
@@ -516,6 +523,16 @@ void EditorApp::enterScreenMode(ScreenEditMode mode)
         context_.selectedScreenDoorsMapId = context_.selectedScreenMapId;
         doorPlacementSnapshot_ = context_.selectedScreenDoors;
         doorPlacementEditor_.openForScreen(context_);
+    } else if (mode == ScreenEditMode::ChapterExits && !context_.selectedScreenMapId.empty()) {
+        game::TileMap map;
+        if (game::loadTileMap(context_.assets.gameMapPath() / (context_.selectedScreenMapId + ".admap"), map, nullptr)) {
+            context_.selectedScreenChapterExits = map.chapterExits;
+        } else {
+            context_.selectedScreenChapterExits.clear();
+        }
+        context_.selectedScreenChapterExitsMapId = context_.selectedScreenMapId;
+        chapterExitSnapshot_ = context_.selectedScreenChapterExits;
+        chapterExitEditor_.openForScreen(context_);
     }
     screenEditMode_ = mode;
 }
@@ -581,6 +598,11 @@ void EditorApp::drawScreensTab()
             drawScopedEditHeader("Editing Screen Doors", true, true);
             ImGui::Separator();
             doorPlacementEditor_.draw(context_);
+            break;
+        case ScreenEditMode::ChapterExits:
+            drawScopedEditHeader("Editing Chapter Exits", true, true);
+            ImGui::Separator();
+            chapterExitEditor_.draw(context_);
             break;
         case ScreenEditMode::Npcs:
             drawScopedEditHeader("Editing Screen NPCs", true, true);
@@ -1062,6 +1084,9 @@ void EditorApp::exitScreenModeSaving()
         case ScreenEditMode::Doors:
             doorPlacementEditor_.saveForScreen(context_);
             break;
+        case ScreenEditMode::ChapterExits:
+            chapterExitEditor_.saveForScreen(context_);
+            break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);
             if (spriteEditorLaunchedFromCharacter_) {
@@ -1121,6 +1146,10 @@ void EditorApp::exitScreenModeDiscarding()
         case ScreenEditMode::Doors:
             context_.selectedScreenDoors = doorPlacementSnapshot_;
             doorPlacementEditor_.openForScreen(context_);
+            break;
+        case ScreenEditMode::ChapterExits:
+            context_.selectedScreenChapterExits = chapterExitSnapshot_;
+            chapterExitEditor_.openForScreen(context_);
             break;
         case ScreenEditMode::Sprite:
             spriteEditor_.resetDocumentBuffers();
@@ -1791,6 +1820,9 @@ void EditorApp::saveActiveEditingScope()
         case ScreenEditMode::Doors:
             doorPlacementEditor_.saveForScreen(context_);
             break;
+        case ScreenEditMode::ChapterExits:
+            chapterExitEditor_.saveForScreen(context_);
+            break;
         case ScreenEditMode::Sprite:
             spriteEditor_.saveForChapter(context_);
             if (spriteEditorLaunchedFromCharacter_) {
@@ -1848,7 +1880,7 @@ void EditorApp::launchGame(bool fresh, const std::string& startScreen, bool from
         return;
     }
 
-    const std::filesystem::path chapterPath = std::filesystem::absolute(
+    std::filesystem::path chapterPath = std::filesystem::absolute(
         projectRoot / context_.assets.gameChapters / (context_.currentChapterId + ".adchapter"),
         error);
     if (!std::filesystem::exists(chapterPath, error)) {
@@ -1879,14 +1911,25 @@ void EditorApp::launchGame(bool fresh, const std::string& startScreen, bool from
             return;
         }
         std::string key;
+        std::string cpChapter;
         std::string cpScreen;
         float cpX = -1.0f;
         float cpY = -1.0f;
         while (in >> key) {
-            if (key == "screen") {
+            if (key == "chapter") {
+                in >> cpChapter;
+            } else if (key == "screen") {
                 in >> cpScreen;
             } else if (key == "pos") {
                 in >> cpX >> cpY;
+            }
+        }
+        if (!cpChapter.empty()) {
+            chapterPath = std::filesystem::absolute(
+                projectRoot / context_.assets.gameChapters / (cpChapter + ".adchapter"), error);
+            if (!std::filesystem::exists(chapterPath, error)) {
+                playStatus_ = "Checkpoint chapter file not found: " + chapterPath.string();
+                return;
             }
         }
         if (cpScreen.empty()) {

@@ -112,12 +112,31 @@ void GameState::markEnemyDefeated(const std::string& key)
     }
 }
 
+void GameState::setLocation(const std::string& chapterId, const std::string& screenId, float x, float y)
+{
+    chapterId_ = chapterId;
+    screenId_ = screenId;
+    playerX_ = x;
+    playerY_ = y;
+    hasLocation_ = !chapterId_.empty() && !screenId_.empty();
+}
+
+void GameState::clearLocation()
+{
+    chapterId_.clear();
+    screenId_.clear();
+    playerX_ = 0.0f;
+    playerY_ = 0.0f;
+    hasLocation_ = false;
+}
+
 void GameState::clear()
 {
     ints_.clear();
     bools_.clear();
     items_.clear();
     defeatedEnemies_.clear();
+    clearLocation();
 }
 
 bool saveGameState(const std::filesystem::path& path, const GameState& state, std::string* errorMessage)
@@ -152,7 +171,12 @@ bool saveGameState(const std::filesystem::path& path, const GameState& state, st
         return false;
     }
 
-    output << "ADSTATE 2\n";
+    output << "ADSTATE 3\n";
+
+    if (state.hasLocation()) {
+        output << "location " << state.chapterId() << ' ' << state.screenId()
+               << ' ' << state.playerX() << ' ' << state.playerY() << "\n";
+    }
 
     const std::vector<std::string> intKeys = sortedKeys(state.ints());
     output << "ints " << intKeys.size() << "\n";
@@ -193,7 +217,7 @@ bool loadGameState(const std::filesystem::path& path, GameState& state, std::str
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADSTATE" || version < 1 || version > 2) {
+    if (magic != "ADSTATE" || version < 1 || version > 3) {
         setError(errorMessage, "Unsupported game state file.");
         return false;
     }
@@ -204,6 +228,17 @@ bool loadGameState(const std::filesystem::path& path, GameState& state, std::str
         if (key == "ints" || key == "bools" || key == "items" || key == "defeated") {
             std::size_t ignoredCount = 0;
             input >> ignoredCount;
+        } else if (key == "location" && version >= 3) {
+            std::string chapterId;
+            std::string screenId;
+            float x = 0.0f;
+            float y = 0.0f;
+            input >> chapterId >> screenId >> x >> y;
+            if (!validToken(chapterId) || !validToken(screenId)) {
+                setError(errorMessage, "Invalid saved location.");
+                return false;
+            }
+            loaded.setLocation(chapterId, screenId, x, y);
         } else if (key == "defeated_enemy") {
             std::string enemyKey;
             input >> enemyKey;

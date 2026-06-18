@@ -1257,6 +1257,7 @@ void MapEditorPanel::saveMap(EditorContext& context)
     if (game::loadTileMap(outputPath, existing, nullptr)) {
         map.items = std::move(existing.items);
         map.doors = std::move(existing.doors);
+        map.chapterExits = std::move(existing.chapterExits);
     }
 
     map.tilesetId = tilesetId_.data();
