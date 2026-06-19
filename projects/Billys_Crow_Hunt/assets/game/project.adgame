@@ -2,8 +2,8 @@ ADGAME 16
 id game
 playable billy
 characters 2
-character billy
 character grandma_spelling
+character billy
 chapters 1
 chapter Farm_House
 enemy_types 2

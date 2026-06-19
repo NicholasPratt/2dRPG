@@ -36,6 +36,7 @@ private:
         Weapons,
         Items,
         QuestState,
+        Synopsis,
         Layout,
         Tilesets,
         WallFloorPaint,
@@ -99,6 +100,8 @@ private:
     std::vector<std::string> projectIds_;
     std::vector<std::string> chapterIds_;
     bool showProjectManager_ = false;
+    bool showCreateChapter_ = false;
+    std::string createChapterError_;
     std::string projectPendingDelete_;
     bool pendingProjectSwitch_ = false;
     std::string pendingProjectId_;
@@ -108,6 +111,7 @@ private:
 
     void drawStartupChapterModal();
     void drawProjectManagerWindow();
+    void drawCreateChapterModal();
     void drawDeleteProjectConfirm();
     void drawUnsavedChangesModal();
     void drawChapterMenu();
@@ -138,6 +142,7 @@ private:
     void drawScreensTab();
     void drawProjectStateTab(bool pickerMode = false);
     void drawProjectItemsTab();
+    void drawChapterSynopsisTab();
     void drawScopedEditHeader(const char* title, bool saveAndExit, bool exitWithoutSaving);
     void exitScreenModeSaving();
     void exitScreenModeDiscarding();

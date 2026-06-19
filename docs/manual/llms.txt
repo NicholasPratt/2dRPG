@@ -25,6 +25,7 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 - Choose playable character / edit sprite → Characters tab → Playable + Edit Sprite  (R12)
 - Attack/hurt/death animations → add sprite frames labelled attack_1/cast/hit_react/death/hurt/dead  (R13)
 - Add & link a screen → Screen Layout tab directional N/S/E/W controls  (R14)
+- Plan or summarize chapters → Chapter Synopsis tab. Project variables appear at the top; each chapter has editable synopsis text and lists its chapter-scoped variable names.
 - Link to another chapter → Screen Layout → select screen → Edit Chapter Exits. Choose activation, condition, target chapter/screen, and pick the destination tile. Use Create Chapter there to create and select a new destination chapter, first map, and chapter dialogue folder.
 - Quickly test current screen → Play Selected Screen (fresh launch)  (R15)
 - Tune combat feel globally → constants in src/game/engine.cpp (rebuild)  (R16)
@@ -48,7 +49,7 @@ The most useful section for "how do I…" questions is the numbered recipes (R1�
 
 ## Key concepts
 - Tiles 16x16, screens 48x32 tiles. Chapters = grids of linked screens.
-- Reusable assets live in project.adgame; dialogue trees are chapter-scoped.
+- Reusable assets and chapter synopsis text live in project.adgame; dialogue trees are chapter-scoped.
 - Game state registry: named ints/bools/items; quests, kills, money, dialogue all route through it.
   Variable names are designer-authored, never hard-coded. Money = integer var "Money".
 - Dialogue interpolation: `$Variable_Id` displays live integer or boolean state in dialogue, choices, speaker text, fallback lines, and timed speech. Use `${Variable.With-Dots}` for IDs containing dots/hyphens. Chapter-scoped values take precedence; unknown placeholders remain visible; `$$` escapes `$`.

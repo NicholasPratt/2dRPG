@@ -71,6 +71,12 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
             return false;
         }
     }
+    for (const ChapterSynopsisDef& synopsis : project.chapterSynopses) {
+        if (!validToken(synopsis.chapterId)) {
+            setError(errorMessage, "Chapter synopsis id is invalid: " + synopsis.chapterId);
+            return false;
+        }
+    }
     for (const GameEffectDef& effect : project.effectDefs) {
         if (!validToken(effect.id) || effect.targetId.empty() || !validToken(effect.targetId)) {
             setError(errorMessage, "Effect definition is invalid: " + effect.id);
@@ -87,7 +93,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 16\n";
+    output << "ADGAME 17\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -97,6 +103,10 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
     output << "chapters " << project.chapterIds.size() << "\n";
     for (const std::string& id : project.chapterIds) {
         output << "chapter " << id << "\n";
+    }
+    output << "chapter_synopses " << project.chapterSynopses.size() << "\n";
+    for (const ChapterSynopsisDef& synopsis : project.chapterSynopses) {
+        output << "chapter_synopsis " << synopsis.chapterId << ' ' << std::quoted(synopsis.text) << "\n";
     }
     output << "enemy_types " << project.enemyTypes.size() << "\n";
     for (const EnemyType& type : project.enemyTypes) {
@@ -246,7 +256,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 16) {
+    if (magic != "ADGAME" || version < 1 || version > 17) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -280,6 +290,16 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             input >> id;
             if (!id.empty()) {
                 loaded.chapterIds.push_back(id);
+            }
+        } else if (version >= 17 && key == "chapter_synopses") {
+            std::size_t count = 0;
+            input >> count;
+            loaded.chapterSynopses.reserve(count);
+        } else if (version >= 17 && key == "chapter_synopsis") {
+            ChapterSynopsisDef synopsis;
+            input >> synopsis.chapterId >> std::quoted(synopsis.text);
+            if (!synopsis.chapterId.empty()) {
+                loaded.chapterSynopses.push_back(std::move(synopsis));
             }
         } else if (version >= 2 && key == "enemy_types") {
             std::size_t count = 0;

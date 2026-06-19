@@ -451,6 +451,11 @@ int main(int argc, char** argv)
     weaponDef.aimConeDegrees = 40.0f;
     weaponDef.attackAnimState = "attack_20";
     project.weaponDefs.push_back(weaponDef);
+    project.chapterIds.push_back("chapter_smoke");
+    adventure::game::ChapterSynopsisDef synopsis;
+    synopsis.chapterId = "chapter_smoke";
+    synopsis.text = "The hero reaches the farm.\nA crow steals the key.";
+    project.chapterSynopses.push_back(synopsis);
     const std::filesystem::path projectSmokePath = "build/smoke_project.adgame";
     if (!adventure::game::saveGameProject(projectSmokePath, project, &error)) {
         std::cerr << "Failed to save project smoke file: " << error << "\n";
@@ -466,7 +471,10 @@ int main(int argc, char** argv)
         loadedProject.effectDefs.front().targetId != "Example_Count" ||
         loadedProject.effectDefs.front().scope != adventure::game::StateVariableScope::Chapter ||
         loadedProject.stateVariables.front().scope != adventure::game::StateVariableScope::Chapter ||
-        loadedProject.stateVariables.front().chapterId != "chapter_smoke") {
+        loadedProject.stateVariables.front().chapterId != "chapter_smoke" ||
+        loadedProject.chapterSynopses.size() != 1 ||
+        loadedProject.chapterSynopses.front().chapterId != "chapter_smoke" ||
+        loadedProject.chapterSynopses.front().text != synopsis.text) {
         std::cerr << "Project state/effect definition round-trip values did not match.\n";
         return 1;
     }
@@ -513,6 +521,6 @@ int main(int argc, char** argv)
         std::cerr << "Weapon ranged-feel stat round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped scoped state/event/NPC rule definitions (ADGAME v16)\n";
+    std::cout << "Round-tripped scoped state/event/NPC rules and chapter synopses (ADGAME v17)\n";
     return 0;
 }

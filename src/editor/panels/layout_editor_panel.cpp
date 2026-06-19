@@ -5,6 +5,7 @@
 #include "stb_image.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <system_error>
@@ -168,6 +169,10 @@ void LayoutEditorPanel::drawToolbar(EditorContext& context)
         context.requestedChapterSwitchId = chapterId_.data();
         context.requestChapterSwitch = true;
     }
+    ImGui::SameLine();
+    if (ImGui::Button("New chapter...")) {
+        context.requestCreateChapter = true;
+    }
 
     ImGui::TextWrapped("Chapter files: %s", context.assets.gameChapterPath().string().c_str());
     ImGui::TextDisabled("A chapter is a macro layout of linked screens. Each screen points at one .admap.");
@@ -255,6 +260,7 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->AddRectFilled(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, IM_COL32(29, 32, 37, 255));
+    drawList->PushClipRect(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, true);
 
     const ImVec2 center{origin.x + canvasSize.x * 0.5f, origin.y + canvasSize.y * 0.5f};
     int selectedGridX = 0;
@@ -310,18 +316,33 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         }
         if (selected && layoutShapeDragging_ && layoutShapeMapId_ == screen.mapId) {
             const ImVec2 mouse = ImGui::GetIO().MousePos;
-            layoutShapeX1_ = std::clamp(static_cast<int>((mouse.x - min.x) / tileSize), 0, map.width - 1);
-            layoutShapeY1_ = std::clamp(static_cast<int>((mouse.y - min.y) / tileSize), 0, map.height - 1);
-            drawLayoutShapePreview(drawList, min, tileSize);
+            const int tileX = std::clamp(static_cast<int>(std::floor((mouse.x - min.x) / tileSize)), 0, map.width - 1);
+            const int tileY = std::clamp(static_cast<int>(std::floor((mouse.y - min.y) / tileSize)), 0, map.height - 1);
 
             const ImGuiMouseButton button = layoutShapeErase_ ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
+            if (layoutDragTool_ == LayoutPaintTool::Brush) {
+                if (ImGui::IsMouseDown(button) && (tileX != layoutShapeX1_ || tileY != layoutShapeY1_)) {
+                    layoutShapeX0_ = layoutShapeX1_;
+                    layoutShapeY0_ = layoutShapeY1_;
+                    layoutShapeX1_ = tileX;
+                    layoutShapeY1_ = tileY;
+                    paintLayoutLine(map, layoutDragLayer_, layoutShapeErase_ ? 0u : layoutDragTileId_);
+                    dirtyMapIds_.insert(screen.mapId);
+                    context.markDirty();
+                }
+            } else {
+                layoutShapeX1_ = tileX;
+                layoutShapeY1_ = tileY;
+                drawLayoutShapePreview(drawList, min, tileSize);
+            }
+
             if (ImGui::IsMouseReleased(button)) {
-                const std::uint16_t tileId = layoutShapeErase_ ? 0u : layoutSelectedTileId_;
-                if (layoutPaintTool_ == LayoutPaintTool::WallLine) {
-                    paintLayoutWallLine(map, tileId);
+                const std::uint16_t tileId = layoutShapeErase_ ? 0u : layoutDragTileId_;
+                if (layoutDragTool_ == LayoutPaintTool::WallLine) {
+                    paintLayoutLine(map, layoutDragLayer_, tileId);
                     status_ = std::string(layoutShapeErase_ ? "Erased" : "Drew") + " wall line on " + screen.mapId + ".";
-                } else {
-                    paintLayoutWallRect(map, tileId);
+                } else if (layoutDragTool_ == LayoutPaintTool::WallRect) {
+                    paintLayoutRect(map, layoutDragLayer_, tileId);
                     status_ = std::string(layoutShapeErase_ ? "Erased" : "Drew") + " wall rectangle on " + screen.mapId + ".";
                 }
                 layoutShapeDragging_ = false;
@@ -331,30 +352,36 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         }
         if (selected && ImGui::IsItemHovered()) {
             const ImVec2 mouse = ImGui::GetIO().MousePos;
-            const int tileX = std::clamp(static_cast<int>((mouse.x - min.x) / tileSize), 0, map.width - 1);
-            const int tileY = std::clamp(static_cast<int>((mouse.y - min.y) / tileSize), 0, map.height - 1);
+            const int tileX = std::clamp(static_cast<int>(std::floor((mouse.x - min.x) / tileSize)), 0, map.width - 1);
+            const int tileY = std::clamp(static_cast<int>(std::floor((mouse.y - min.y) / tileSize)), 0, map.height - 1);
             const ImVec2 hoverMin{min.x + static_cast<float>(tileX) * tileSize, min.y + static_cast<float>(tileY) * tileSize};
             drawList->AddRect(hoverMin, {hoverMin.x + tileSize, hoverMin.y + tileSize}, IM_COL32(255, 255, 255, 220), 0.0f, 0, 2.0f);
             const bool shapeTool = layoutPaintTool_ == LayoutPaintTool::WallLine ||
                 layoutPaintTool_ == LayoutPaintTool::WallRect;
             ImGui::SetTooltip("%s [%d,%d] %s", screen.mapId.c_str(), tileX, tileY,
                 shapeTool ? "wall shape" : "brush");
-            if (!shapeTool && (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right))) {
-                const std::size_t index = static_cast<std::size_t>(tileY) * static_cast<std::size_t>(map.width) + static_cast<std::size_t>(tileX);
-                map.layers[static_cast<std::size_t>(layoutActiveLayer_)][index] =
-                    ImGui::IsMouseDown(ImGuiMouseButton_Right) ? 0u : layoutSelectedTileId_;
-                dirtyMapIds_.insert(screen.mapId);
-                context.markDirty();
-            } else if (shapeTool && !layoutShapeDragging_) {
+            if (!layoutShapeDragging_) {
                 const bool leftClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
                 const bool rightClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
                 if (leftClicked || rightClicked) {
-                    layoutActiveLayer_ = 1;
+                    if (shapeTool) {
+                        layoutActiveLayer_ = 1;
+                    }
                     layoutShapeDragging_ = true;
                     layoutShapeErase_ = rightClicked;
+                    layoutDragTool_ = layoutPaintTool_;
+                    layoutDragLayer_ = layoutActiveLayer_;
+                    layoutDragTileId_ = layoutSelectedTileId_;
                     layoutShapeMapId_ = screen.mapId;
                     layoutShapeX0_ = layoutShapeX1_ = tileX;
                     layoutShapeY0_ = layoutShapeY1_ = tileY;
+                    if (!shapeTool) {
+                        const std::size_t index = static_cast<std::size_t>(tileY) * static_cast<std::size_t>(map.width) + static_cast<std::size_t>(tileX);
+                        map.layers[static_cast<std::size_t>(layoutDragLayer_)][index] =
+                            layoutShapeErase_ ? 0u : layoutDragTileId_;
+                        dirtyMapIds_.insert(screen.mapId);
+                        context.markDirty();
+                    }
                 }
             }
         }
@@ -363,6 +390,7 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
         }
         ImGui::PopID();
     }
+    drawList->PopClipRect();
 }
 
 void LayoutEditorPanel::drawLayoutShapePreview(ImDrawList* drawList, ImVec2 min, float tileSize) const
@@ -378,7 +406,7 @@ void LayoutEditorPanel::drawLayoutShapePreview(ImDrawList* drawList, ImVec2 min,
         drawList->AddRect(cellMin, {cellMin.x + tileSize, cellMin.y + tileSize}, border, 0.0f, 0, 2.0f);
     };
 
-    if (layoutPaintTool_ == LayoutPaintTool::WallLine) {
+    if (layoutDragTool_ == LayoutPaintTool::WallLine) {
         int x = layoutShapeX0_;
         int y = layoutShapeY0_;
         const int dx = std::abs(layoutShapeX1_ - x);
@@ -422,8 +450,9 @@ void LayoutEditorPanel::drawLayoutShapePreview(ImDrawList* drawList, ImVec2 min,
     }
 }
 
-void LayoutEditorPanel::paintLayoutWallLine(game::TileMap& map, std::uint16_t tileId)
+void LayoutEditorPanel::paintLayoutLine(game::TileMap& map, int layer, std::uint16_t tileId)
 {
+    const std::size_t layerIndex = static_cast<std::size_t>(std::clamp(layer, 0, 2));
     int x = layoutShapeX0_;
     int y = layoutShapeY0_;
     const int dx = std::abs(layoutShapeX1_ - x);
@@ -432,7 +461,7 @@ void LayoutEditorPanel::paintLayoutWallLine(game::TileMap& map, std::uint16_t ti
     const int sy = y < layoutShapeY1_ ? 1 : -1;
     int error = dx + dy;
     for (;;) {
-        map.layers[1][static_cast<std::size_t>(y * map.width + x)] = tileId;
+        map.layers[layerIndex][static_cast<std::size_t>(y * map.width + x)] = tileId;
         if (x == layoutShapeX1_ && y == layoutShapeY1_) {
             break;
         }
@@ -448,19 +477,20 @@ void LayoutEditorPanel::paintLayoutWallLine(game::TileMap& map, std::uint16_t ti
     }
 }
 
-void LayoutEditorPanel::paintLayoutWallRect(game::TileMap& map, std::uint16_t tileId)
+void LayoutEditorPanel::paintLayoutRect(game::TileMap& map, int layer, std::uint16_t tileId)
 {
+    const std::size_t layerIndex = static_cast<std::size_t>(std::clamp(layer, 0, 2));
     const int left = std::min(layoutShapeX0_, layoutShapeX1_);
     const int right = std::max(layoutShapeX0_, layoutShapeX1_);
     const int top = std::min(layoutShapeY0_, layoutShapeY1_);
     const int bottom = std::max(layoutShapeY0_, layoutShapeY1_);
     for (int x = left; x <= right; ++x) {
-        map.layers[1][static_cast<std::size_t>(top * map.width + x)] = tileId;
-        map.layers[1][static_cast<std::size_t>(bottom * map.width + x)] = tileId;
+        map.layers[layerIndex][static_cast<std::size_t>(top * map.width + x)] = tileId;
+        map.layers[layerIndex][static_cast<std::size_t>(bottom * map.width + x)] = tileId;
     }
     for (int y = top; y <= bottom; ++y) {
-        map.layers[1][static_cast<std::size_t>(y * map.width + left)] = tileId;
-        map.layers[1][static_cast<std::size_t>(y * map.width + right)] = tileId;
+        map.layers[layerIndex][static_cast<std::size_t>(y * map.width + left)] = tileId;
+        map.layers[layerIndex][static_cast<std::size_t>(y * map.width + right)] = tileId;
     }
 }
 
@@ -1167,6 +1197,10 @@ bool LayoutEditorPanel::loadChapterById(EditorContext& context, const std::strin
     }
 
     chapter_ = std::move(loaded);
+    loadedMaps_.clear();
+    dirtyMapIds_.clear();
+    graphicsPreviews_.clear();
+    layoutShapeDragging_ = false;
     selectedScreen_ = 0;
     syncChapterIdBuffer();
     context.currentChapterId = chapter_.id;
@@ -1194,9 +1228,13 @@ void LayoutEditorPanel::createChapter(EditorContext& context, const std::string&
     chapter_.id = chapterId.empty() ? "chapter_1" : chapterId;
     game::ChapterScreen firstScreen;
     firstScreen.id = "screen_1";
-    firstScreen.mapId = "screen_1_map";
+    firstScreen.mapId = chapter_.id + "_screen_1_map";
     chapter_.screens = {std::move(firstScreen)};
     chapter_.startScreenId = chapter_.screens.front().id;
+    loadedMaps_.clear();
+    dirtyMapIds_.clear();
+    graphicsPreviews_.clear();
+    layoutShapeDragging_ = false;
     selectedScreen_ = 0;
     syncChapterIdBuffer();
     context.currentChapterId = chapter_.id;

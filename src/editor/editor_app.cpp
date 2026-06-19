@@ -3,6 +3,7 @@
 #include "editor/imgui_widgets.hpp"
 
 #include "imgui.h"
+#include "misc/cpp/imgui_stdlib.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -240,6 +241,7 @@ void EditorApp::draw()
     }
 
     drawProjectManagerWindow();
+    drawCreateChapterModal();
 
     if (context_.requestVariablePicker) {
         context_.requestVariablePicker = false;
@@ -260,6 +262,12 @@ void EditorApp::draw()
         context_.requestChapterSwitch = false;
         requestChapterSwitch(context_.requestedChapterSwitchId);
         context_.requestedChapterSwitchId.clear();
+    }
+    if (context_.requestCreateChapter) {
+        context_.requestCreateChapter = false;
+        createChapterError_.clear();
+        showCreateChapter_ = true;
+        ImGui::OpenPopup("Create Chapter");
     }
 
     if (context_.requestEditScreenGraphics) {
@@ -440,6 +448,15 @@ void EditorApp::draw()
                     hasRequestedTab_ = false;
                 }
                 drawProjectStateTab();
+                ImGui::EndTabItem();
+            }
+
+            ImGuiTabItemFlags synopsisTabFlags = hasRequestedTab_ && requestedTab_ == MainTab::Synopsis ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Chapter Synopsis", nullptr, synopsisTabFlags)) {
+                if (synopsisTabFlags != 0) {
+                    hasRequestedTab_ = false;
+                }
+                drawChapterSynopsisTab();
                 ImGui::EndTabItem();
             }
         }
@@ -862,6 +879,69 @@ void EditorApp::drawProjectStateTab(bool pickerMode)
         context_.markDirty();
     }
     ImGui::Text("Font folder: %s", context_.assets.gameFontPath().string().c_str());
+}
+
+void EditorApp::drawChapterSynopsisTab()
+{
+    ImGui::TextUnformatted("Project Variables");
+    bool hasProjectVariables = false;
+    for (const game::StateVariableDef& variable : context_.stateVariables) {
+        if (variable.scope == game::StateVariableScope::Universal) {
+            ImGui::BulletText("%s", variable.id.c_str());
+            hasProjectVariables = true;
+        }
+    }
+    if (!hasProjectVariables) {
+        ImGui::TextDisabled("No project variables.");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (chapterIds_.empty()) {
+        ImGui::TextDisabled("No chapters in this project.");
+        return;
+    }
+
+    for (const std::string& chapterId : chapterIds_) {
+        auto synopsisIt = std::find_if(
+            context_.chapterSynopses.begin(),
+            context_.chapterSynopses.end(),
+            [&chapterId](const game::ChapterSynopsisDef& synopsis) {
+                return synopsis.chapterId == chapterId;
+            });
+        if (synopsisIt == context_.chapterSynopses.end()) {
+            context_.chapterSynopses.push_back({chapterId, {}});
+            synopsisIt = std::prev(context_.chapterSynopses.end());
+        }
+
+        ImGui::PushID(chapterId.c_str());
+        if (ImGui::CollapsingHeader(chapterId.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted("Synopsis");
+            if (ImGui::InputTextMultiline(
+                    "##Synopsis",
+                    &synopsisIt->text,
+                    ImVec2(-1.0f, 120.0f))) {
+                context_.markDirty();
+            }
+
+            ImGui::TextUnformatted("Chapter Variables");
+            bool hasChapterVariables = false;
+            for (const game::StateVariableDef& variable : context_.stateVariables) {
+                if (variable.scope == game::StateVariableScope::Chapter &&
+                    variable.chapterId == chapterId) {
+                    ImGui::BulletText("%s", variable.id.c_str());
+                    hasChapterVariables = true;
+                }
+            }
+            if (!hasChapterVariables) {
+                ImGui::TextDisabled("No variables assigned to this chapter.");
+            }
+        }
+        ImGui::PopID();
+        ImGui::Spacing();
+    }
 }
 
 void EditorApp::drawProjectItemsTab()
@@ -1358,6 +1438,7 @@ void EditorApp::loadProjectMetadata()
         context_.startingWeaponId = project.startingWeaponId;
         context_.stateVariables = project.stateVariables;
         context_.effectDefs = project.effectDefs;
+        context_.chapterSynopses = project.chapterSynopses;
         context_.npcTypes = project.npcTypes;
         context_.fontPath = project.fontPath;
     } else {
@@ -1369,6 +1450,7 @@ void EditorApp::loadProjectMetadata()
         context_.startingWeaponId.clear();
         context_.stateVariables.clear();
         context_.effectDefs.clear();
+        context_.chapterSynopses.clear();
         context_.npcTypes.clear();
         context_.fontPath.clear();
     }
@@ -1390,8 +1472,10 @@ void EditorApp::saveProjectMetadata()
     project.weaponDefs = context_.weaponDefs;
     project.itemDefs = context_.itemDefs;
     project.startingWeaponId = context_.startingWeaponId;
+    project.chapterIds = chapterIds_;
     project.stateVariables = context_.stateVariables;
     project.effectDefs = context_.effectDefs;
+    project.chapterSynopses = context_.chapterSynopses;
     project.npcTypes = context_.npcTypes;
     project.fontPath = context_.fontPath;
     (void)game::saveGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr);
@@ -1421,6 +1505,11 @@ void EditorApp::drawChapterMenu()
             if (ImGui::MenuItem("Save")) {
                 saveCurrentChapterAndExports();
             }
+            if (ImGui::MenuItem("New Chapter...")) {
+                createChapterError_.clear();
+                showCreateChapter_ = true;
+                ImGui::OpenPopup("Create Chapter");
+            }
             if (ImGui::MenuItem("Save and Play Game")) {
                 launchGame();
             }
@@ -1445,6 +1534,52 @@ void EditorApp::drawChapterMenu()
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
+    }
+}
+
+void EditorApp::drawCreateChapterModal()
+{
+    if (!showCreateChapter_) {
+        return;
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(
+        {viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f},
+        ImGuiCond_Appearing, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({420.0f, 0.0f}, ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Create Chapter", &showCreateChapter_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Create another chapter in project: %s", currentProjectId_.c_str());
+        ImGui::TextDisabled("A first screen and map will be created automatically.");
+        ImGui::SetNextItemWidth(260.0f);
+        ui::inputTextString("Chapter name##new", newChapterId_.data(), newChapterId_.size());
+
+        if (!createChapterError_.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", createChapterError_.c_str());
+        }
+
+        if (ImGui::Button("Create", ImVec2(120.0f, 32.0f))) {
+            const std::string chapterId = sanitizedId(newChapterId_.data(), "chapter_1");
+            refreshChapterList();
+            if (std::find(chapterIds_.begin(), chapterIds_.end(), chapterId) != chapterIds_.end()) {
+                createChapterError_ = "A chapter named '" + chapterId + "' already exists.";
+            } else {
+                if (context_.dirty) {
+                    saveCurrentChapterAndExports();
+                }
+                std::memset(newChapterId_.data(), 0, newChapterId_.size());
+                std::memcpy(newChapterId_.data(), chapterId.data(), std::min(chapterId.size(), newChapterId_.size() - 1));
+                createChapter();
+                showCreateChapter_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 32.0f))) {
+            showCreateChapter_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 

@@ -154,6 +154,11 @@ struct NpcTypeDef {
     std::vector<NpcStateRule> stateRules;
 };
 
+struct ChapterSynopsisDef {
+    std::string chapterId;
+    std::string text;
+};
+
 struct GameProject {
     std::string id = "game";
     std::string playableCharacterId;
@@ -167,6 +172,7 @@ struct GameProject {
     std::vector<StateVariableDef> stateVariables;
     std::vector<GameEffectDef> effectDefs;
     std::vector<NpcTypeDef> npcTypes;
+    std::vector<ChapterSynopsisDef> chapterSynopses;
 };
 
 [[nodiscard]] bool saveGameProject(const std::filesystem::path& path, const GameProject& project, std::string* errorMessage = nullptr);

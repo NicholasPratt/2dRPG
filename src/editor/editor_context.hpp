@@ -73,6 +73,7 @@ struct EditorContext {
     bool requestEditSprite = false;
     bool requestEditDialogueGraph = false;
     bool requestChapterSwitch = false;
+    bool requestCreateChapter = false;
     std::vector<TilePaletteEntry> tilePalette;
     std::vector<ChapterScreenEntry> chapterScreens;
     std::vector<game::EnemyPlacement> selectedScreenEnemies;
@@ -82,6 +83,7 @@ struct EditorContext {
     std::vector<game::ItemDef> itemDefs;
     std::vector<game::StateVariableDef> stateVariables;
     std::vector<game::GameEffectDef> effectDefs;
+    std::vector<game::ChapterSynopsisDef> chapterSynopses;
     std::string startingWeaponId;
     std::string fontPath;
     std::vector<game::MapItemPlacement> selectedScreenItems;

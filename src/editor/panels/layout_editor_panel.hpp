@@ -39,6 +39,9 @@ private:
     LayoutPaintTool layoutPaintTool_ = LayoutPaintTool::Brush;
     bool layoutShapeDragging_ = false;
     bool layoutShapeErase_ = false;
+    LayoutPaintTool layoutDragTool_ = LayoutPaintTool::Brush;
+    int layoutDragLayer_ = 1;
+    std::uint16_t layoutDragTileId_ = 1;
     std::string layoutShapeMapId_;
     int layoutShapeX0_ = 0;
     int layoutShapeY0_ = 0;
@@ -69,8 +72,8 @@ private:
     void drawMapTiles(ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize, bool selected) const;
     void drawWallOutlines(ImDrawList* drawList, const game::TileMap& map, ImVec2 min, float tileSize, ImU32 color) const;
     void drawLayoutShapePreview(ImDrawList* drawList, ImVec2 min, float tileSize) const;
-    void paintLayoutWallLine(game::TileMap& map, std::uint16_t tileId);
-    void paintLayoutWallRect(game::TileMap& map, std::uint16_t tileId);
+    void paintLayoutLine(game::TileMap& map, int layer, std::uint16_t tileId);
+    void paintLayoutRect(game::TileMap& map, int layer, std::uint16_t tileId);
     void drawScreenInspector(EditorContext& context);
     void drawMusicFilePicker(EditorContext& context, game::ChapterScreen& screen);
     void drawWalkingSfxFilePicker(EditorContext& context, game::ChapterScreen& screen);

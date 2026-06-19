@@ -78,7 +78,7 @@ imgui                    Static Dear ImGui library.
 adventure_game           Runtime-facing game/data code (chapter, dialogue graph, project, map, path, sprite metadata, state, tileset).
 adventure_editor         Editor library. Depends on imgui and adventure_game.
 adventure_editor_smoke   Headless editor smoke executable.
-adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate, scoped dialogue conditions/actions, and project state/event/NPC-rule definitions (ADGAME v16).
+adventure_game_smoke     Loads .admap, .adchapter, optional .sprite.json, and round-trips .adpath, .adstate, scoped dialogue conditions/actions, project state/event/NPC-rule definitions, and chapter synopses (ADGAME v17).
 adventure_game_window    GLFW/OpenGL runtime game window with SDL2/Vorbis music (built when OpenGL, GLFW, SDL2, and Vorbisfile are found).
 adventure_editor_window  GLFW/OpenGL editor window (built when OpenGL + GLFW found).
 ```
@@ -141,6 +141,7 @@ On startup, `EditorApp` opens an `Open Project` modal. The user selects an exist
 | Weapons | `WeaponEditorPanel` | Create/edit project-level WeaponDefs (melee + ranged) and set starting weapon |
 | Items | inline `EditorApp` project-items view | Create/edit project-level ItemDefs and seed common RPG item defaults |
 | Quest State | inline `EditorApp` project-state view | Create/edit designer-defined state variables and reusable effects |
+| Chapter Synopsis | inline `EditorApp` synopsis view | Edit per-chapter planning text; review Universal and chapter-scoped variable names |
 | Screen Layout | `LayoutEditorPanel` | Continuous chapter screen grid, selected-screen tile editing, add/link/delete screens |
 | Tilesets | `TilesetEditorPanel` | Generate tileset definitions from source PNG |
 | Assets | *(inline)* | Asset directory listing |
@@ -247,19 +248,22 @@ struct GameProject {
     std::vector<StateVariableDef> stateVariables;
     std::vector<GameEffectDef> effectDefs;
     std::vector<NpcTypeDef> npcTypes;
+    std::vector<ChapterSynopsisDef> chapterSynopses;
 };
 ```
 
-Format (ADGAME 16):
+Format (ADGAME 17):
 
 ```text
-ADGAME 16
+ADGAME 17
 id game
 playable hero
 characters 1
 character hero
 chapters 1
 chapter chapter_1
+chapter_synopses 1
+chapter_synopsis chapter_1 "The hero reaches the farm and a crow steals the key."
 enemy_types 1
 enemy_type crow enemy_1 3 1 12.0 12.0 1.0 64.0 0.25 0.2 120.0 Crows_Killed 1 1
 enemy_attack 2 1 200.0 2.0 120.0 attack_1 ammo_stone
@@ -293,7 +297,9 @@ Ranged feel stats (`WeaponDef`, ADGAME v14+) let one stat block express differen
 - **Auto-aim:** living enemies within weapon range and inside `aimConeDegrees` (full angle, centred on player facing) are selectable targets; `<= 0` disables auto-aim.
 - Archetype examples — slingshot: charge 1.2 s, damage ×0.5→×2.0, overhold WildShot or Break, Rebound walls; shotgun: instant, 6 pellets, ~25° spread, falloff 48→160 px to ×0.2; sniper: steady 1.5 s, spread 18°→0°, narrow cone, no falloff.
 
-Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs), v9 (weapon projectile sprites/ammo-per-shot), v10 (item_defs), v11 (NPC shop inventory), v12 (enemy knockback resistance, hitstun, aggro range, kill-counter variable/amount), v13 (weapon projectile wall behavior), v14 (ranged feel stats), v15 (per-weapon attack animation), v16 (scoped variables/effects, event hooks, NPC state rules).
+`chapter_synopsis` stores the chapter ID followed by `std::quoted` synopsis text. Spaces and actual line breaks inside the quoted value round-trip through the project file.
+
+Version history: v1 (id/playable), v2 (chapters + enemy_types), v3 (weapon_defs + starting_weapon), v4 (state_defs + effect_defs), v5 (npc_types), v6 (npc dialogue lines), v7 (font), v8 (enemy attack defs), v9 (weapon projectile sprites/ammo-per-shot), v10 (item_defs), v11 (NPC shop inventory), v12 (enemy knockback resistance, hitstun, aggro range, kill-counter variable/amount), v13 (weapon projectile wall behavior), v14 (ranged feel stats), v15 (per-weapon attack animation), v16 (scoped variables/effects, event hooks, NPC state rules), v17 (per-chapter synopsis text).
 
 Editor behavior:
 
@@ -306,6 +312,7 @@ Editor behavior:
 - The Quest State tab in `EditorApp` saves state variable definitions and reusable effect definitions into `project.adgame`.
 - Quest State uses a master-detail variable list. Variable-reference fields can open a type-filtered picker; Save and Return persists definitions, applies the selected ID/scope, and restores the prior editor screen.
 - ADGAME v16 adds Universal/Chapter variable scope, scoped reusable effects, item-acquire and enemy-defeat effect hooks, NPC talk effects, and first-match conditional NPC rules for dialogue graph, movement, visibility, following, animation, and activation effects. ADDIALOGUE v2 adds scope to variable conditions/actions.
+- The Chapter Synopsis tab reads the project chapter list, displays Universal variable IDs at the top, and shows an editable multiline synopsis plus matching Chapter-scoped variable IDs for each chapter. `EditorContext::chapterSynopses` is loaded and saved through ADGAME v17.
 - All panels that load project data track `lastLoadedProjectRoot_` and reload when the active project folder changes, preventing stale data from a previously opened project.
 
 Runtime behavior:

@@ -1,4 +1,4 @@
-ADMAP 11
+ADMAP 13
 id screen_2_map
 size 48 32
 spawn 47 5
@@ -111,4 +111,5 @@ item item_1 3 key 1 269.333 285.333 0 key
 item Health_Potion 2 - 10 616.667 122 0 Health_Potion
 item item_3 2 - 10 680.667 265.333 0 Health_Potion
 doors 0
+chapter_exits 0
 end

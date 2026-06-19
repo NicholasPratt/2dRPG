@@ -9,7 +9,7 @@ tile-based, screen-to-screen games. The repository includes the
 - Project and chapter management
 - 48 x 32 tile screens using 16 px tiles
 - Floor/wall painting, collision, hazards, destination/key doors, conditional cross-chapter exits, pickups, and stacked animated tiles
-- Character, sprite, weapon, enemy, NPC, shop, quest-state, and dialogue editors
+- Character, sprite, weapon, enemy, NPC, shop, quest-state, chapter-synopsis, and dialogue editors
 - Linear/spline actor paths with enter, timed speech, and leave waypoint actions
 - Sprite polygon drawing, frame drag-reordering, and repeatable/one-time pickup placement
 - Melee and ranged combat, enemy paths and aggro, inventory, shops, and saves
@@ -92,6 +92,11 @@ Dialogue text can show live game-state values with `$Variable_Id`. For example,
 `You killed $Crows_killed crows.` resolves chapter-scoped variables in the
 current chapter before checking universal variables. Use `${Variable.With-Dots}`
 for IDs containing dots or hyphens, and `$$` for a literal `$`.
+
+The editor's **Chapter Synopsis** tab gives every project chapter a multiline
+planning field. Universal project-variable names are shown at the top, and each
+chapter lists the variable names scoped to that chapter. Synopsis text is stored
+in `assets/game/project.adgame`.
 
 ## Verify
 
