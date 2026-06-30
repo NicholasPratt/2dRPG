@@ -400,6 +400,7 @@ struct PathWaypoint {
     PathWaypointAction action = PathWaypointAction::None;
     float speechDurationSeconds = 2.0f;
     std::string speechText;
+    int actionRepeatLimit = 0;       // 0=always; positive values cap action runs
 };
 
 struct EnemyPlacement {
@@ -470,12 +471,12 @@ music "assets/game/music/screen1.ogg" 1
 walking_sfx "assets/game/sfx/walking/grass.wav"
 enemies 1
 enemy enemy_1 crow_1 1 1 64.0 0 0 0 3
-wp -16.0 80.0 0.0 0.0 -1 - 1 0.0 ""
-wp 200.0 80.0 0.0 0.0 -1 idle 2 2.5 "You cannot escape!"
-wp 784.0 80.0 0.0 0.0 -1 walk 3 0.0 ""
+wp -16.0 80.0 0.0 0.0 -1 - 1 0.0 "" 1
+wp 200.0 80.0 0.0 0.0 -1 idle 2 2.5 "You cannot escape!" 1
+wp 784.0 80.0 0.0 0.0 -1 walk 3 0.0 "" 1
 npcs 1
 npc npc_1 shopkeeper_1 120.0 200.0 2 64.0 24.0 1 1 1 32.0 shop_graph 1 1 1
-wp 120.0 200.0 0.0 2.0 -1 - 2 2.0 "Welcome!"
+wp 120.0 200.0 0.0 2.0 -1 - 2 2.0 "Welcome!" 0
 dl "Merchant" "Hello there traveler!"
 shop_item potion 10 5 3 0
 animtiles 1
@@ -483,7 +484,7 @@ animtile water_tile 11 14 0 2
 end
 ```
 
-The `animtile` row is `spriteId cellX cellY layer stack`, where `layer` is 0 Floor or 1 Overlay and `stack` is 0–2. Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block. v12 adds NPC curve mode and extends waypoint rows with `action speechDuration "speechText"` (`0=None`, `1=Enter`, `2=Speak`, `3=Leave`). v13 adds animated-tile stack slots; v11/v12 placements default to stack 0. v14 adds per-screen `walking_sfx`, a project-relative `.ogg`/`.wav` loop used while the player walks on that screen.
+The `animtile` row is `spriteId cellX cellY layer stack`, where `layer` is 0 Floor or 1 Overlay and `stack` is 0–2. Older files remain loadable. v1 files (no `respawn` per screen) load with `respawnEnemies = false`. v2 files load without character imports. v3 adds character imports, playable character id, per-screen enemy placements, and per-screen NPC placements. v10 adds per-NPC shop stock overrides. v11 adds a per-screen `animtiles` block. v12 adds NPC curve mode and extends waypoint rows with `action speechDuration "speechText"` (`0=None`, `1=Enter`, `2=Speak`, `3=Leave`). v13 adds animated-tile stack slots; v11/v12 placements default to stack 0. v14 adds per-screen `walking_sfx`, a project-relative `.ogg`/`.wav` loop used while the player walks on that screen. v15 adds waypoint action repeat limits; `0` means unlimited.
 
 ### Layout Editor
 
@@ -681,7 +682,7 @@ All three: look up frames by action type + facing direction, apply W↔E / NW↔
 - **Enemies (linear paths):** `updatePaths` writes `entity.facingX = dx/dist; entity.facingY = dy/dist` on every movement step toward the current waypoint.
 - **Enemies (spline paths):** `updatePaths` samples the Catmull-Rom tangent (two points `kTangentDelta` px apart along the curve) and normalises it into `entity.facingX/Y`.
 - **NPCs:** `updateNpcs` supports linear and spline paths and updates `npc.facingX/Y` from movement direction.
-- **Waypoint actions:** `applyEnemyWaypointAction` and `applyNpcWaypointAction` run at control points on both path types. Enter reveals path-hidden actors, Speak pauses and renders a timed bubble, and Leave hides the actor and finishes the path.
+- **Waypoint actions:** `applyEnemyWaypointAction` and `applyNpcWaypointAction` run at control points on both path types. Enter reveals path-hidden actors, Speak pauses and renders a timed bubble, and Leave hides the actor and finishes the path. NPC waypoint actions can have repeat limits (`0` = always); limited action counts persist in `GameState`.
 - Initial value for both is `(1.0, 0.0)` (facing East) until the entity first moves.
 
 ### `updateEnemyCombat`
@@ -955,7 +956,7 @@ Inspector fields:
 - Position (x, y), facing direction (N/S/E/W)
 - Awareness radius, interaction radius
 - Movement override (Stationary / Patrol / Wander), linear/spline path, loop, speed override
-- Per-waypoint: unrestricted pixel position (including off-screen), speed override, wait seconds, facing direction, animation state, Enter/Speak/Leave action, and timed speech text
+- Per-waypoint: unrestricted pixel position (including off-screen), speed override, wait seconds, facing direction, animation state, Enter/Speak/Leave action, action use limit, and timed speech text
 - Graph override ID for chapter-specific instance dialogue
 - `Edit Instance Dialogue`, which opens `DialogueGraphEditorPanel` for the selected NPC placement and stores graphs under `assets/game/dialogue/<chapterId>/`
 - Dialogue lines (inline override, one per entry)

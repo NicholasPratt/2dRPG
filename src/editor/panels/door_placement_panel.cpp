@@ -1,5 +1,6 @@
 #include "editor/panels/door_placement_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 
@@ -458,7 +459,7 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
     const bool hovered = ImGui::IsItemHovered();
     const ImVec2 mouse = ImGui::GetIO().MousePos;
 
-    dl->AddRectFilled(origin, ImVec2(origin.x + canvasW, origin.y + canvasH), IM_COL32(22, 26, 30, 255));
+    dl->AddRectFilled(origin, ImVec2(origin.x + canvasW, origin.y + canvasH), editorCanvasColor());
 
     if (canvasMap != nullptr) {
         for (int ty = 0; ty < canvasMap->height; ++ty) {
@@ -495,7 +496,7 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
         dl->AddRectFilled(min, max, fill);
         dl->AddRect(min, max, selected ? IM_COL32(255, 255, 255, 245) : IM_COL32(150, 220, 255, 210),
             0.0f, 0, selected ? 3.0f : 1.5f);
-        dl->AddText(ImVec2(min.x + 3.0f, min.y + 3.0f), IM_COL32(255, 255, 255, 230), "D");
+        dl->AddText(ImVec2(min.x + 3.0f, min.y + 3.0f), editorTextColor(240), "D");
     }
 
     if (targetLoaded && selectedDoor_ >= 0 && selectedDoor_ < static_cast<int>(context.selectedScreenDoors.size())) {
@@ -506,7 +507,7 @@ void DoorPlacementPanel::drawCanvas(EditorContext& context)
         const ImVec2 max{min.x + tileSize, min.y + tileSize};
         dl->AddRectFilled(min, max, IM_COL32(255, 220, 80, 96));
         dl->AddRect(min, max, IM_COL32(255, 255, 255, 245), 0.0f, 0, 3.0f);
-        dl->AddText(ImVec2(min.x + 3.0f, min.y + 3.0f), IM_COL32(255, 255, 255, 240), "S");
+        dl->AddText(ImVec2(min.x + 3.0f, min.y + 3.0f), editorTextColor(245), "S");
     }
 
     if (!hovered) {

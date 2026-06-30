@@ -1,5 +1,6 @@
 #include "editor/panels/npc_editor_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 #include "game/map.hpp"
@@ -497,6 +498,17 @@ void NpcEditorPanel::drawWaypointList(EditorContext& context)
             wp.action = static_cast<game::PathWaypointAction>(action);
             writeCurrentPlacement(context);
         }
+        if (wp.action != game::PathWaypointAction::None) {
+            ImGui::TextUnformatted("Action uses");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputInt("##wp_action_uses", &wp.actionRepeatLimit, 1, 5)) {
+                wp.actionRepeatLimit = std::max(0, wp.actionRepeatLimit);
+                writeCurrentPlacement(context);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("0 = always. 1 = once. Higher values allow that many runs across screen visits.");
+            }
+        }
         if (wp.action == game::PathWaypointAction::Speak) {
             ImGui::TextUnformatted("Speech time (seconds)");
             ImGui::SetNextItemWidth(-1.0f);
@@ -536,7 +548,7 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(origin, {origin.x + canvasW, origin.y + canvasH}, IM_COL32(20, 22, 28, 255));
+    dl->AddRectFilled(origin, {origin.x + canvasW, origin.y + canvasH}, editorCanvasColor());
 
     if (floorGraphics_.loaded) {
         drawPixelLayer(dl, origin, floorGraphics_, canvasW, canvasH, 1.0f);
@@ -589,9 +601,9 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
         const bool selected = i == selectedPlacement_;
         dl->AddCircleFilled(center, selected ? 9.0f : 7.0f,
             selected ? IM_COL32(60, 220, 210, 255) : IM_COL32(30, 190, 180, 220));
-        dl->AddCircle(center, selected ? 10.0f : 8.0f, IM_COL32(20, 20, 24, 230), 0, 2.0f);
+        dl->AddCircle(center, selected ? 10.0f : 8.0f, IM_COL32(58, 64, 70, 230), 0, 2.0f);
         if (!npc.id.empty()) {
-            dl->AddText({center.x + 10.0f, center.y - 7.0f}, IM_COL32(245, 245, 245, 220), npc.id.c_str());
+            dl->AddText({center.x + 10.0f, center.y - 7.0f}, editorTextColor(240), npc.id.c_str());
         }
         if (selected) {
             dl->AddCircle(center, npc.awarenessRadius * zoom_, IM_COL32(100, 200, 255, 80), 32, 1.0f);
@@ -633,7 +645,7 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
             const bool sel = i == selectedWaypoint_;
             dl->AddCircleFilled(wp, sel ? kWaypointRadius + 2.0f : kWaypointRadius,
                 sel ? IM_COL32(60, 255, 220, 255) : IM_COL32(40, 210, 190, 230));
-            dl->AddCircle(wp, sel ? kWaypointRadius + 3.0f : kWaypointRadius + 1.0f, IM_COL32(20, 20, 24, 200), 0, 1.5f);
+            dl->AddCircle(wp, sel ? kWaypointRadius + 3.0f : kWaypointRadius + 1.0f, IM_COL32(58, 64, 70, 220), 0, 1.5f);
 
             const std::string label = std::to_string(i);
             const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
@@ -642,7 +654,7 @@ void NpcEditorPanel::drawCanvas(EditorContext& context)
                 {textPos.x - 3.0f, textPos.y - 2.0f},
                 {textPos.x + textSize.x + 3.0f, textPos.y + textSize.y + 2.0f},
                 IM_COL32(12, 14, 18, 220), 3.0f);
-            dl->AddText(textPos, IM_COL32(255, 255, 255, 255), label.c_str());
+            dl->AddText(textPos, editorTextColor(), label.c_str());
         }
     }
 
@@ -1212,6 +1224,7 @@ void NpcEditorPanel::selectPlacement(EditorContext& context, int index)
         w.action = wp.action;
         w.speechDurationSeconds = wp.speechDurationSeconds;
         w.speechText = wp.speechText;
+        w.actionRepeatLimit = wp.actionRepeatLimit;
         waypoints_.push_back(std::move(w));
     }
     dialogueLines_ = npc.dialogueOverride;
@@ -1248,6 +1261,7 @@ void NpcEditorPanel::writeCurrentPlacement(EditorContext& context)
         pw.action = wp.action;
         pw.speechDurationSeconds = std::max(0.0f, wp.speechDurationSeconds);
         pw.speechText = wp.speechText;
+        pw.actionRepeatLimit = std::max(0, wp.actionRepeatLimit);
         npc.waypoints.push_back(std::move(pw));
     }
     if (!npc.waypoints.empty()) {

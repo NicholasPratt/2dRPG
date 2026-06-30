@@ -27,6 +27,8 @@ struct PathWaypoint {
     PathWaypointAction action = PathWaypointAction::None;
     float speechDurationSeconds = 2.0f;
     std::string speechText;
+    // 0 = unlimited; positive values cap how many times this waypoint action runs.
+    int actionRepeatLimit = 0;
 };
 
 enum class PathBehavior {

@@ -1,5 +1,6 @@
 #include "editor/panels/item_placement_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 #include "game/map.hpp"
@@ -453,7 +454,7 @@ void ItemPlacementPanel::drawCanvas(EditorContext& context)
     const ImVec2 mousePos = ImGui::GetIO().MousePos;
 
     // Background
-    dl->AddRectFilled(origin, ImVec2(origin.x + canvasW, origin.y + canvasH), IM_COL32(22, 26, 30, 255));
+    dl->AddRectFilled(origin, ImVec2(origin.x + canvasW, origin.y + canvasH), editorCanvasColor());
 
     drawPixelLayer(dl, origin, floorGraphics_, canvasW, canvasH, 0.85f);
 

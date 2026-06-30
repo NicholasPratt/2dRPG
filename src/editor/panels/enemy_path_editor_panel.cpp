@@ -1,5 +1,6 @@
 #include "editor/panels/enemy_path_editor_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 #include "game/map.hpp"
@@ -325,7 +326,7 @@ void EnemyPathEditorPanel::loadSpritePreview(const EditorContext& context, const
 void EnemyPathEditorPanel::drawSpritePreviewPanel(ImDrawList* dl, ImVec2 topLeft, float panelW, float panelH, const game::EnemyType& type) const
 {
     // Dark background
-    dl->AddRectFilled(topLeft, {topLeft.x + panelW, topLeft.y + panelH}, IM_COL32(30, 32, 40, 255));
+    dl->AddRectFilled(topLeft, {topLeft.x + panelW, topLeft.y + panelH}, editorPanelColor());
     dl->AddRect(topLeft, {topLeft.x + panelW, topLeft.y + panelH}, IM_COL32(70, 80, 100, 200));
 
     if (!spritePreview_.loaded || spritePreview_.frameW <= 0 || spritePreview_.frameH <= 0) {
@@ -824,7 +825,7 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(origin, {origin.x + canvasW, origin.y + canvasH}, IM_COL32(20, 22, 28, 255));
+    dl->AddRectFilled(origin, {origin.x + canvasW, origin.y + canvasH}, editorCanvasColor());
 
     if (floorGraphics_.loaded) {
         drawPixelLayer(dl, origin, floorGraphics_, canvasW, canvasH, 1.0f);
@@ -880,9 +881,9 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
         const bool selected = i == selectedPlacement_;
         dl->AddCircleFilled(center, selected ? 8.0f : 6.0f,
             selected ? IM_COL32(255, 170, 60, 255) : IM_COL32(225, 95, 80, 235));
-        dl->AddCircle(center, selected ? 9.0f : 7.0f, IM_COL32(20, 20, 24, 230), 0, 2.0f);
+        dl->AddCircle(center, selected ? 9.0f : 7.0f, IM_COL32(58, 64, 70, 230), 0, 2.0f);
         if (!placement.id.empty()) {
-            dl->AddText({center.x + 9.0f, center.y - 7.0f}, IM_COL32(245, 245, 245, 220), placement.id.c_str());
+            dl->AddText({center.x + 9.0f, center.y - 7.0f}, editorTextColor(240), placement.id.c_str());
         }
     }
 
@@ -926,7 +927,7 @@ void EnemyPathEditorPanel::drawCanvas(EditorContext& context)
             char idx[8];
             std::snprintf(idx, sizeof(idx), "%d", i);
             dl->AddText({center.x + kWaypointRadius + 2.0f, center.y - 6.0f},
-                IM_COL32(220, 230, 240, 200), idx);
+                editorTextColor(220), idx);
         }
     }
 

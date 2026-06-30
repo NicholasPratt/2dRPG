@@ -31,11 +31,7 @@ inline std::string stringFieldLabel(const char* label)
 inline bool inputTextString(const char* label, char* buffer, std::size_t bufferSize, ImGuiInputTextFlags flags = 0)
 {
     const std::string displayLabel = stringFieldLabel(label);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.13f, 0.16f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.11f, 0.20f, 0.24f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.13f, 0.25f, 0.30f, 1.0f));
     const bool changed = ImGui::InputText(displayLabel.c_str(), buffer, bufferSize, flags);
-    ImGui::PopStyleColor(3);
     return changed;
 }
 

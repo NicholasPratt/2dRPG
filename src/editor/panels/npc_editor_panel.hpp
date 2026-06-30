@@ -33,6 +33,7 @@ private:
         game::PathWaypointAction action = game::PathWaypointAction::None;
         float speechDurationSeconds = 2.0f;
         std::string speechText;
+        int actionRepeatLimit = 0;
     };
 
     struct PixelLayer {

@@ -108,6 +108,7 @@ private:
     std::string pendingProjectChapterId_;
     bool variablePickerActive_ = false;
     int selectedVariable_ = -1;
+    int themeLevel_ = 4;
 
     void drawStartupChapterModal();
     void drawProjectManagerWindow();
@@ -115,6 +116,7 @@ private:
     void drawDeleteProjectConfirm();
     void drawUnsavedChangesModal();
     void drawChapterMenu();
+    void setThemeLevel(int level);
     void openProject(const std::string& projectId, const std::string& chapterId);
     void requestProjectOpen(const std::string& projectId, const std::string& chapterId);
     void deleteProject(const std::string& projectId);

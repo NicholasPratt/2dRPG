@@ -180,6 +180,7 @@ int main(int argc, char** argv)
     enemySpeak.action = adventure::game::PathWaypointAction::Speak;
     enemySpeak.speechDurationSeconds = 1.5f;
     enemySpeak.speechText = "You cannot escape!";
+    enemySpeak.actionRepeatLimit = 1;
     adventure::game::PathWaypoint enemyLeave;
     enemyLeave.x = 784.0f;
     enemyLeave.y = 64.0f;
@@ -225,6 +226,7 @@ int main(int argc, char** argv)
         loadedActionEnemy.waypoints[1].action != adventure::game::PathWaypointAction::Speak ||
         loadedActionEnemy.waypoints[1].speechDurationSeconds != 1.5f ||
         loadedActionEnemy.waypoints[1].speechText != "You cannot escape!" ||
+        loadedActionEnemy.waypoints[1].actionRepeatLimit != 1 ||
         loadedActionEnemy.waypoints.back().action != adventure::game::PathWaypointAction::Leave ||
         loadedActionChapter.screens.front().walkingSfxPath != "assets/game/sfx/walking/grass.wav" ||
         loadedActionNpc.curveMode != adventure::game::PathCurveMode::Spline ||
@@ -236,7 +238,7 @@ int main(int argc, char** argv)
         std::cerr << "Chapter waypoint action round-trip values did not match.\n";
         return 1;
     }
-    std::cout << "Round-tripped waypoint actions, animation stacks, and walking SFX (ADCHAPTER v14)\n";
+    std::cout << "Round-tripped waypoint actions, repeat limits, animation stacks, and walking SFX (ADCHAPTER v15)\n";
 
     adventure::game::SpriteMetadata sprite;
     const std::filesystem::path spritePath = "assets/game/sprites/new_sprite.sprite.json";
@@ -255,6 +257,7 @@ int main(int argc, char** argv)
     path.waypoints[1].action = adventure::game::PathWaypointAction::Speak;
     path.waypoints[1].speechDurationSeconds = 2.5f;
     path.waypoints[1].speechText = "Legacy path speech";
+    path.waypoints[1].actionRepeatLimit = 2;
     const std::filesystem::path pathSmokePath = "build/smoke_path.adpath";
     if (!adventure::game::saveEnemyPath(pathSmokePath, path, &error)) {
         std::cerr << "Failed to save path smoke file: " << error << "\n";
@@ -268,7 +271,8 @@ int main(int argc, char** argv)
     if (loadedPath.waypoints.size() != 2 ||
         loadedPath.waypoints[1].action != adventure::game::PathWaypointAction::Speak ||
         loadedPath.waypoints[1].speechDurationSeconds != 2.5f ||
-        loadedPath.waypoints[1].speechText != "Legacy path speech") {
+        loadedPath.waypoints[1].speechText != "Legacy path speech" ||
+        loadedPath.waypoints[1].actionRepeatLimit != 2) {
         std::cerr << "Path waypoint action round-trip values did not match.\n";
         return 1;
     }

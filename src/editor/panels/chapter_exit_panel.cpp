@@ -1,5 +1,6 @@
 #include "editor/panels/chapter_exit_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/constants.hpp"
 
@@ -474,7 +475,7 @@ void ChapterExitPanel::drawCanvas(EditorContext& context)
         const ImVec2 size{targetMap_.width * tile, targetMap_.height * tile};
         ImGui::InvisibleButton("ChapterExitTargetCanvas", size, ImGuiButtonFlags_MouseButtonLeft);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(25, 28, 33, 255));
+        drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, editorCanvasColor());
         for (int y = 0; y < targetMap_.height; ++y) {
             for (int x = 0; x < targetMap_.width; ++x) {
                 const ImVec2 min{origin.x + x * tile, origin.y + y * tile};
@@ -511,7 +512,7 @@ void ChapterExitPanel::drawCanvas(EditorContext& context)
     ImGui::InvisibleButton("ChapterExitSourceCanvas", size,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(25, 28, 33, 255));
+    drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, editorCanvasColor());
     for (int y = 0; y < bgMap_.height; ++y) {
         for (int x = 0; x < bgMap_.width; ++x) {
             const ImVec2 min{origin.x + x * tile, origin.y + y * tile};

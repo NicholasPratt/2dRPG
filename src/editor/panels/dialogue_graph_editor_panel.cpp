@@ -1,5 +1,6 @@
 #include "editor/panels/dialogue_graph_editor_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 
 #include <algorithm>
@@ -434,7 +435,7 @@ void DialogueGraphEditorPanel::drawCanvas(EditorContext& context)
     }
     ImGui::InvisibleButton("DialogueCanvasSurface", canvasSize, ImGuiButtonFlags_MouseButtonLeft);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, IM_COL32(24, 27, 31, 255));
+    dl->AddRectFilled(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, editorCanvasColor());
     drawLinks(dl, origin);
 
     for (int i = 0; i < static_cast<int>(graph_.nodes.size()); ++i) {
@@ -442,10 +443,10 @@ void DialogueGraphEditorPanel::drawCanvas(EditorContext& context)
         const ImVec2 min(origin.x + node.editorX, origin.y + node.editorY);
         const ImVec2 max(min.x + 170.0f, min.y + 86.0f);
         const bool selected = i == selectedNode_;
-        const ImU32 fill = selected ? IM_COL32(47, 70, 86, 255) : IM_COL32(38, 43, 50, 255);
+        const ImU32 fill = selected ? editorButtonActiveColor() : editorSurfaceColor();
         dl->AddRectFilled(min, max, fill, 6.0f);
         dl->AddRect(min, max, selected ? IM_COL32(104, 184, 220, 255) : IM_COL32(82, 90, 100, 255), 6.0f, 0, selected ? 2.0f : 1.0f);
-        dl->AddText({min.x + 9.0f, min.y + 7.0f}, IM_COL32(230, 235, 240, 255), node.id.c_str());
+        dl->AddText({min.x + 9.0f, min.y + 7.0f}, editorTextColor(), node.id.c_str());
         dl->AddText({min.x + 9.0f, min.y + 25.0f}, IM_COL32(148, 204, 226, 255), nodeTypeName(node.type));
         const std::string preview = node.type == game::DialogueNodeType::Action
             ? std::to_string(node.actions.size()) + " action(s)"

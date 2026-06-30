@@ -3426,7 +3426,13 @@ void Engine::loadNpcEntities()
             entity.y = placement.waypoints.front().y;
             entity.waypointIndex = 0;
             entity.pathHidden = pathStartsHidden(placement.waypoints);
-            applyNpcWaypointAction(entity, placement.waypoints.front());
+            if (placement.waypoints.front().action == PathWaypointAction::Enter &&
+                npcWaypointActionExhausted(entity, placement.waypoints.front(), 0)) {
+                entity.pathHidden = true;
+                entity.pathFinished = true;
+            } else {
+                applyNpcWaypointAction(entity, placement.waypoints.front(), 0);
+            }
         }
         loadNpcGraph(entity, entity.graphId);
         updateNpcStateRules(entity);
@@ -3483,7 +3489,31 @@ void Engine::applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypo
     }
 }
 
-void Engine::applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint)
+std::string Engine::npcWaypointActionStateId(const RuntimeNpcEntity& npc, std::size_t waypointIndex) const
+{
+    const std::string screenId = activeScreen_ == nullptr ? std::string{"screen"} : activeScreen_->id;
+    return "NpcWaypointAction." + chapter_.id + "." + screenId + "." + npc.placement.id + "." +
+        std::to_string(waypointIndex);
+}
+
+bool Engine::npcWaypointActionExhausted(const RuntimeNpcEntity& npc, const PathWaypoint& waypoint,
+    std::size_t waypointIndex) const
+{
+    if (waypoint.action == PathWaypointAction::None || waypoint.actionRepeatLimit <= 0) {
+        return false;
+    }
+    return gameState_.getInt(npcWaypointActionStateId(npc, waypointIndex), 0) >= waypoint.actionRepeatLimit;
+}
+
+void Engine::markNpcWaypointActionUsed(const RuntimeNpcEntity& npc, const PathWaypoint& waypoint,
+    std::size_t waypointIndex)
+{
+    if (waypoint.action != PathWaypointAction::None && waypoint.actionRepeatLimit > 0) {
+        gameState_.addInt(npcWaypointActionStateId(npc, waypointIndex), 1);
+    }
+}
+
+void Engine::applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint, std::size_t waypointIndex)
 {
     npc.atWaypoint = true;
     npc.waitRemainingSeconds = std::max(0.0f, waypoint.waitSeconds);
@@ -3494,6 +3524,9 @@ void Engine::applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& w
         const int facing = std::clamp(waypoint.facing, 0, 3);
         npc.facingX = kFacingX[facing];
         npc.facingY = kFacingY[facing];
+    }
+    if (npcWaypointActionExhausted(npc, waypoint, waypointIndex)) {
+        return;
     }
     switch (waypoint.action) {
         case PathWaypointAction::Enter:
@@ -3511,6 +3544,7 @@ void Engine::applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& w
         case PathWaypointAction::None:
             break;
     }
+    markNpcWaypointActionUsed(npc, waypoint, waypointIndex);
 }
 
 void Engine::updateNpcs(float dt)
@@ -3601,7 +3635,7 @@ void Engine::updateNpcs(float dt)
             if (npc.pathDistance >= targetDistance - 0.001f) {
                 npc.x = target.x;
                 npc.y = target.y;
-                applyNpcWaypointAction(npc, target);
+                applyNpcWaypointAction(npc, target, npc.waypointIndex);
             }
             continue;
         }
@@ -3611,7 +3645,7 @@ void Engine::updateNpcs(float dt)
         if (dist <= 1.0f) {
             npc.x = target.x;
             npc.y = target.y;
-            applyNpcWaypointAction(npc, target);
+            applyNpcWaypointAction(npc, target, npc.waypointIndex);
             continue;
         }
         const float segSpeed = target.speedOverride > 0.0f ? target.speedOverride

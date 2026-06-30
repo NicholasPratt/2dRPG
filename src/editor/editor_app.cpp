@@ -1,5 +1,6 @@
 #include "editor/editor_app.hpp"
 #include "editor/editor_state.hpp"
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 
 #include "imgui.h"
@@ -1293,17 +1294,17 @@ std::filesystem::path EditorApp::sessionFilePath() const
 
 void EditorApp::saveSession() const
 {
-    if (currentProjectId_.empty()) {
-        return;
-    }
     std::error_code error;
     std::filesystem::create_directories(projectsRoot(), error);
     std::ofstream out(sessionFilePath(), std::ios::trunc);
     if (!out) {
         return;
     }
-    out << "project " << currentProjectId_ << "\n";
-    out << "chapter " << context_.currentChapterId << "\n";
+    if (!currentProjectId_.empty()) {
+        out << "project " << currentProjectId_ << "\n";
+        out << "chapter " << context_.currentChapterId << "\n";
+    }
+    out << "theme " << themeLevel_ << "\n";
 }
 
 void EditorApp::loadSession()
@@ -1322,6 +1323,11 @@ void EditorApp::loadSession()
         } else if (key == "chapter") {
             in >> std::ws;
             std::getline(in, chapterId);
+        } else if (key == "theme") {
+            int level = themeLevel_;
+            if (in >> level) {
+                setThemeLevel(level);
+            }
         }
     }
     // Trim trailing carriage returns / whitespace.
@@ -1343,6 +1349,12 @@ void EditorApp::loadSession()
         return;
     }
     chooseChapter(chapterId);  // sets startupChapterChosen_ on success
+}
+
+void EditorApp::setThemeLevel(int level)
+{
+    themeLevel_ = std::clamp(level, 1, 5);
+    applyEditorTheme(themeLevel_);
 }
 
 void EditorApp::openProject(const std::string& projectId, const std::string& chapterId)
@@ -1530,6 +1542,20 @@ void EditorApp::drawChapterMenu()
                 if (ImGui::MenuItem(chapterId.c_str(), nullptr, chapterId == context_.currentChapterId)) {
                     requestChapterSwitch(chapterId);
                 }
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::BeginMenu("Theme")) {
+                const char* labels[] = {"1 Light", "2 Soft", "3 Medium", "4 Dark", "5 Very Dark"};
+                for (int i = 0; i < 5; ++i) {
+                    const int level = i + 1;
+                    if (ImGui::MenuItem(labels[i], nullptr, themeLevel_ == level)) {
+                        setThemeLevel(level);
+                        saveSession();
+                    }
+                }
+                ImGui::EndMenu();
             }
             ImGui::EndMenu();
         }

@@ -1,6 +1,7 @@
 #include "editor/panels/sprite_editor_panel.hpp"
 
 #include "editor/atari_2600_palette.hpp"
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/sprite.hpp"
 
@@ -772,7 +773,7 @@ void SpriteEditorPanel::resetDocumentBuffers()
 
 void SpriteEditorPanel::drawTopBar()
 {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(28, 31, 35, 255));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, editorPanelColor());
     ImGui::BeginChild("SpriteTopBar", ImVec2(0.0f, 42.0f), false);
     ImGui::SetCursorPos(ImVec2(12.0f, 10.0f));
     ImGui::Text("Sprite: %s", document_.id.c_str());
@@ -933,7 +934,7 @@ void SpriteEditorPanel::drawLeftRail()
     for (int i = 0; i < static_cast<int>(document_.frames.size()); ++i) {
         ImGui::PushID(i);
         const bool selected = selectedFrame_ == i;
-        ImGui::PushStyleColor(ImGuiCol_Button, selected ? IM_COL32(230, 199, 34, 255) : IM_COL32(47, 51, 56, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, selected ? editorAccentColor() : editorButtonColor());
         const std::string thumbId = "##FrameThumb" + std::to_string(i);
         if (ImGui::Button(thumbId.c_str(), ImVec2(86.0f, 86.0f))) {
             cancelPolygon();
@@ -974,7 +975,7 @@ void SpriteEditorPanel::drawLeftRail()
             thumbMin.y + ((thumbMax.y - thumbMin.y) - spriteSize.y) * 0.5f,
         };
         drawSpritePixels(drawList, spriteOrigin, pixelSize, i);
-        drawList->AddText({min.x + 8.0f, max.y - 16.0f}, IM_COL32(235, 238, 242, 255), std::to_string(i + 1).c_str());
+        drawList->AddText({min.x + 8.0f, max.y - 16.0f}, editorTextColor(), std::to_string(i + 1).c_str());
         ImGui::PopID();
     }
 
@@ -1029,8 +1030,8 @@ void SpriteEditorPanel::drawLeftRail()
     for (int i = 0; i < static_cast<int>(std::size(brushSizes)); ++i) {
         ImGui::PushID(brushSizes[i]);
         const bool selected = brushSize_ == brushSizes[i];
-        ImGui::PushStyleColor(ImGuiCol_Button, selected ? IM_COL32(236, 203, 49, 255) : IM_COL32(56, 61, 67, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text, selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, selected ? editorAccentColor() : editorButtonColor());
+        ImGui::PushStyleColor(ImGuiCol_Text, editorTextColor());
         const std::string label = std::to_string(brushSizes[i]) + "x" + std::to_string(brushSizes[i]);
         if (ImGui::Button(label.c_str(), ImVec2(58.0f, 30.0f))) {
             brushSize_ = brushSizes[i];
@@ -1107,12 +1108,12 @@ void SpriteEditorPanel::drawToolButton(const char* label, const char* tooltip, i
 {
     const bool selected = selectedTool_ == toolIndex;
     const ImVec2 buttonSize(42.0f, 38.0f);
-    const ImU32 selectedColor = IM_COL32(236, 203, 49, 255);
-    const ImU32 normalColor = IM_COL32(50, 55, 61, 255);
-    const ImU32 hoveredColor = IM_COL32(67, 73, 81, 255);
-    const ImU32 activeColor = IM_COL32(78, 85, 94, 255);
+    const ImU32 selectedColor = editorAccentColor();
+    const ImU32 normalColor = editorButtonColor();
+    const ImU32 hoveredColor = editorButtonHoveredColor();
+    const ImU32 activeColor = editorButtonActiveColor();
     const ImU32 foregroundColor =
-        selected ? IM_COL32(24, 25, 28, 255) : IM_COL32(240, 242, 245, 255);
+        editorTextColor();
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
@@ -1120,7 +1121,7 @@ void SpriteEditorPanel::drawToolButton(const char* label, const char* tooltip, i
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, selected ? selectedColor : hoveredColor);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, selected ? selectedColor : activeColor);
     ImGui::PushStyleColor(ImGuiCol_Border,
-        selected ? IM_COL32(255, 226, 92, 255) : IM_COL32(85, 92, 101, 255));
+        selected ? editorAccentBorderColor() : IM_COL32(102, 111, 122, 255));
     const std::string buttonId = std::string("##ToolButton") + label;
     if (ImGui::Button(buttonId.c_str(), buttonSize)) {
         if (selectedTool_ != toolIndex) {
@@ -1245,7 +1246,7 @@ void SpriteEditorPanel::drawCanvas(const ImVec2& availableSize)
     ImGui::InvisibleButton("CanvasArea", paddedCanvasSize);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(childOrigin, {childOrigin.x + paddedCanvasSize.x, childOrigin.y + paddedCanvasSize.y}, IM_COL32(43, 46, 50, 255));
+    drawList->AddRectFilled(childOrigin, {childOrigin.x + paddedCanvasSize.x, childOrigin.y + paddedCanvasSize.y}, editorSurfaceColor());
 
     const ImVec2 canvasOrigin{
         childOrigin.x + std::max(48.0f, (paddedCanvasSize.x - pixelCanvasSize.x) * 0.5f),

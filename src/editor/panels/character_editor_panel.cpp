@@ -1,5 +1,6 @@
 #include "editor/panels/character_editor_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "game/project.hpp"
 #include "game/sprite.hpp"
@@ -583,7 +584,7 @@ void CharacterEditorPanel::drawFrameThumbnail(const EditorContext& context, cons
     const ImVec2 size{48.0f, 48.0f};
     ImGui::InvisibleButton("frame_thumb", size);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, IM_COL32(34, 38, 42, 255));
+    drawList->AddRectFilled(origin, {origin.x + size.x, origin.y + size.y}, editorSurfaceColor());
     if (thumbnail.width > 0 && thumbnail.height > 0 && !thumbnail.pixels.empty()) {
         const float pixel = std::max(1.0f, std::min(size.x / static_cast<float>(thumbnail.width), size.y / static_cast<float>(thumbnail.height)));
         const ImVec2 spriteOrigin{
@@ -701,7 +702,7 @@ std::optional<std::filesystem::path> CharacterEditorPanel::drawCharacterSheet(Ed
     ImGui::Text("Character assets: %s", context.assets.gameCharacterPath().string().c_str());
 
     ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(48, 58, 64, 255));
+    ImGui::PushStyleColor(ImGuiCol_Button, editorButtonColor());
     const bool openSprite = ImGui::Button(character.spriteReference.data()[0] == '\0' ? "No sprite linked" : character.spriteReference.data(), ImVec2(-1.0f, 72.0f));
     ImGui::PopStyleColor();
 

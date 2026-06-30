@@ -122,7 +122,7 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
         return false;
     }
 
-    output << "ADCHAPTER 14\n";
+    output << "ADCHAPTER 15\n";
     output << "id " << chapter.id << "\n";
     output << "start " << chapter.startScreenId << "\n";
     output << "playable " << (chapter.playableCharacterId.empty() ? "-" : chapter.playableCharacterId) << "\n";
@@ -156,7 +156,8 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                        << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState)
                        << ' ' << static_cast<int>(waypoint.action)
                        << ' ' << waypoint.speechDurationSeconds
-                       << ' ' << std::quoted(waypoint.speechText) << "\n";
+                       << ' ' << std::quoted(waypoint.speechText)
+                       << ' ' << waypoint.actionRepeatLimit << "\n";
             }
         }
         output << "npcs " << screen.npcs.size() << "\n";
@@ -177,7 +178,8 @@ bool saveChapter(const std::filesystem::path& path, const Chapter& chapter, std:
                        << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState)
                        << ' ' << static_cast<int>(waypoint.action)
                        << ' ' << waypoint.speechDurationSeconds
-                       << ' ' << std::quoted(waypoint.speechText) << "\n";
+                       << ' ' << std::quoted(waypoint.speechText)
+                       << ' ' << waypoint.actionRepeatLimit << "\n";
             }
             for (const DialogueLine& dl : npc.dialogueOverride) {
                 output << "dl " << std::quoted(dl.speaker) << ' ' << std::quoted(dl.text) << "\n";
@@ -219,7 +221,7 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADCHAPTER" || version < 1 || version > 14) {
+    if (magic != "ADCHAPTER" || version < 1 || version > 15) {
         setError(errorMessage, "Unsupported chapter file type or version.");
         return false;
     }
@@ -396,6 +398,10 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                         input >> action >> waypoint.speechDurationSeconds >> std::quoted(waypoint.speechText);
                         waypoint.action = static_cast<PathWaypointAction>(std::clamp(action, 0, 3));
                         waypoint.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+                        if (version >= 15) {
+                            input >> waypoint.actionRepeatLimit;
+                            waypoint.actionRepeatLimit = std::max(0, waypoint.actionRepeatLimit);
+                        }
                     }
                     enemy.waypoints.push_back(waypoint);
                 }
@@ -464,6 +470,10 @@ bool loadChapter(const std::filesystem::path& path, Chapter& chapter, std::strin
                         input >> action >> waypoint.speechDurationSeconds >> std::quoted(waypoint.speechText);
                         waypoint.action = static_cast<PathWaypointAction>(std::clamp(action, 0, 3));
                         waypoint.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+                        if (version >= 15) {
+                            input >> waypoint.actionRepeatLimit;
+                            waypoint.actionRepeatLimit = std::max(0, waypoint.actionRepeatLimit);
+                        }
                     }
                     npc.waypoints.push_back(waypoint);
                 }

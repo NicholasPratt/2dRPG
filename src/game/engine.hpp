@@ -407,7 +407,12 @@ private:
     void updateDoors();
     void updateChapterExits();
     void applyEnemyWaypointAction(RuntimePathEntity& entity, const PathWaypoint& waypoint);
-    void applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint);
+    void applyNpcWaypointAction(RuntimeNpcEntity& npc, const PathWaypoint& waypoint, std::size_t waypointIndex);
+    [[nodiscard]] std::string npcWaypointActionStateId(const RuntimeNpcEntity& npc, std::size_t waypointIndex) const;
+    [[nodiscard]] bool npcWaypointActionExhausted(const RuntimeNpcEntity& npc, const PathWaypoint& waypoint,
+        std::size_t waypointIndex) const;
+    void markNpcWaypointActionUsed(const RuntimeNpcEntity& npc, const PathWaypoint& waypoint,
+        std::size_t waypointIndex);
     void updateNpcAwareness();
     void updateInteraction();
     [[nodiscard]] int nearestInteractableDoor() const;

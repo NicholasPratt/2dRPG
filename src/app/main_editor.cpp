@@ -1,4 +1,5 @@
 #include "editor/editor_app.hpp"
+#include "editor/editor_theme.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -49,7 +50,7 @@ int main()
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
-    ImGui::StyleColorsDark();
+    adventure::editor::applyEditorTheme();
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glslVersion);
@@ -75,7 +76,8 @@ int main()
         int displayHeight = 0;
         glfwGetFramebufferSize(window, &displayWidth, &displayHeight);
         glViewport(0, 0, displayWidth, displayHeight);
-        glClearColor(0.08f, 0.09f, 0.10f, 1.0f);
+        const ImVec4 clearColor = adventure::editor::editorClearColor();
+        glClearColor(clearColor.x, clearColor.y, clearColor.z, clearColor.w);
         glClear(GL_COLOR_BUFFER_BIT);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

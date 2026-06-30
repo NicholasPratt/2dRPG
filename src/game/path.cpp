@@ -52,7 +52,7 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
         return false;
     }
 
-    output << "ADPATH 5\n";
+    output << "ADPATH 6\n";
     output << "id " << enemyPath.id << "\n";
     output << "enemy " << encodedToken(enemyPath.enemyId) << "\n";
     output << "sprite " << encodedToken(enemyPath.spriteId) << "\n";
@@ -75,7 +75,8 @@ bool saveEnemyPath(const std::filesystem::path& path, const EnemyPath& enemyPath
                << ' ' << (waypoint.animState.empty() ? "-" : waypoint.animState)
                << ' ' << static_cast<int>(waypoint.action)
                << ' ' << waypoint.speechDurationSeconds
-               << ' ' << std::quoted(waypoint.speechText) << "\n";
+               << ' ' << std::quoted(waypoint.speechText)
+               << ' ' << waypoint.actionRepeatLimit << "\n";
     }
     output << "end\n";
 
@@ -97,7 +98,7 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADPATH" || version < 1 || version > 5) {
+    if (magic != "ADPATH" || version < 1 || version > 6) {
         setError(errorMessage, "Unsupported path file type or version.");
         return false;
     }
@@ -197,6 +198,10 @@ bool loadEnemyPath(const std::filesystem::path& path, EnemyPath& enemyPath, std:
             input >> action >> waypoint.speechDurationSeconds >> std::quoted(waypoint.speechText);
             waypoint.action = static_cast<PathWaypointAction>(std::clamp(action, 0, 3));
             waypoint.speechDurationSeconds = std::max(0.0f, waypoint.speechDurationSeconds);
+            if (version >= 6) {
+                input >> waypoint.actionRepeatLimit;
+                waypoint.actionRepeatLimit = std::max(0, waypoint.actionRepeatLimit);
+            }
         }
         loaded.waypoints.push_back(waypoint);
     }

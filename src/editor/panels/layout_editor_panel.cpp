@@ -1,5 +1,6 @@
 #include "editor/panels/layout_editor_panel.hpp"
 
+#include "editor/editor_theme.hpp"
 #include "editor/imgui_widgets.hpp"
 #include "imgui.h"
 #include "stb_image.h"
@@ -42,7 +43,7 @@ ImU32 screenColor(bool selected, bool start)
 ImU32 tileColor(std::uint16_t id)
 {
     if (id == 0u) {
-        return IM_COL32(27, 30, 34, 255);
+        return editorSurfaceColor();
     }
     const std::uint32_t h = static_cast<std::uint32_t>(id) * 2654435761u;
     const auto r = static_cast<unsigned char>(80u + (h & 0xffu) * 150u / 255u);
@@ -259,7 +260,7 @@ void LayoutEditorPanel::drawMacroView(EditorContext& context)
     ImGui::Dummy(canvasSize);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, IM_COL32(29, 32, 37, 255));
+    drawList->AddRectFilled(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, editorCanvasColor());
     drawList->PushClipRect(origin, {origin.x + canvasSize.x, origin.y + canvasSize.y}, true);
 
     const ImVec2 center{origin.x + canvasSize.x * 0.5f, origin.y + canvasSize.y * 0.5f};
