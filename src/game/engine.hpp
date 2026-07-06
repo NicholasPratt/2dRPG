@@ -77,6 +77,17 @@ private:
         float knockbackVy = 0.0f;
         bool aggroActive = false;      // currently chasing the player
         bool returningToPath = false;  // walking back to its path after losing aggro
+        // Attack telegraph: index of the attack winding up (-1 = none) and the
+        // time left before it lands. The enemy flashes and holds during windup.
+        int windupAttackIndex = -1;
+        float windupRemainingSeconds = 0.0f;
+        // Charger AI state machine: 0 idle, 1 winding up, 2 dashing, 3 recovering.
+        int chargeState = 0;
+        float chargeTimerSeconds = 0.0f;
+        float chargeCooldownSeconds = 0.0f;
+        float chargeDirX = 1.0f;
+        float chargeDirY = 0.0f;
+        bool enrageAnnounced = false;  // boss roar fired when dropping below half health
         float resumePathDistance = 0.0f;  // arc-distance of the nearest path point to resume at
         bool pathHidden = false;
         bool pathFinished = false;
@@ -131,11 +142,62 @@ private:
         float falloffStartPx = 0.0f;  // <= 0: no falloff
         float falloffEndPx = 0.0f;
         float falloffMinScale = 1.0f;
+        // Rebound recovery: when set, a settled projectile turns into an ammo
+        // pickup for this inventory item instead of despawning.
+        std::string recoverAmmoItemId;
     };
 
     struct RuntimeItemEntity {
         MapItemPlacement placement;
         bool collected = false;
+    };
+
+    // Short-lived visual effect quad (hit sparks, death bursts, pickup sparkle).
+    struct Particle {
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        float life = 0.0f;      // seconds remaining
+        float maxLife = 0.3f;
+        float size = 2.0f;
+        float r = 1.0f;
+        float g = 1.0f;
+        float b = 1.0f;
+        float gravity = 0.0f;   // px/s^2 pulled downward
+    };
+
+    // Floating combat text (damage numbers, pickup counts) drifting upward.
+    struct FloatingText {
+        float x = 0.0f;
+        float y = 0.0f;
+        std::string text;
+        float life = 0.0f;
+        float maxLife = 0.8f;
+        float scale = 0.9f;
+        float r = 1.0f;
+        float g = 1.0f;
+        float b = 1.0f;
+    };
+
+    // Procedurally synthesized retro sound effects (no asset files needed).
+    enum class SfxId {
+        MeleeSwing,
+        MeleeHit,
+        EnemyDeath,
+        PlayerHurt,
+        PlayerDeath,
+        Shoot,
+        Misfire,
+        Pickup,
+        Coin,
+        Heal,
+        Roll,
+        MenuMove,
+        MenuSelect,
+        QuestComplete,
+        BossRoar,
+        Telegraph,
     };
 
     struct RuntimeNpcEntity {
@@ -191,6 +253,7 @@ private:
         Walk,
         MeleeAttack,
         RangedAttack,
+        Roll,
         Hurt,
         Dead,
     };
@@ -203,6 +266,7 @@ private:
         Interact,
         Melee,
         Ranged,
+        Roll,
         AimCycleNext,
         AimCyclePrev,
         Inventory,
@@ -244,6 +308,8 @@ private:
     std::vector<WeaponDef> weaponDefs_;
     std::vector<ItemDef> itemDefs_;
     std::vector<GameEffectDef> effectDefs_;
+    std::vector<QuestDef> questDefs_;
+    std::unordered_set<std::string> questCompleteNotified_;  // quests whose completion toast fired
     std::unordered_map<std::string, int> inventory_;
     bool inventoryVisible_ = false;
     bool inventoryInputWasDown_ = false;
@@ -343,6 +409,27 @@ private:
     std::string noticeText_;
     float noticeSeconds_ = 0.0f;
 
+    // --- Game-feel state ---
+    std::vector<Particle> particles_;
+    std::vector<FloatingText> floatingTexts_;
+    float shakeTrauma_ = 0.0f;     // 0..1, squared into a pixel offset each frame
+    float hitstopSeconds_ = 0.0f;  // sim freeze on meaty hits
+    // Dodge roll.
+    float rollSeconds_ = 0.0f;         // time left in the current roll
+    float rollCooldownSeconds_ = 0.0f;
+    float rollDirX_ = 1.0f;
+    float rollDirY_ = 0.0f;
+    bool rollInputWasDown_ = false;
+    // Death sequence: dead player fades to a "YOU DIED" screen, then respawns.
+    bool playerDead_ = false;
+    float deathSeconds_ = 0.0f;
+    // Audio settings (0..100, persisted in the save state).
+    int musicVolumePct_ = 80;
+    int sfxVolumePct_ = 100;
+    // Door opening-animation playback (openingAnimation frames play once).
+    std::string animatingDoorId_;
+    float doorAnimSeconds_ = -1.0f;
+
     [[nodiscard]] bool loadScreen(const std::string& screenId, std::string* errorMessage);
     [[nodiscard]] bool loadTexture(const std::filesystem::path& path, Texture& texture, std::string* errorMessage);
     void destroyTexture(Texture& texture);
@@ -422,6 +509,22 @@ private:
     [[nodiscard]] bool doorIsUnlocked(const MapDoorPlacement& door) const;
     [[nodiscard]] bool doorIsHidden(const MapDoorPlacement& door) const;
     void playSoundEffect(const std::string& configuredPath);
+    void playSfx(SfxId id);
+    void applyAudioVolumes();
+    void addScreenShake(float trauma);
+    void spawnParticles(float x, float y, int count, float r, float g, float b,
+        float speed, float life, float size, float gravity = 0.0f);
+    void spawnFloatingText(float x, float y, const std::string& text,
+        float r, float g, float b, float scale = 0.9f);
+    void updateParticles(float dt);
+    void updateQuests();
+    [[nodiscard]] bool questStarted(const QuestDef& quest) const;
+    [[nodiscard]] bool questComplete(const QuestDef& quest) const;
+    void spawnGroundPickup(float x, float y, ItemPickupType type, const std::string& targetId,
+        int quantity, const std::string& spriteId);
+    void spawnEnemyDrop(const RuntimePathEntity& entity);
+    void beginPlayerDeath();
+    void finishPlayerDeath();
     void showNotice(const std::string& text, float seconds = 1.6f);
     void updateShopInput();
     [[nodiscard]] int maxShopBuyQuantity(const RuntimeNpcEntity& npc, int index) const;
@@ -515,6 +618,12 @@ private:
     void renderMeleeFlash() const;
     void renderAimTargets() const;
     void renderChargeMeter() const;
+    void renderParticles() const;
+    void renderFloatingTexts() const;
+    void renderBossBar() const;
+    void renderQuestHud() const;
+    void renderDeathOverlay() const;
+    void renderHeart(float x, float y, float scale, float fill01) const;
     void renderHud() const;
     void renderInventory() const;
     void renderDisplayMenu() const;

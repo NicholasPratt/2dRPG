@@ -1,4 +1,4 @@
-ADGAME 17
+ADGAME 18
 id game
 playable billy
 characters 2
@@ -8,10 +8,10 @@ chapters 1
 chapter Farm_House
 chapter_synopses 0
 enemy_types 2
-enemy_type enemy_1 enemy_1 1 1 15 15 1 64 0 0.18 8 Crows_killed 1 1 0 1
-enemy_attack 1 1 32 1 120 attack_1 -
-enemy_type wevfer enemy_type_2 1 1 30 29 1 33 0 0.18 60 - 1 0 0 1
-enemy_attack 1 1 32 1 120 attack_1 -
+enemy_type enemy_1 enemy_1 1 1 15 15 1 64 0 0.18 8 Crows_killed 1 1 0 1 0 0 - coins 0.5 1 2
+enemy_attack 1 1 32 1 120 attack_1 - 0.35
+enemy_type wevfer enemy_type_2 1 1 30 29 1 33 0 0.18 60 - 1 0 0 1 2 0 - ss_rock 0.35 2 3
+enemy_attack 1 1 32 1 120 attack_1 - 0.35
 weapon_defs 3
 weapon_def Pocketknife 0 5 8 0.5 200 Pocketknife - - 1 0 0 1 1 0 0 0 0 0 1 0 0 1 30 -
 weapon_def slingshot 1 9 100 0.59 200 slingshot ss_rock rock 1 0 0 1 1 0 0 0 11.1 0 1 0 0 1 30 -
@@ -34,4 +34,6 @@ dl "" "Howzit going young fella!"
 npc_type Merchantile silas silas 0 2 32 - 0 1 0 0
 shop_item ss_rock 1 1 1 1
 npc_type grandma_spelling grandma_spelling grandma_spelling 0 1 32 - 0 0 0 0
+quest_defs 1
+quest_def crow_hunt "Crow Hunt" "Crows killed: ${Crows_killed}/5" 0 5 - 0 1 0 1 5 Crows_killed 5 1 1
 end

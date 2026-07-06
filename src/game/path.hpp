@@ -23,6 +23,14 @@ struct EnemyCombatStats {
     int killAmount = 1;
     StateVariableScope killVariableScope = StateVariableScope::Universal;
     std::vector<std::string> defeatEffectIds;
+    // Fun-factor tuning (copied from EnemyType at load)
+    EnemyAiStyle aiStyle = EnemyAiStyle::Chaser;
+    bool isBoss = false;
+    std::string bossName;
+    std::string dropItemId;
+    float dropChance = 0.0f;
+    int dropQuantityMin = 1;
+    int dropQuantityMax = 1;
 };
 
 struct EnemyPath {

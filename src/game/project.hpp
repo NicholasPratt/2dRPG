@@ -90,6 +90,16 @@ struct EnemyAttackDef {
     float           projectileSpeed = 120.0f;     // ranged only
     std::string     ammoSpriteId;                 // ranged only: projectile sprite id
     std::string     animState;                    // anim state name to play, e.g. "attack_1"
+    // Telegraph: the enemy flashes and holds for this long before the attack
+    // lands, giving the player a readable dodge window. (ADGAME v18+)
+    float           windupSeconds   = 0.35f;
+};
+
+// How an enemy behaves while it has aggro on the player. (ADGAME v18+)
+enum class EnemyAiStyle {
+    Chaser  = 0,  // run straight at the player (legacy behaviour)
+    Kiter   = 1,  // keep distance: flee when crowded, approach when far
+    Charger = 2,  // telegraphed straight-line dash; stunned briefly on wall hit
 };
 
 struct EnemyType {
@@ -110,6 +120,14 @@ struct EnemyType {
     int killAmount = 1;                 // amount added to killVariable on death
     StateVariableScope killVariableScope = StateVariableScope::Universal;
     std::vector<std::string> defeatEffectIds;
+    // Fun-factor tuning (ADGAME v18+)
+    EnemyAiStyle aiStyle = EnemyAiStyle::Chaser;
+    bool isBoss = false;             // boss health bar + enrage below half health
+    std::string bossName;            // display name over the boss bar (defaults to id)
+    std::string dropItemId;          // item def dropped on death (empty = no drop)
+    float dropChance = 0.0f;         // 0..1 probability of dropping dropItemId
+    int dropQuantityMin = 1;
+    int dropQuantityMax = 1;
 };
 
 enum class NpcMovementMode {
@@ -159,6 +177,18 @@ struct ChapterSynopsisDef {
     std::string text;
 };
 
+// A trackable quest shown on the HUD and quest list. A quest is active when
+// startCondition passes and completeCondition does not; once completeCondition
+// passes it is shown as complete. objectiveText supports $var interpolation.
+// (ADGAME v18+)
+struct QuestDef {
+    std::string id = "quest_1";
+    std::string name = "Quest";
+    std::string objectiveText;
+    GameCondition startCondition;     // default Always: active from the start
+    GameCondition completeCondition;  // default Always would complete instantly; author a real one
+};
+
 struct GameProject {
     std::string id = "game";
     std::string playableCharacterId;
@@ -173,6 +203,7 @@ struct GameProject {
     std::vector<GameEffectDef> effectDefs;
     std::vector<NpcTypeDef> npcTypes;
     std::vector<ChapterSynopsisDef> chapterSynopses;
+    std::vector<QuestDef> questDefs;
 };
 
 [[nodiscard]] bool saveGameProject(const std::filesystem::path& path, const GameProject& project, std::string* errorMessage = nullptr);

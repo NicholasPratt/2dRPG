@@ -247,11 +247,26 @@ Implemented (this iteration):
 - **Runtime save/load:** state is seeded from project variable defaults. `save.adstate` is merged only for an explicit `--continue` launch, then state is written on screen transition and quit. `--fresh` launches neither load nor overwrite the save.
 - **Projectile combat:** friend/foe targeting (enemy projectiles damage the player) and per-weapon wall behavior — `Break` (arrow/bullet vanish) or `Rebound` (slingshot stone bounces, loses energy, then settles on the ground).
 
+Implemented (fun-factor iteration, ADGAME v18):
+
+- **Game feel:** screen shake (trauma-based, decaying), hitstop freeze-frames on melee hits/kills/player hurt, a pooled particle system (hit sparks, death bursts, pickup sparkles, dust), and floating damage numbers over enemies and the player.
+- **Procedural combat SFX:** an in-engine retro synthesizer (square/saw/triangle/sine/noise with decay envelopes) generates melee swing/hit, enemy death, player hurt/death, shoot, misfire, pickup, coin, heal, roll, menu, quest-complete, telegraph tick, and boss roar sounds — no audio assets required. The SDL mixer now layers up to 8 one-shots over music and the walking loop, with independent music/SFX volume.
+- **Dodge roll:** Shift/C or gamepad right trigger triggers a short 2.6x-speed burst with i-frames on a 0.55 s cooldown; plays the `roll` sprite action when present.
+- **Death & respawn flow:** at 0 HP the world halts, fades to a "YOU DIED" screen, and the player respawns at the map spawn on interact with enemies reset and 10% of Money lost.
+- **Enemy attack telegraphs:** per-attack `windupSeconds` (default 0.35 s) makes enemies flash red and hold before Melee/Ranged attacks land; melee still misses if the player dodges out of range, and taking a hit interrupts the windup. 0 keeps legacy instant attacks.
+- **Enemy AI styles:** per-type `Chaser` (legacy), `Kiter` (holds a firing band: flees when crowded, strafes in the middle band), and `Charger` (telegraphed straight-line dash; wall impact self-stuns).
+- **Loot drops:** per-type drop item/chance/quantity spawns pickups where enemies die; low-health players occasionally receive mercy heart drops.
+- **Boss support:** per-type boss flag + display name draws a large top-of-screen health bar; below half health bosses enrage (faster attack cadence and movement, roar + notice).
+- **Quests:** `QuestDef` (id, name, interpolated objective text, start/complete `GameCondition`s) in `.adgame` v18 with an editor section under Quest State. Active objectives render as a HUD corner line and a QUESTS section in the inventory; completion fires a toast and jingle once.
+- **Heart HUD & max-health progression:** pixel-art hearts (2 HP each, half-heart states) replace the bar; a Consumable item with Target `MaxHealth` acts as a heart container. Health/max-health persist in `save.adstate`.
+- **Pause menu:** Escape now opens a real pause menu (simulation halts): Resume, Music/SFX volume (persisted), display modes, and Quit.
+- **Recoverable ammo:** settled rebound projectiles turn into ammo pickups instead of despawning.
+- **Pickup juice:** pickups bob, magnetize toward the player within 40 px, spark on collect, and show +N floating text; buying/selling plays a coin chime.
+- **Door opening-animation playback:** activating a door with an `openingAnimation` plays those sprite frames once at the door location.
+
 Planned:
 
 - Dedicated item documents and richer inventory UX beyond the current project-manifest item definitions.
-- Door opening animation playback from the stored opening-animation field. The field is persisted but not yet rendered; an unlocked same-screen door with no animation hides when the player enters its tiles.
-- Recoverable projectiles: let a settled rebound projectile become re-collectible ammo.
 - Polished player attack animations and additional enemy state transitions (animation content is per-character).
 - Shader/core-profile renderer to replace fixed-pipeline OpenGL.
 - Explicit collision/interaction flags, only when gameplay needs exceed binary mid-layer collision.

@@ -15,6 +15,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -68,6 +69,35 @@ constexpr float kMisfireFizzleRangePx = 28.0f;            // a misfired shot dro
 constexpr float kLeadMaxSpreadDegrees = 12.0f;
 constexpr float kLeadMaxInterceptSeconds = 1.5f;          // cap so slow shots don't aim absurdly far ahead
 constexpr float kEnemyDeathVisualSeconds = 0.35f;
+// --- Game-feel tuning ---
+constexpr float kShakeMaxOffsetPx = 5.0f;          // trauma 1.0 => up to this offset
+constexpr float kShakeDecayPerSecond = 2.4f;
+constexpr float kHitstopMeleeSeconds = 0.045f;     // brief freeze when a hit lands
+constexpr float kHitstopKillSeconds = 0.085f;
+constexpr float kHitstopPlayerHurtSeconds = 0.06f;
+// Dodge roll: short burst with i-frames, on a cooldown.
+constexpr float kRollSeconds = 0.26f;
+constexpr float kRollSpeedScale = 2.6f;
+constexpr float kRollCooldownSeconds = 0.55f;
+// Death sequence pacing.
+constexpr float kDeathFadeSeconds = 1.2f;
+constexpr float kDeathPromptSeconds = 1.6f;        // "press interact" appears after this
+constexpr float kDeathCoinLossFraction = 0.10f;    // money lost on death
+// Pickups drift toward the player inside this radius.
+constexpr float kItemMagnetRadius = 40.0f;
+constexpr float kItemMagnetSpeed = 150.0f;
+// Enemy attack telegraph resolution: melee still lands if the player stayed
+// within range * this slack after the windup.
+constexpr float kTelegraphMeleeRangeSlack = 1.2f;
+// Charger AI.
+constexpr float kChargeWindupSeconds = 0.45f;
+constexpr float kChargeSpeedScale = 3.2f;
+constexpr float kChargeMaxSeconds = 0.9f;
+constexpr float kChargeStunSeconds = 0.8f;
+constexpr float kChargeCooldownSeconds = 1.8f;
+// Boss enrage below half health: attacks cycle faster, movement speeds up.
+constexpr float kBossEnrageCooldownScale = 1.6f;   // cooldowns tick this much faster
+constexpr float kBossEnrageSpeedScale = 1.3f;
 constexpr float kSpeechTextScale = 1.5f;
 constexpr float kDialogueTextScale = 1.8f;
 constexpr int kDialogueVisibleLines = 4;
@@ -118,6 +148,47 @@ float randomUniform(float minValue, float maxValue)
     static std::mt19937 rng{std::random_device{}()};
     std::uniform_real_distribution<float> dist(minValue, maxValue);
     return dist(rng);
+}
+
+// --- Retro SFX synthesizer -------------------------------------------------
+// Combat/UI sounds are generated procedurally (square/saw/noise bursts with an
+// exponential decay envelope) so every project gets audio feedback without
+// authored sound assets. Authored per-door/per-screen audio still wins.
+
+constexpr int kSynthSampleRate = 22050;
+
+enum class SynthWave { Square, Saw, Triangle, Sine, Noise };
+
+void appendTone(std::vector<std::int16_t>& out, float freqStart, float freqEnd,
+    float seconds, SynthWave wave, float volume, float decay = 6.0f)
+{
+    static std::mt19937 rng{20260706u};
+    std::uniform_real_distribution<float> noise(-1.0f, 1.0f);
+    const int count = std::max(1, static_cast<int>(seconds * kSynthSampleRate));
+    float phase = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(count);
+        const float freq = freqStart + (freqEnd - freqStart) * t;
+        phase += freq / static_cast<float>(kSynthSampleRate);
+        const float p = phase - std::floor(phase);
+        float s = 0.0f;
+        switch (wave) {
+            case SynthWave::Square: s = p < 0.5f ? 1.0f : -1.0f; break;
+            case SynthWave::Saw: s = 2.0f * p - 1.0f; break;
+            case SynthWave::Triangle: s = 4.0f * std::abs(p - 0.5f) - 1.0f; break;
+            case SynthWave::Sine: s = std::sin(2.0f * kPi * p); break;
+            case SynthWave::Noise: s = noise(rng); break;
+        }
+        const float attack = std::min(1.0f, static_cast<float>(i) / (0.004f * kSynthSampleRate));
+        const float env = attack * std::exp(-decay * t);
+        const float sample = std::clamp(s * volume * env, -1.0f, 1.0f);
+        out.push_back(static_cast<std::int16_t>(sample * 32000.0f));
+    }
+}
+
+void appendSilence(std::vector<std::int16_t>& out, float seconds)
+{
+    out.insert(out.end(), static_cast<std::size_t>(seconds * kSynthSampleRate), 0);
 }
 
 void setError(std::string* errorMessage, const std::string& message)
@@ -545,8 +616,7 @@ public:
             SDL_CloseAudioDevice(device_);
             device_ = 0;
             deviceSpec_ = {};
-            effectPcm_.clear();
-            effectCursor_ = 0;
+            effects_.clear();
             walkingPcm_.clear();
             walkingCursor_ = 0;
             walkingPlaying_ = false;
@@ -580,13 +650,45 @@ public:
         if (!prepareEffectAudio(path, decoded, decodedSpec, errorMessage)) {
             return false;
         }
-
-        SDL_LockAudioDevice(device_);
-        effectPcm_ = std::move(decoded);
-        effectCursor_ = 0;
-        SDL_UnlockAudioDevice(device_);
-        SDL_PauseAudioDevice(device_, 0);
+        pushEffect(std::move(decoded));
         return true;
+    }
+
+    // Plays raw mono S16 samples (the procedural SFX synth), converting to the
+    // device format. Opens a default audio device when none exists yet.
+    bool playSamples(const std::vector<std::int16_t>& monoSamples, int sampleRate, std::string* errorMessage)
+    {
+        if (monoSamples.empty()) {
+            return true;
+        }
+        std::vector<std::uint8_t> decoded(
+            reinterpret_cast<const std::uint8_t*>(monoSamples.data()),
+            reinterpret_cast<const std::uint8_t*>(monoSamples.data() + monoSamples.size()));
+        SDL_AudioSpec decodedSpec{};
+        decodedSpec.freq = sampleRate;
+        decodedSpec.format = AUDIO_S16SYS;
+        decodedSpec.channels = 1;
+        decodedSpec.samples = 4096;
+        if (!ensureDeviceAndConvert(decoded, decodedSpec, errorMessage)) {
+            return false;
+        }
+        pushEffect(std::move(decoded));
+        return true;
+    }
+
+    void setVolumes(int music128, int sfx128)
+    {
+        const int music = std::clamp(music128, 0, SDL_MIX_MAXVOLUME);
+        const int sfx = std::clamp(sfx128, 0, SDL_MIX_MAXVOLUME);
+        if (device_ != 0) {
+            SDL_LockAudioDevice(device_);
+            musicVolume_ = music;
+            sfxVolume_ = sfx;
+            SDL_UnlockAudioDevice(device_);
+        } else {
+            musicVolume_ = music;
+            sfxVolume_ = sfx;
+        }
     }
 
     bool setWalkingLoop(const std::filesystem::path& path, std::string* errorMessage)
@@ -620,7 +722,7 @@ public:
 
         SDL_LockAudioDevice(device_);
         walkingPlaying_ = playing && !walkingPcm_.empty();
-        const bool shouldPause = pcm_.empty() && effectCursor_ >= effectPcm_.size() && !walkingPlaying_;
+        const bool shouldPause = pcm_.empty() && effects_.empty() && !walkingPlaying_;
         SDL_UnlockAudioDevice(device_);
 
         SDL_PauseAudioDevice(device_, shouldPause ? 1 : 0);
@@ -640,7 +742,7 @@ public:
         walkingPcm_.clear();
         walkingCursor_ = 0;
         walkingPlaying_ = false;
-        const bool shouldPause = pcm_.empty() && effectCursor_ >= effectPcm_.size();
+        const bool shouldPause = pcm_.empty() && effects_.empty();
         SDL_UnlockAudioDevice(device_);
 
         if (shouldPause) {
@@ -660,7 +762,7 @@ public:
         pcm_.clear();
         cursor_ = 0;
         loop_ = false;
-        const bool effectPlaying = effectCursor_ < effectPcm_.size();
+        const bool effectPlaying = !effects_.empty();
         const bool walkingPlaying = walkingPlaying_ && !walkingPcm_.empty();
         SDL_UnlockAudioDevice(device_);
         if (!effectPlaying && !walkingPlaying) {
@@ -669,12 +771,19 @@ public:
     }
 
 private:
+    struct OneShot {
+        std::vector<std::uint8_t> pcm;
+        std::size_t cursor = 0;
+    };
+    static constexpr std::size_t kMaxOneShots = 8;
+
     SDL_AudioDeviceID device_ = 0;
     SDL_AudioSpec deviceSpec_{};
     std::vector<std::uint8_t> pcm_;
     std::size_t cursor_ = 0;
-    std::vector<std::uint8_t> effectPcm_;
-    std::size_t effectCursor_ = 0;
+    std::vector<OneShot> effects_;
+    int musicVolume_ = SDL_MIX_MAXVOLUME;
+    int sfxVolume_ = SDL_MIX_MAXVOLUME;
     std::vector<std::uint8_t> walkingPcm_;
     std::size_t walkingCursor_ = 0;
     bool walkingPlaying_ = false;
@@ -760,6 +869,14 @@ private:
         if (!decodeAudio(path, decoded, decodedSpec, errorMessage)) {
             return false;
         }
+        return ensureDeviceAndConvert(decoded, decodedSpec, errorMessage);
+    }
+
+    // Opens the audio device if needed (using the given spec) and converts the
+    // buffer to the device format when it differs.
+    bool ensureDeviceAndConvert(std::vector<std::uint8_t>& decoded, SDL_AudioSpec& decodedSpec,
+        std::string* errorMessage)
+    {
         if (!audioInitialized_) {
             if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
                 setError(errorMessage, std::string("Failed to initialize SDL audio: ") + SDL_GetError());
@@ -799,6 +916,20 @@ private:
         return true;
     }
 
+    void pushEffect(std::vector<std::uint8_t>&& pcm)
+    {
+        if (pcm.empty() || device_ == 0) {
+            return;
+        }
+        SDL_LockAudioDevice(device_);
+        if (effects_.size() >= kMaxOneShots) {
+            effects_.erase(effects_.begin());  // drop the oldest sound
+        }
+        effects_.push_back(OneShot{std::move(pcm), 0});
+        SDL_UnlockAudioDevice(device_);
+        SDL_PauseAudioDevice(device_, 0);
+    }
+
     static void audioCallback(void* userdata, Uint8* stream, int len)
     {
         auto* player = static_cast<MusicPlayer*>(userdata);
@@ -819,7 +950,8 @@ private:
             }
 
             const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(len - written));
-            std::memcpy(stream + written, player->pcm_.data() + player->cursor_, chunk);
+            SDL_MixAudioFormat(stream + written, player->pcm_.data() + player->cursor_,
+                player->deviceSpec_.format, static_cast<Uint32>(chunk), player->musicVolume_);
             player->cursor_ += chunk;
             written += static_cast<int>(chunk);
         }
@@ -833,23 +965,25 @@ private:
                 const std::size_t remaining = player->walkingPcm_.size() - player->walkingCursor_;
                 const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(len - mixed));
                 SDL_MixAudioFormat(stream + mixed, player->walkingPcm_.data() + player->walkingCursor_,
-                    player->deviceSpec_.format, static_cast<Uint32>(chunk), SDL_MIX_MAXVOLUME / 2);
+                    player->deviceSpec_.format, static_cast<Uint32>(chunk), player->sfxVolume_ / 2);
                 player->walkingCursor_ += chunk;
                 mixed += static_cast<int>(chunk);
             }
         }
 
-        if (player->effectCursor_ < player->effectPcm_.size()) {
-            const std::size_t remaining = player->effectPcm_.size() - player->effectCursor_;
+        for (OneShot& effect : player->effects_) {
+            const std::size_t remaining = effect.pcm.size() - effect.cursor;
             const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(len));
-            SDL_MixAudioFormat(stream, player->effectPcm_.data() + player->effectCursor_,
-                player->deviceSpec_.format, static_cast<Uint32>(chunk), SDL_MIX_MAXVOLUME);
-            player->effectCursor_ += chunk;
-            if (player->effectCursor_ >= player->effectPcm_.size()) {
-                player->effectPcm_.clear();
-                player->effectCursor_ = 0;
+            if (chunk > 0) {
+                SDL_MixAudioFormat(stream, effect.pcm.data() + effect.cursor,
+                    player->deviceSpec_.format, static_cast<Uint32>(chunk), player->sfxVolume_);
+                effect.cursor += chunk;
             }
         }
+        player->effects_.erase(
+            std::remove_if(player->effects_.begin(), player->effects_.end(),
+                [](const OneShot& effect) { return effect.cursor >= effect.pcm.size(); }),
+            player->effects_.end());
     }
 };
 
@@ -993,6 +1127,13 @@ bool Engine::initialize(const std::filesystem::path& chapterPath, std::string* e
     chapterExitArrivalLockSeconds_ = 0.5f;
     writeCheckpoint(startScreen, playerX_, playerY_);
     gameState_.setLocation(chapter_.id, startScreen, playerX_, playerY_);
+
+    // Restore persisted health and audio settings (defaults on a new game).
+    playerMaxHealth_ = std::max(2, gameState_.getInt("player.maxHealth", playerMaxHealth_));
+    playerHealth_ = std::clamp(gameState_.getInt("player.health", playerMaxHealth_), 1, playerMaxHealth_);
+    musicVolumePct_ = gameState_.getInt("settings.musicVolume", musicVolumePct_);
+    sfxVolumePct_ = gameState_.getInt("settings.sfxVolume", sfxVolumePct_);
+    applyAudioVolumes();
     return true;
 }
 
@@ -1055,6 +1196,10 @@ bool Engine::loadScreen(const std::string& screenId, std::string* errorMessage)
     loadNpcEntities();
     loadItemEntities();
     projectiles_.clear();
+    particles_.clear();
+    floatingTexts_.clear();
+    animatingDoorId_.clear();
+    doorAnimSeconds_ = -1.0f;
     interactionState_ = InteractionState::None;
     interactingNpcIndex_ = -1;
     interactingDoorIndex_ = -1;
@@ -1165,6 +1310,13 @@ void Engine::loadWeapons()
     weaponDefs_ = project.weaponDefs;
     itemDefs_ = project.itemDefs;
     effectDefs_ = project.effectDefs;
+    questDefs_ = project.questDefs;
+    // Quests already complete at load shouldn't re-fire their toast.
+    for (const QuestDef& quest : questDefs_) {
+        if (questStarted(quest) && questComplete(quest)) {
+            questCompleteNotified_.insert(quest.id);
+        }
+    }
     syncInventoryFromGameState();
 
     if (project.startingWeaponId.empty()) {
@@ -1460,6 +1612,13 @@ void Engine::loadPathEntities()
                 path.combat.killAmount = type->killAmount;
                 path.combat.killVariableScope = type->killVariableScope;
                 path.combat.defeatEffectIds = type->defeatEffectIds;
+                path.combat.aiStyle = type->aiStyle;
+                path.combat.isBoss = type->isBoss;
+                path.combat.bossName = type->bossName;
+                path.combat.dropItemId = type->dropItemId;
+                path.combat.dropChance = type->dropChance;
+                path.combat.dropQuantityMin = type->dropQuantityMin;
+                path.combat.dropQuantityMax = type->dropQuantityMax;
                 if (path.speed <= 0.0f) {
                     path.speed = type->speed;
                 }
@@ -1717,6 +1876,10 @@ bool Engine::inputDown(InputAction action) const
         case InputAction::Ranged:
             return glfwGetKey(window_, GLFW_KEY_X) == GLFW_PRESS ||
                 gamepadButtonDown(GLFW_GAMEPAD_BUTTON_B);
+        case InputAction::Roll:
+            return glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                glfwGetKey(window_, GLFW_KEY_C) == GLFW_PRESS ||
+                gamepadAxis(GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.5f;
         case InputAction::AimCycleNext:
             return glfwGetKey(window_, GLFW_KEY_TAB) == GLFW_PRESS ||
                 gamepadButtonDown(GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER);
@@ -1736,10 +1899,39 @@ bool Engine::inputDown(InputAction action) const
 
 void Engine::update(float dt)
 {
+    // Hitstop: freeze the whole sim for a few frames on meaty hits.
+    if (hitstopSeconds_ > 0.0f) {
+        hitstopSeconds_ = std::max(0.0f, hitstopSeconds_ - dt);
+        return;
+    }
+
     runtimeSeconds_ += dt;
     playerInvulnerableSeconds_ = std::max(0.0f, playerInvulnerableSeconds_ - dt);
     playerHitFlashSeconds_ = std::max(0.0f, playerHitFlashSeconds_ - dt);
     noticeSeconds_ = std::max(0.0f, noticeSeconds_ - dt);
+    shakeTrauma_ = std::max(0.0f, shakeTrauma_ - kShakeDecayPerSecond * dt);
+    updateParticles(dt);
+    if (doorAnimSeconds_ >= 0.0f) {
+        doorAnimSeconds_ += dt;
+        if (doorAnimSeconds_ > 2.0f) {
+            doorAnimSeconds_ = -1.0f;
+            animatingDoorId_.clear();
+        }
+    }
+
+    // Death sequence: the world halts; fade to "YOU DIED", then respawn on
+    // interact (after a short delay so the button is not hit accidentally).
+    if (playerDead_) {
+        deathSeconds_ += dt;
+        playerIsMoving_ = false;
+        updateWalkingSfx();
+        const bool interactDown = inputDown(InputAction::Interact);
+        if (deathSeconds_ >= kDeathPromptSeconds && interactDown && !interactInputWasDown_) {
+            finishPlayerDeath();
+        }
+        interactInputWasDown_ = interactDown;
+        return;
+    }
 
     const bool fullscreenShortcutDown = glfwGetKey(window_, GLFW_KEY_F11) == GLFW_PRESS;
     if (fullscreenShortcutDown && !fullscreenShortcutWasDown_) {
@@ -1754,9 +1946,8 @@ void Engine::update(float dt)
         displayMenuVisible_ = !displayMenuVisible_;
         if (displayMenuVisible_) {
             inventoryVisible_ = false;
-            displayMenuSelection_ = displayMode_ == DisplayMode::Windowed1x
-                ? 0
-                : (displayMode_ == DisplayMode::Windowed2x ? 1 : 2);
+            displayMenuSelection_ = 0;
+            playSfx(SfxId::MenuSelect);
         }
     }
     displayMenuEscapeWasDown_ = escapeDown;
@@ -1856,6 +2047,7 @@ void Engine::update(float dt)
     updateDoors();
     updateInteraction();
     updateItemPickups();
+    updateQuests();
     updateChapterExits();
     chapterExitArrivalLockSeconds_ = std::max(0.0f, chapterExitArrivalLockSeconds_ - dt);
     updateWalkingSfx();
@@ -1863,22 +2055,59 @@ void Engine::update(float dt)
 
 void Engine::updateDisplayMenu()
 {
+    // Pause menu rows: Resume, Music vol, SFX vol, 3 display modes, Quit.
+    constexpr int kPauseRowCount = 7;
     const bool upDown = inputDown(InputAction::Up);
     const bool downDown = inputDown(InputAction::Down);
+    const bool leftDown = inputDown(InputAction::Left);
+    const bool rightDown = inputDown(InputAction::Right);
     const bool useDown = inputDown(InputAction::Interact);
 
     if (upDown && !displayMenuUpWasDown_) {
-        displayMenuSelection_ = (displayMenuSelection_ + 3) % 4;
+        displayMenuSelection_ = (displayMenuSelection_ + kPauseRowCount - 1) % kPauseRowCount;
+        playSfx(SfxId::MenuMove);
     }
     if (downDown && !displayMenuDownWasDown_) {
-        displayMenuSelection_ = (displayMenuSelection_ + 1) % 4;
+        displayMenuSelection_ = (displayMenuSelection_ + 1) % kPauseRowCount;
+        playSfx(SfxId::MenuMove);
     }
-    if (useDown && !displayMenuUseWasDown_) {
-        if (displayMenuSelection_ == 3) {
-            glfwSetWindowShouldClose(window_, GLFW_TRUE);
+
+    // Left/right adjust the volume rows in 10% steps.
+    const bool leftPressed = leftDown && !shopLeftWasDown_;
+    const bool rightPressed = rightDown && !shopRightWasDown_;
+    shopLeftWasDown_ = leftDown;
+    shopRightWasDown_ = rightDown;
+    if ((leftPressed || rightPressed) &&
+        (displayMenuSelection_ == 1 || displayMenuSelection_ == 2)) {
+        const int delta = rightPressed ? 10 : -10;
+        if (displayMenuSelection_ == 1) {
+            musicVolumePct_ = std::clamp(musicVolumePct_ + delta, 0, 100);
         } else {
-            applyDisplayMode(static_cast<DisplayMode>(displayMenuSelection_));
-            displayMenuVisible_ = false;
+            sfxVolumePct_ = std::clamp(sfxVolumePct_ + delta, 0, 100);
+        }
+        applyAudioVolumes();
+        playSfx(SfxId::MenuMove);
+    }
+
+    if (useDown && !displayMenuUseWasDown_) {
+        switch (displayMenuSelection_) {
+            case 0:
+                displayMenuVisible_ = false;
+                playSfx(SfxId::MenuSelect);
+                break;
+            case 1:
+            case 2:
+                break;  // volume rows adjust with left/right
+            case 3:
+            case 4:
+            case 5:
+                applyDisplayMode(static_cast<DisplayMode>(displayMenuSelection_ - 3));
+                displayMenuVisible_ = false;
+                playSfx(SfxId::MenuSelect);
+                break;
+            case 6:
+                glfwSetWindowShouldClose(window_, GLFW_TRUE);
+                break;
         }
     }
 
@@ -1982,6 +2211,7 @@ void Engine::equipWeapon(const WeaponDef& weapon)
         rangedWeapon_ = weapon;
         showNotice(weapon.id + " assigned to X / Pad B");
     }
+    playSfx(SfxId::MenuSelect);
     loadSpriteById(weapon.spriteId);
     loadSpriteById(weapon.ammoSpriteId);
 }
@@ -2166,6 +2396,14 @@ void Engine::useInventoryItem(const std::string& itemId)
         case ItemDefType::Consumable:
             if (def.targetId == "Health" && playerHealth_ < playerMaxHealth_) {
                 playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + value);
+                playSfx(SfxId::Heal);
+                consumed = true;
+            } else if (def.targetId == "MaxHealth") {
+                // Heart container: permanently raises max health and heals full.
+                playerMaxHealth_ += value;
+                playerHealth_ = playerMaxHealth_;
+                showNotice("Max health increased!");
+                playSfx(SfxId::QuestComplete);
                 consumed = true;
             } else if (!def.targetId.empty()) {
                 gameState_.addInt(def.targetId, value);
@@ -2226,6 +2464,31 @@ void Engine::updatePlayer(float dt)
         playerFacingY_ = dy;
     }
 
+    // Dodge roll: a burst of speed with i-frames, on a short cooldown.
+    rollCooldownSeconds_ = std::max(0.0f, rollCooldownSeconds_ - dt);
+    const bool rollDown = inputDown(InputAction::Roll);
+    const bool rollPressed = rollDown && !rollInputWasDown_;
+    rollInputWasDown_ = rollDown;
+    if (rollPressed && rollCooldownSeconds_ <= 0.0f && !playerActionLocksBaseMotion() &&
+        !rangedAiming_ && interactionState_ != InteractionState::InShop) {
+        rollDirX_ = len > 0.0f ? dx : playerFacingX_;
+        rollDirY_ = len > 0.0f ? dy : playerFacingY_;
+        const float rollLen = std::sqrt(rollDirX_ * rollDirX_ + rollDirY_ * rollDirY_);
+        if (rollLen > 0.0f) {
+            rollDirX_ /= rollLen;
+            rollDirY_ /= rollLen;
+        } else {
+            rollDirX_ = 1.0f;
+            rollDirY_ = 0.0f;
+        }
+        setPlayerActionState(PlayerActionState::Roll, kRollSeconds);
+        rollSeconds_ = kRollSeconds;
+        rollCooldownSeconds_ = kRollCooldownSeconds;
+        playerInvulnerableSeconds_ = std::max(playerInvulnerableSeconds_, kRollSeconds + 0.04f);
+        spawnParticles(playerX_, playerY_, 5, 0.75f, 0.72f, 0.62f, 40.0f, 0.35f, 2.0f);
+        playSfx(SfxId::Roll);
+    }
+
     if (!playerActionLocksBaseMotion()) {
         setPlayerActionState(len > 0.0f ? PlayerActionState::Walk : PlayerActionState::Idle);
     }
@@ -2238,14 +2501,29 @@ void Engine::updatePlayer(float dt)
     playerAnimSeconds_ += dt;
     playerIsMoving_ = (len > 0.0f);
 
-    const float speedScale = (playerActionLocksBaseMotion() || rangedAiming_) ? kAttackMoveSpeedScale : 1.0f;
-    const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * speedScale * dt;
-    const float newY = playerY_ + dy * kPlayerSpeedPxPerSecond * speedScale * dt;
-    if (playerCanOccupy(newX, playerY_)) {
-        playerX_ = newX;
-    }
-    if (playerCanOccupy(playerX_, newY)) {
-        playerY_ = newY;
+    if (playerActionState_ == PlayerActionState::Roll) {
+        // Roll movement replaces normal input movement entirely.
+        rollSeconds_ = std::max(0.0f, rollSeconds_ - dt);
+        const float rollStep = kPlayerSpeedPxPerSecond * kRollSpeedScale * dt;
+        const float rx = playerX_ + rollDirX_ * rollStep;
+        const float ry = playerY_ + rollDirY_ * rollStep;
+        if (playerCanOccupy(rx, playerY_)) {
+            playerX_ = rx;
+        }
+        if (playerCanOccupy(playerX_, ry)) {
+            playerY_ = ry;
+        }
+        playerIsMoving_ = true;
+    } else {
+        const float speedScale = (playerActionLocksBaseMotion() || rangedAiming_) ? kAttackMoveSpeedScale : 1.0f;
+        const float newX = playerX_ + dx * kPlayerSpeedPxPerSecond * speedScale * dt;
+        const float newY = playerY_ + dy * kPlayerSpeedPxPerSecond * speedScale * dt;
+        if (playerCanOccupy(newX, playerY_)) {
+            playerX_ = newX;
+        }
+        if (playerCanOccupy(playerX_, newY)) {
+            playerY_ = newY;
+        }
     }
 
     // Apply and decay knockback from a recent hit (collision-checked per axis).
@@ -2322,6 +2600,7 @@ void Engine::updateAttack(float dt)
         if (playerActionSeconds_ <= 0.0f &&
             (playerActionState_ == PlayerActionState::MeleeAttack ||
                 playerActionState_ == PlayerActionState::RangedAttack ||
+                playerActionState_ == PlayerActionState::Roll ||
                 playerActionState_ == PlayerActionState::Hurt)) {
             setPlayerActionState(playerIsMoving_ ? PlayerActionState::Walk : PlayerActionState::Idle);
         }
@@ -2343,6 +2622,7 @@ void Engine::updateAttack(float dt)
         meleeActiveSeconds_ = kMeleeActiveSeconds;
         meleeElapsedSeconds_ = 0.0f;
         meleeHitEnemies_.clear();
+        playSfx(SfxId::MeleeSwing);
     }
 
     // Active-frames hit window: the swing only connects between windup and recovery.
@@ -2566,8 +2846,13 @@ void Engine::fireRangedWeapon(bool misfire)
         proj.falloffStartPx = weapon.falloffStartPx;
         proj.falloffEndPx = weapon.falloffEndPx;
         proj.falloffMinScale = weapon.falloffMinDamageScale;
+        // Rebounding shots settle into recoverable ammo pickups.
+        if (weapon.wallBehavior == ProjectileWallBehavior::Rebound) {
+            proj.recoverAmmoItemId = ammoItemIdForWeapon(weapon);
+        }
         projectiles_.push_back(proj);
     }
+    playSfx(misfire ? SfxId::Misfire : SfxId::Shoot);
     if (misfire) {
         showNotice("Misfire!");
     }
@@ -2710,6 +2995,7 @@ bool Engine::playerActionLocksBaseMotion() const
 {
     return playerActionState_ == PlayerActionState::MeleeAttack ||
         playerActionState_ == PlayerActionState::RangedAttack ||
+        playerActionState_ == PlayerActionState::Roll ||
         playerActionState_ == PlayerActionState::Hurt ||
         playerActionState_ == PlayerActionState::Dead;
 }
@@ -2723,6 +3009,8 @@ std::string Engine::playerActionName() const
             return playerAttackAnimOverride_.empty() ? "attack_1" : playerAttackAnimOverride_;
         case PlayerActionState::RangedAttack:
             return playerAttackAnimOverride_.empty() ? "cast" : playerAttackAnimOverride_;
+        case PlayerActionState::Roll:
+            return "roll";
         case PlayerActionState::Hurt:
             return "hit_react";
         case PlayerActionState::Dead:
@@ -2778,6 +3066,14 @@ void Engine::applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, fl
     entity.knockbackVx = dirX * kb;
     entity.knockbackVy = dirY * kb;
 
+    // Impact feedback: sparks, a damage number, shake, and a beat of hitstop.
+    spawnFloatingText(entity.x, entity.y - 12.0f, std::to_string(damage), 1.0f, 0.95f, 0.55f);
+    spawnParticles(entity.x, entity.y, lethal ? 14 : 6, 1.0f, 0.92f, 0.55f,
+        lethal ? 110.0f : 70.0f, lethal ? 0.5f : 0.28f, 2.0f, lethal ? 80.0f : 0.0f);
+    addScreenShake(lethal ? 0.35f : 0.15f);
+    hitstopSeconds_ = std::max(hitstopSeconds_, lethal ? kHitstopKillSeconds : kHitstopMeleeSeconds);
+    playSfx(lethal ? SfxId::EnemyDeath : SfxId::MeleeHit);
+
     if (lethal) {
         entity.deathSeconds = 0.0f;
         if (entity.animState != "dead") {
@@ -2786,6 +3082,9 @@ void Engine::applyEnemyHit(RuntimePathEntity& entity, int damage, float dirX, fl
         }
     } else {
         entity.hitstunSeconds = std::max(0.0f, entity.path.combat.hitstunSeconds);
+        // Getting hit interrupts a winding attack — aggression is rewarded.
+        entity.windupAttackIndex = -1;
+        entity.windupRemainingSeconds = 0.0f;
         if (entity.hitstunSeconds > 0.0f && entity.animState != "hurt") {
             entity.animState = "hurt";
             entity.animSeconds = 0.0f;
@@ -2817,10 +3116,15 @@ void Engine::updateProjectiles(float dt)
             continue;
         }
 
-        // Settled (grounded) projectiles are inert — rest briefly, then despawn.
+        // Settled (grounded) projectiles are inert — rest briefly, then either
+        // become a recoverable ammo pickup or despawn.
         if (proj.settleSeconds >= 0.0f) {
             proj.settleSeconds += dt;
             if (proj.settleSeconds >= kProjectileSettleSeconds) {
+                if (!proj.recoverAmmoItemId.empty()) {
+                    spawnGroundPickup(proj.x, proj.y, ItemPickupType::Ammo,
+                        proj.recoverAmmoItemId, 1, proj.spriteId);
+                }
                 proj.dead = true;
             }
             continue;
@@ -2922,6 +3226,16 @@ void Engine::updateItemPickups()
     for (RuntimeItemEntity& item : itemEntities_) {
         if (item.collected) {
             continue;
+        }
+        // Magnetize: pickups drift toward the player when close, speeding up
+        // as they approach.
+        const float dx = playerX_ - item.placement.x;
+        const float dy = playerY_ - item.placement.y;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist > kItemPickupRadius && dist <= kItemMagnetRadius) {
+            const float pull = kItemMagnetSpeed * (1.0f - dist / kItemMagnetRadius + 0.25f);
+            item.placement.x += dx / dist * pull * kFixedStepSeconds;
+            item.placement.y += dy / dist * pull * kFixedStepSeconds;
         }
         if (playerOverlapsItem(item)) {
             collectItem(item);
@@ -3036,6 +3350,10 @@ bool Engine::activateDoor(const MapDoorPlacement& door)
         if (door.targetScreenId.empty()) {
             gameState_.setBool(doorStateId(door, "unlocked"), true);
             playSoundEffect(door.openSoundPath);
+            if (!door.openingAnimation.empty()) {
+                animatingDoorId_ = door.id;
+                doorAnimSeconds_ = 0.0f;
+            }
             if (door.consumeKey) {
                 (void)removeInventoryItem(door.requiredItemId, 1);
             }
@@ -3067,6 +3385,10 @@ bool Engine::activateDoor(const MapDoorPlacement& door)
         return false;
     }
     playSoundEffect(door.openSoundPath);
+    if (!door.openingAnimation.empty()) {
+        animatingDoorId_ = door.id;
+        doorAnimSeconds_ = 0.0f;
+    }
     pendingDoorCloseSoundPath_ = door.closeSoundPath;
 
     if (door.lockMode == DoorLockMode::RequiresItem && door.consumeKey) {
@@ -3264,9 +3586,268 @@ void Engine::playSoundEffect(const std::string& configuredPath)
     }
 }
 
+void Engine::playSfx(SfxId id)
+{
+    if (musicPlayer_ == nullptr) {
+        return;
+    }
+    std::vector<std::int16_t> pcm;
+    switch (id) {
+        case SfxId::MeleeSwing:
+            appendTone(pcm, 0.0f, 0.0f, 0.05f, SynthWave::Noise, 0.22f, 14.0f);
+            appendTone(pcm, 340.0f, 160.0f, 0.05f, SynthWave::Saw, 0.14f, 10.0f);
+            break;
+        case SfxId::MeleeHit:
+            appendTone(pcm, 0.0f, 0.0f, 0.03f, SynthWave::Noise, 0.30f, 18.0f);
+            appendTone(pcm, 170.0f, 70.0f, 0.09f, SynthWave::Square, 0.42f, 9.0f);
+            break;
+        case SfxId::EnemyDeath:
+            appendTone(pcm, 440.0f, 440.0f, 0.06f, SynthWave::Square, 0.30f, 4.0f);
+            appendTone(pcm, 330.0f, 330.0f, 0.06f, SynthWave::Square, 0.30f, 4.0f);
+            appendTone(pcm, 220.0f, 165.0f, 0.12f, SynthWave::Square, 0.30f, 6.0f);
+            break;
+        case SfxId::PlayerHurt:
+            appendTone(pcm, 220.0f, 110.0f, 0.16f, SynthWave::Saw, 0.40f, 6.0f);
+            break;
+        case SfxId::PlayerDeath:
+            appendTone(pcm, 392.0f, 392.0f, 0.14f, SynthWave::Square, 0.30f, 2.5f);
+            appendTone(pcm, 330.0f, 330.0f, 0.14f, SynthWave::Square, 0.30f, 2.5f);
+            appendTone(pcm, 262.0f, 262.0f, 0.16f, SynthWave::Square, 0.30f, 2.5f);
+            appendTone(pcm, 196.0f, 180.0f, 0.34f, SynthWave::Square, 0.32f, 3.0f);
+            break;
+        case SfxId::Shoot:
+            appendTone(pcm, 900.0f, 240.0f, 0.09f, SynthWave::Square, 0.28f, 8.0f);
+            break;
+        case SfxId::Misfire:
+            appendTone(pcm, 200.0f, 60.0f, 0.10f, SynthWave::Saw, 0.20f, 5.0f);
+            appendTone(pcm, 0.0f, 0.0f, 0.14f, SynthWave::Noise, 0.16f, 6.0f);
+            break;
+        case SfxId::Pickup:
+            appendTone(pcm, 660.0f, 660.0f, 0.05f, SynthWave::Square, 0.24f, 3.0f);
+            appendTone(pcm, 990.0f, 990.0f, 0.09f, SynthWave::Square, 0.24f, 5.0f);
+            break;
+        case SfxId::Coin:
+            appendTone(pcm, 988.0f, 988.0f, 0.05f, SynthWave::Square, 0.22f, 3.0f);
+            appendTone(pcm, 1319.0f, 1319.0f, 0.10f, SynthWave::Square, 0.22f, 6.0f);
+            break;
+        case SfxId::Heal:
+            appendTone(pcm, 523.0f, 523.0f, 0.07f, SynthWave::Sine, 0.30f, 3.0f);
+            appendTone(pcm, 659.0f, 659.0f, 0.07f, SynthWave::Sine, 0.30f, 3.0f);
+            appendTone(pcm, 784.0f, 784.0f, 0.14f, SynthWave::Sine, 0.30f, 4.0f);
+            break;
+        case SfxId::Roll:
+            appendTone(pcm, 0.0f, 0.0f, 0.10f, SynthWave::Noise, 0.14f, 9.0f);
+            break;
+        case SfxId::MenuMove:
+            appendTone(pcm, 880.0f, 880.0f, 0.03f, SynthWave::Square, 0.16f, 6.0f);
+            break;
+        case SfxId::MenuSelect:
+            appendTone(pcm, 660.0f, 660.0f, 0.04f, SynthWave::Square, 0.18f, 4.0f);
+            appendTone(pcm, 880.0f, 880.0f, 0.06f, SynthWave::Square, 0.18f, 5.0f);
+            break;
+        case SfxId::QuestComplete:
+            appendTone(pcm, 523.0f, 523.0f, 0.09f, SynthWave::Square, 0.26f, 2.5f);
+            appendTone(pcm, 659.0f, 659.0f, 0.09f, SynthWave::Square, 0.26f, 2.5f);
+            appendTone(pcm, 784.0f, 784.0f, 0.09f, SynthWave::Square, 0.26f, 2.5f);
+            appendSilence(pcm, 0.03f);
+            appendTone(pcm, 1047.0f, 1047.0f, 0.22f, SynthWave::Square, 0.28f, 3.5f);
+            break;
+        case SfxId::BossRoar:
+            appendTone(pcm, 110.0f, 50.0f, 0.35f, SynthWave::Saw, 0.45f, 3.0f);
+            appendTone(pcm, 0.0f, 0.0f, 0.12f, SynthWave::Noise, 0.20f, 6.0f);
+            break;
+        case SfxId::Telegraph:
+            appendTone(pcm, 1200.0f, 900.0f, 0.04f, SynthWave::Square, 0.12f, 8.0f);
+            break;
+    }
+    (void)musicPlayer_->playSamples(pcm, kSynthSampleRate, nullptr);
+}
+
+void Engine::applyAudioVolumes()
+{
+    if (musicPlayer_ == nullptr) {
+        return;
+    }
+    musicVolumePct_ = std::clamp(musicVolumePct_, 0, 100);
+    sfxVolumePct_ = std::clamp(sfxVolumePct_, 0, 100);
+    musicPlayer_->setVolumes(musicVolumePct_ * 128 / 100, sfxVolumePct_ * 128 / 100);
+}
+
+void Engine::addScreenShake(float trauma)
+{
+    shakeTrauma_ = std::clamp(shakeTrauma_ + trauma, 0.0f, 1.0f);
+}
+
+void Engine::spawnParticles(float x, float y, int count, float r, float g, float b,
+    float speed, float life, float size, float gravity)
+{
+    for (int i = 0; i < count; ++i) {
+        Particle particle;
+        const float angle = randomUniform(0.0f, 2.0f * kPi);
+        const float velocity = speed * randomUniform(0.35f, 1.0f);
+        particle.x = x;
+        particle.y = y;
+        particle.vx = std::cos(angle) * velocity;
+        particle.vy = std::sin(angle) * velocity;
+        particle.maxLife = life * randomUniform(0.6f, 1.15f);
+        particle.life = particle.maxLife;
+        particle.size = size * randomUniform(0.7f, 1.3f);
+        particle.r = r;
+        particle.g = g;
+        particle.b = b;
+        particle.gravity = gravity;
+        particles_.push_back(particle);
+    }
+}
+
+void Engine::spawnFloatingText(float x, float y, const std::string& text,
+    float r, float g, float b, float scale)
+{
+    FloatingText floating;
+    floating.x = x + randomUniform(-3.0f, 3.0f);
+    floating.y = y;
+    floating.text = text;
+    floating.maxLife = 0.8f;
+    floating.life = floating.maxLife;
+    floating.scale = scale;
+    floating.r = r;
+    floating.g = g;
+    floating.b = b;
+    floatingTexts_.push_back(std::move(floating));
+}
+
+void Engine::updateParticles(float dt)
+{
+    for (Particle& particle : particles_) {
+        particle.life -= dt;
+        particle.vy += particle.gravity * dt;
+        particle.x += particle.vx * dt;
+        particle.y += particle.vy * dt;
+    }
+    particles_.erase(
+        std::remove_if(particles_.begin(), particles_.end(),
+            [](const Particle& p) { return p.life <= 0.0f; }),
+        particles_.end());
+
+    for (FloatingText& floating : floatingTexts_) {
+        floating.life -= dt;
+        floating.y -= 26.0f * dt;
+    }
+    floatingTexts_.erase(
+        std::remove_if(floatingTexts_.begin(), floatingTexts_.end(),
+            [](const FloatingText& t) { return t.life <= 0.0f; }),
+        floatingTexts_.end());
+}
+
+bool Engine::questStarted(const QuestDef& quest) const
+{
+    return gameConditionPasses(quest.startCondition);
+}
+
+bool Engine::questComplete(const QuestDef& quest) const
+{
+    return gameConditionPasses(quest.completeCondition);
+}
+
+void Engine::updateQuests()
+{
+    for (const QuestDef& quest : questDefs_) {
+        if (!questStarted(quest) || !questComplete(quest)) {
+            continue;
+        }
+        if (questCompleteNotified_.insert(quest.id).second) {
+            showNotice("Quest complete: " + quest.name, 2.6f);
+            playSfx(SfxId::QuestComplete);
+        }
+    }
+}
+
+void Engine::spawnGroundPickup(float x, float y, ItemPickupType type, const std::string& targetId,
+    int quantity, const std::string& spriteId)
+{
+    static int dropCounter = 0;
+    RuntimeItemEntity entity;
+    entity.placement.id = "runtime_drop_" + std::to_string(++dropCounter);
+    entity.placement.pickupType = type;
+    entity.placement.targetId = targetId;
+    entity.placement.quantity = std::max(1, quantity);
+    entity.placement.x = x;
+    entity.placement.y = y;
+    entity.placement.respawn = true;  // runtime drops are never persisted
+    entity.placement.spriteId = spriteId;
+    if (!spriteId.empty()) {
+        loadSpriteById(spriteId);
+    }
+    itemEntities_.push_back(std::move(entity));
+}
+
+void Engine::spawnEnemyDrop(const RuntimePathEntity& entity)
+{
+    const EnemyCombatStats& combat = entity.path.combat;
+    if (!combat.dropItemId.empty() && randomUniform(0.0f, 1.0f) < combat.dropChance) {
+        const int quantity = combat.dropQuantityMax > combat.dropQuantityMin
+            ? static_cast<int>(std::lround(randomUniform(static_cast<float>(combat.dropQuantityMin),
+                  static_cast<float>(combat.dropQuantityMax))))
+            : combat.dropQuantityMin;
+        std::string spriteId;
+        for (const ItemDef& def : itemDefs_) {
+            if (def.id == combat.dropItemId) {
+                spriteId = def.spriteId;
+                break;
+            }
+        }
+        spawnGroundPickup(entity.x, entity.y, ItemPickupType::ProjectItem,
+            combat.dropItemId, quantity, spriteId);
+        return;
+    }
+    // Mercy hearts: a struggling player occasionally gets a small heal drop.
+    if (playerHealth_ * 3 <= playerMaxHealth_ && randomUniform(0.0f, 1.0f) < 0.35f) {
+        spawnGroundPickup(entity.x, entity.y, ItemPickupType::Health, {}, 2, {});
+    }
+}
+
+void Engine::beginPlayerDeath()
+{
+    playerDead_ = true;
+    deathSeconds_ = 0.0f;
+    setPlayerActionState(PlayerActionState::Dead);
+    cancelRangedAim();
+    endInteraction();
+    inventoryVisible_ = false;
+    displayMenuVisible_ = false;
+    addScreenShake(0.8f);
+    hitstopSeconds_ = std::max(hitstopSeconds_, 0.12f);
+    spawnParticles(playerX_, playerY_, 18, 0.92f, 0.18f, 0.16f, 90.0f, 0.6f, 2.5f, 60.0f);
+    playSfx(SfxId::PlayerDeath);
+}
+
+void Engine::finishPlayerDeath()
+{
+    // Losing a fight costs a slice of the coin purse; make death matter.
+    const int money = gameState_.getInt("Money", 0);
+    const int loss = static_cast<int>(std::ceil(static_cast<float>(money) * kDeathCoinLossFraction));
+    if (loss > 0) {
+        gameState_.setInt("Money", money - loss);
+        showNotice("Lost " + std::to_string(loss) + " coins", 2.4f);
+    }
+    playerDead_ = false;
+    deathSeconds_ = 0.0f;
+    // Reload the screen so enemies and hazards reset for the retry.
+    if (activeScreen_ != nullptr) {
+        const std::string screenId = activeScreen_->id;
+        std::string error;
+        (void)loadScreen(screenId, &error);
+    }
+    respawnPlayerAtMapSpawn();
+    saveRuntimeState();
+}
+
 void Engine::collectItem(RuntimeItemEntity& item)
 {
     item.collected = true;
+    const float pickupX = item.placement.x;
+    const float pickupY = item.placement.y;
+    SfxId pickupSfx = SfxId::Pickup;
     switch (item.placement.pickupType) {
         case ItemPickupType::Weapon: {
             for (const WeaponDef& weapon : weaponDefs_) {
@@ -3298,6 +3879,8 @@ void Engine::collectItem(RuntimeItemEntity& item)
                     }
                 }
                 addInventoryItem(invKey, std::max(1, item.placement.quantity));
+                spawnFloatingText(pickupX, pickupY - 8.0f,
+                    "+" + std::to_string(std::max(1, item.placement.quantity)), 0.55f, 0.85f, 1.0f, 0.8f);
                 const auto itemDef = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&invKey](const ItemDef& def) {
                     return def.type == ItemDefType::Ammo && def.id == invKey;
                 });
@@ -3309,6 +3892,9 @@ void Engine::collectItem(RuntimeItemEntity& item)
         }
         case ItemPickupType::Health:
             playerHealth_ = std::min(playerMaxHealth_, playerHealth_ + item.placement.quantity);
+            spawnFloatingText(pickupX, pickupY - 8.0f,
+                "+" + std::to_string(item.placement.quantity) + " HP", 0.35f, 0.95f, 0.45f, 0.8f);
+            pickupSfx = SfxId::Heal;
             break;
         case ItemPickupType::ProjectItem: {
             const auto defIt = std::find_if(itemDefs_.begin(), itemDefs_.end(), [&item](const ItemDef& def) {
@@ -3339,6 +3925,9 @@ void Engine::collectItem(RuntimeItemEntity& item)
                     break;
                 case ItemDefType::Currency:
                     gameState_.addInt(currencyStateId(def), amount * std::max(1, def.value));
+                    spawnFloatingText(pickupX, pickupY - 8.0f,
+                        "+" + std::to_string(amount * std::max(1, def.value)), 1.0f, 0.90f, 0.42f, 0.8f);
+                    pickupSfx = SfxId::Coin;
                     break;
                 case ItemDefType::Mana:
                 case ItemDefType::Key:
@@ -3353,6 +3942,8 @@ void Engine::collectItem(RuntimeItemEntity& item)
             break;
         }
     }
+    playSfx(pickupSfx);
+    spawnParticles(pickupX, pickupY, 7, 1.0f, 0.95f, 0.60f, 55.0f, 0.4f, 1.8f, -40.0f);
     if (!item.placement.respawn) {
         gameState_.setBool(itemStateId(item.placement), true);
         saveRuntimeState();
@@ -3880,6 +4471,7 @@ void Engine::buyShopItem(RuntimeNpcEntity& npc, int index, int quantity)
     }
     gameState_.setInt("Money", money - total);
     addInventoryItem(item.itemId, quantity);
+    playSfx(SfxId::Coin);
     if (!item.unlimited) {
         item.quantity = std::max(0, item.quantity - quantity);
     }
@@ -3914,6 +4506,7 @@ void Engine::sellInventoryItem(const std::string& itemId)
     }
     if (removeInventoryItem(itemId, 1)) {
         gameState_.addInt("Money", price);
+        playSfx(SfxId::Coin);
     }
 }
 
@@ -4306,6 +4899,27 @@ void Engine::renderDoors(bool aboveWalls) const
         auto spriteIt = loadedSprites_.find(door.spriteId);
         if (spriteIt != loadedSprites_.end() && spriteIt->second.loaded && spriteIt->second.texture.id != 0) {
             const SpriteFrameDef* frame = spriteFrame(spriteIt->second);
+            // Opening-animation playback: while this door is animating, step
+            // through its openingAnimation frames once instead of the idle loop.
+            if (!door.openingAnimation.empty() && door.id == animatingDoorId_ && doorAnimSeconds_ >= 0.0f) {
+                std::vector<const SpriteFrameDef*> animFrames;
+                for (const SpriteFrameDef& f : spriteIt->second.metadata.frames) {
+                    if (f.type == door.openingAnimation) {
+                        animFrames.push_back(&f);
+                    }
+                }
+                if (!animFrames.empty()) {
+                    int t = static_cast<int>(doorAnimSeconds_ * 1000.0f);
+                    frame = animFrames.back();
+                    for (const SpriteFrameDef* f : animFrames) {
+                        t -= std::max(1, f->durationMs);
+                        if (t < 0) {
+                            frame = f;
+                            break;
+                        }
+                    }
+                }
+            }
             if (frame != nullptr && spriteIt->second.texture.width > 0 && spriteIt->second.texture.height > 0) {
                 const float u0 = static_cast<float>(frame->x) / static_cast<float>(spriteIt->second.texture.width);
                 const float v0 = static_cast<float>(frame->y) / static_cast<float>(spriteIt->second.texture.height);
@@ -4576,6 +5190,11 @@ void Engine::updatePaths(float dt)
             continue;
         }
 
+        // Telegraphing enemies hold still so the windup reads clearly.
+        if (entity.windupAttackIndex >= 0) {
+            continue;
+        }
+
         // Aggro: chase the player directly when within range (overrides waypoint following).
         const float aggroRange = entity.path.combat.aggroRange;
         if (!entity.pathHidden && aggroRange > 0.0f) {
@@ -4593,18 +5212,97 @@ void Engine::updatePaths(float dt)
                     entity.animState = "walk";
                     entity.animSeconds = 0.0f;
                 }
-                const float speed = entity.path.speed > 0.0f ? entity.path.speed : 64.0f;
-                if (distP > 1.0f) {
-                    const float step = std::min(distP, speed * dt);
-                    const float nx = entity.x + dxp / distP * step;
-                    const float ny = entity.y + dyp / distP * step;
-                    if (entityCanOccupy(entity, nx, entity.y)) entity.x = nx;
-                    if (entityCanOccupy(entity, entity.x, ny)) entity.y = ny;
-                    entity.facingX = dxp / distP;
-                    entity.facingY = dyp / distP;
+                const bool enraged = entity.path.combat.isBoss &&
+                    entity.health * 2 <= entity.path.combat.maxHealth;
+                const float baseSpeed = entity.path.speed > 0.0f ? entity.path.speed : 64.0f;
+                const float speed = enraged ? baseSpeed * kBossEnrageSpeedScale : baseSpeed;
+                const auto moveWithCollision = [this, &entity, dt](float dirX, float dirY, float moveSpeed) {
+                    const float nx = entity.x + dirX * moveSpeed * dt;
+                    const float ny = entity.y + dirY * moveSpeed * dt;
+                    bool moved = false;
+                    if (entityCanOccupy(entity, nx, entity.y)) { entity.x = nx; moved = true; }
+                    if (entityCanOccupy(entity, entity.x, ny)) { entity.y = ny; moved = true; }
+                    return moved;
+                };
+                const float toPlayerX = distP > 0.0f ? dxp / distP : 1.0f;
+                const float toPlayerY = distP > 0.0f ? dyp / distP : 0.0f;
+
+                switch (entity.path.combat.aiStyle) {
+                    case EnemyAiStyle::Kiter: {
+                        // Hold a comfortable firing band: flee when crowded,
+                        // close when far, strafe sideways in between.
+                        entity.facingX = toPlayerX;
+                        entity.facingY = toPlayerY;
+                        const float nearBand = aggroRange * 0.40f;
+                        const float farBand = aggroRange * 0.70f;
+                        if (distP < nearBand) {
+                            (void)moveWithCollision(-toPlayerX, -toPlayerY, speed);
+                        } else if (distP > farBand) {
+                            (void)moveWithCollision(toPlayerX, toPlayerY, speed * 0.8f);
+                        } else {
+                            const float side = std::sin(runtimeSeconds_ * 0.9f +
+                                static_cast<float>(entity.path.id.size())) >= 0.0f ? 1.0f : -1.0f;
+                            (void)moveWithCollision(-toPlayerY * side, toPlayerX * side, speed * 0.55f);
+                        }
+                        break;
+                    }
+                    case EnemyAiStyle::Charger: {
+                        if (entity.chargeState == 2) {
+                            // Dashing in a locked straight line.
+                            entity.chargeTimerSeconds -= dt;
+                            const bool moved = moveWithCollision(
+                                entity.chargeDirX, entity.chargeDirY, speed * kChargeSpeedScale);
+                            if (!moved) {
+                                // Wall slam: dazed and punishable.
+                                entity.chargeState = 0;
+                                entity.chargeCooldownSeconds = kChargeCooldownSeconds;
+                                entity.hitstunSeconds = kChargeStunSeconds;
+                                addScreenShake(0.25f);
+                                spawnParticles(entity.x, entity.y, 8, 0.85f, 0.80f, 0.65f,
+                                    70.0f, 0.4f, 2.0f);
+                            } else if (entity.chargeTimerSeconds <= 0.0f) {
+                                entity.chargeState = 0;
+                                entity.chargeCooldownSeconds = kChargeCooldownSeconds;
+                            }
+                        } else if (entity.chargeState == 1) {
+                            // Winding up: face the player, hold position.
+                            entity.chargeTimerSeconds -= dt;
+                            entity.facingX = toPlayerX;
+                            entity.facingY = toPlayerY;
+                            if (entity.chargeTimerSeconds <= 0.0f) {
+                                entity.chargeState = 2;
+                                entity.chargeDirX = toPlayerX;
+                                entity.chargeDirY = toPlayerY;
+                                entity.chargeTimerSeconds = std::min(kChargeMaxSeconds,
+                                    distP / std::max(1.0f, speed * kChargeSpeedScale) + 0.15f);
+                            }
+                        } else {
+                            // Stalk slowly until close enough to launch a charge.
+                            entity.facingX = toPlayerX;
+                            entity.facingY = toPlayerY;
+                            if (distP > 1.0f) {
+                                (void)moveWithCollision(toPlayerX, toPlayerY, speed * 0.55f);
+                            }
+                            if (distP <= aggroRange * 0.75f && entity.chargeCooldownSeconds <= 0.0f) {
+                                entity.chargeState = 1;
+                                entity.chargeTimerSeconds = kChargeWindupSeconds;
+                                playSfx(SfxId::Telegraph);
+                            }
+                        }
+                        break;
+                    }
+                    case EnemyAiStyle::Chaser:
+                    default:
+                        if (distP > 1.0f) {
+                            (void)moveWithCollision(toPlayerX, toPlayerY, std::min(distP / dt, speed));
+                            entity.facingX = toPlayerX;
+                            entity.facingY = toPlayerY;
+                        }
+                        break;
                 }
                 continue;  // skip waypoint movement while chasing
             }
+            entity.chargeState = 0;
             // Lost aggro this frame: head back to the nearest point on the path, not a stale one.
             if (wasAggro && !entity.path.waypoints.empty()) {
                 PathWaypoint nearest;
@@ -4777,13 +5475,27 @@ void Engine::updateEnemyCombat(float dt)
         entity.animSeconds += dt;
 
         entity.contactCooldownSeconds = std::max(0.0f, entity.contactCooldownSeconds - dt);
+        entity.chargeCooldownSeconds = std::max(0.0f, entity.chargeCooldownSeconds - dt);
+
+        // Bosses enrage below half health: attacks cycle noticeably faster.
+        const bool enraged = entity.path.combat.isBoss &&
+            entity.health * 2 <= entity.path.combat.maxHealth;
+        if (enraged && !entity.enrageAnnounced) {
+            entity.enrageAnnounced = true;
+            addScreenShake(0.5f);
+            playSfx(SfxId::BossRoar);
+            const std::string name = entity.path.combat.bossName.empty()
+                ? entity.path.enemyId : entity.path.combat.bossName;
+            showNotice(name + " is enraged!", 2.2f);
+        }
+        const float cooldownDt = enraged ? dt * kBossEnrageCooldownScale : dt;
 
         // Tick per-attack cooldowns (resize if needed — e.g., first frame after load)
         if (entity.attackCooldowns.size() < entity.path.combat.attacks.size()) {
             entity.attackCooldowns.resize(entity.path.combat.attacks.size(), 0.0f);
         }
         for (float& cd : entity.attackCooldowns) {
-            cd = std::max(0.0f, cd - dt);
+            cd = std::max(0.0f, cd - cooldownDt);
         }
 
         // Staggered enemies cannot attack while in hitstun.
@@ -4801,22 +5513,23 @@ void Engine::updateEnemyCombat(float dt)
             entity.contactCooldownSeconds = entity.path.combat.attackCooldownSeconds;
         }
 
-        // Active attacks
-        for (std::size_t ai = 0; ai < entity.path.combat.attacks.size(); ++ai) {
-            const EnemyAttackDef& atk = entity.path.combat.attacks[ai];
-            if (entity.attackCooldowns[ai] > 0.0f) continue;
-
-            if (atk.type == EnemyAttackType::Melee) {
-                if (distToPlayer <= atk.range) {
-                    damagePlayer(atk.damage, entity.x, entity.y);
-                    entity.attackCooldowns[ai] = atk.cooldown;
-                    if (!atk.animState.empty() && entity.animState != atk.animState) {
-                        entity.animState = atk.animState;
-                        entity.animSeconds = 0.0f;
+        // Resolve a winding attack: the telegraph elapsed, so the hit lands now.
+        if (entity.windupAttackIndex >= 0) {
+            entity.windupRemainingSeconds -= dt;
+            if (entity.windupRemainingSeconds > 0.0f) {
+                continue;  // still telegraphing; no new attacks start
+            }
+            const std::size_t ai = static_cast<std::size_t>(entity.windupAttackIndex);
+            entity.windupAttackIndex = -1;
+            entity.windupRemainingSeconds = 0.0f;
+            if (ai < entity.path.combat.attacks.size()) {
+                const EnemyAttackDef& atk = entity.path.combat.attacks[ai];
+                if (atk.type == EnemyAttackType::Melee) {
+                    // The player can dodge out of reach during the windup.
+                    if (distToPlayer <= atk.range * kTelegraphMeleeRangeSlack) {
+                        damagePlayer(atk.damage, entity.x, entity.y);
                     }
-                }
-            } else if (atk.type == EnemyAttackType::Ranged) {
-                if (distToPlayer <= atk.range && distToPlayer > 0.0f) {
+                } else if (atk.type == EnemyAttackType::Ranged && distToPlayer > 0.0f) {
                     RuntimeProjectile proj;
                     proj.x = entity.x;
                     proj.y = entity.y;
@@ -4828,13 +5541,46 @@ void Engine::updateEnemyCombat(float dt)
                     proj.fromEnemy = true;
                     proj.wallBehavior = ProjectileWallBehavior::Break;
                     projectiles_.push_back(proj);
-                    entity.attackCooldowns[ai] = atk.cooldown;
-                    if (!atk.animState.empty() && entity.animState != atk.animState) {
-                        entity.animState = atk.animState;
-                        entity.animSeconds = 0.0f;
-                    }
                 }
             }
+            continue;
+        }
+
+        // Start attacks: instead of landing instantly, begin a telegraphed windup.
+        for (std::size_t ai = 0; ai < entity.path.combat.attacks.size(); ++ai) {
+            const EnemyAttackDef& atk = entity.path.combat.attacks[ai];
+            if (entity.attackCooldowns[ai] > 0.0f) continue;
+            if (atk.type == EnemyAttackType::Contact) continue;
+            if (distToPlayer > atk.range || distToPlayer <= 0.0f) continue;
+
+            entity.attackCooldowns[ai] = std::max(0.05f, atk.cooldown);
+            if (atk.windupSeconds > 0.0f) {
+                entity.windupAttackIndex = static_cast<int>(ai);
+                entity.windupRemainingSeconds = atk.windupSeconds;
+                playSfx(SfxId::Telegraph);
+            } else {
+                // Zero windup keeps the legacy instant behaviour.
+                if (atk.type == EnemyAttackType::Melee) {
+                    damagePlayer(atk.damage, entity.x, entity.y);
+                } else {
+                    RuntimeProjectile proj;
+                    proj.x = entity.x;
+                    proj.y = entity.y;
+                    proj.vx = (ex / distToPlayer) * atk.projectileSpeed;
+                    proj.vy = (ey / distToPlayer) * atk.projectileSpeed;
+                    proj.maxDistance = atk.range;
+                    proj.damage = atk.damage;
+                    proj.spriteId = atk.ammoSpriteId;
+                    proj.fromEnemy = true;
+                    proj.wallBehavior = ProjectileWallBehavior::Break;
+                    projectiles_.push_back(proj);
+                }
+            }
+            if (!atk.animState.empty() && entity.animState != atk.animState) {
+                entity.animState = atk.animState;
+                entity.animSeconds = 0.0f;
+            }
+            break;  // one attack starts per frame
         }
     }
 }
@@ -4854,6 +5600,7 @@ void Engine::updateEnemyDeaths(float dt)
                     entity.path.combat.killVariable), entity.path.combat.killAmount);
             }
             applyEffects(entity.path.combat.defeatEffectIds);
+            spawnEnemyDrop(entity);
             // Persist the defeat only when the enemy is not configured to respawn.
             if (!entity.path.respawn && !activeScreen_->respawnEnemies) {
                 recordEnemyDefeated(activeScreen_->id, entity);
@@ -4879,6 +5626,10 @@ void Engine::saveRuntimeState()
     if (activeScreen_ != nullptr) {
         gameState_.setLocation(chapter_.id, activeScreen_->id, playerX_, playerY_);
     }
+    gameState_.setInt("player.maxHealth", playerMaxHealth_);
+    gameState_.setInt("player.health", std::max(1, playerHealth_));
+    gameState_.setInt("settings.musicVolume", musicVolumePct_);
+    gameState_.setInt("settings.sfxVolume", sfxVolumePct_);
     const std::filesystem::path savePath = assetPath(projectRoot_, "assets/game/save.adstate");
     (void)saveGameState(savePath, gameState_, nullptr);
 }
@@ -5244,6 +5995,13 @@ void Engine::damagePlayer(int amount, float sourceX, float sourceY)
     playerInvulnerableSeconds_ = kPlayerDamageInvulnerableSeconds;
     playerHitFlashSeconds_ = kPlayerHitFlashSeconds;
 
+    // Hurt feedback: red burst, damage number, shake, and a beat of hitstop.
+    spawnFloatingText(playerX_, playerY_ - 14.0f, "-" + std::to_string(amount), 1.0f, 0.30f, 0.28f);
+    spawnParticles(playerX_, playerY_, 8, 0.95f, 0.22f, 0.18f, 80.0f, 0.35f, 2.0f);
+    addScreenShake(0.4f);
+    hitstopSeconds_ = std::max(hitstopSeconds_, kHitstopPlayerHurtSeconds);
+    playSfx(SfxId::PlayerHurt);
+
     // Knockback away from the damage source (skipped when source == player position).
     const float dx = playerX_ - sourceX;
     const float dy = playerY_ - sourceY;
@@ -5254,8 +6012,7 @@ void Engine::damagePlayer(int amount, float sourceX, float sourceY)
     }
 
     if (playerHealth_ <= 0) {
-        setPlayerActionState(PlayerActionState::Dead);
-        respawnPlayerAtMapSpawn();
+        beginPlayerDeath();
         return;
     }
     setPlayerActionState(PlayerActionState::Hurt, 0.22f);
@@ -5332,8 +6089,17 @@ void Engine::render()
         glPopMatrix();
     }
 
+    // Screen shake: trauma squared gives a punchy falloff.
+    float shakeX = 0.0f;
+    float shakeY = 0.0f;
+    if (shakeTrauma_ > 0.0f) {
+        const float magnitude = shakeTrauma_ * shakeTrauma_ * kShakeMaxOffsetPx;
+        shakeX = randomUniform(-magnitude, magnitude);
+        shakeY = randomUniform(-magnitude, magnitude);
+    }
+
     glPushMatrix();
-    glTranslatef(tx, ty, 0.0f);
+    glTranslatef(tx + shakeX, ty + shakeY, 0.0f);
 
     if (floorTexture_.id != 0) {
         renderTexture(floorTexture_, 0.0f, 0.0f, screenWidthPx(), screenHeightPx());
@@ -5441,23 +6207,128 @@ void Engine::render()
     renderAimTargets();
     renderChargeMeter();
 
+    renderParticles();
+    renderFloatingTexts();
+
     renderPathSpeechBubbles();
     renderSpeechBubble();
 
     glPopMatrix();
 
+    renderBossBar();
     renderHud();
+    renderQuestHud();
     renderInventory();
     renderNotice();
     renderDialogueBox();
     renderShopMenu();
     renderDisplayMenu();
+    renderDeathOverlay();
     if (transitionState_ == TransitionState::FadingOut ||
         transitionState_ == TransitionState::FadingIn) {
         const float progress = std::clamp(transitionTime_ / transitionDuration_, 0.0f, 1.0f);
         const float alpha = transitionState_ == TransitionState::FadingOut ? progress : 1.0f - progress;
         renderFilledRect(0.0f, 0.0f, screenWidthPx(), screenHeightPx() + kHudBarHeightPx,
             0.0f, 0.0f, 0.0f, alpha);
+    }
+}
+
+void Engine::renderParticles() const
+{
+    for (const Particle& particle : particles_) {
+        const float alpha = std::clamp(particle.life / particle.maxLife, 0.0f, 1.0f);
+        const float size = particle.size * (0.5f + 0.5f * alpha);
+        renderFilledRect(particle.x - size * 0.5f, particle.y - size * 0.5f, size, size,
+            particle.r, particle.g, particle.b, alpha * 0.95f);
+    }
+}
+
+void Engine::renderFloatingTexts() const
+{
+    for (const FloatingText& floating : floatingTexts_) {
+        const float alpha = std::clamp(floating.life / floating.maxLife, 0.0f, 1.0f);
+        const float width = textWidth(floating.text, floating.scale);
+        renderText(floating.text, floating.x - width * 0.5f, floating.y, floating.scale,
+            floating.r, floating.g, floating.b, alpha);
+    }
+}
+
+void Engine::renderBossBar() const
+{
+    const RuntimePathEntity* boss = nullptr;
+    for (const RuntimePathEntity& entity : pathEntities_) {
+        if (entity.path.combat.isBoss && !entity.pathHidden &&
+            entity.health > 0 && entity.deathSeconds < 0.0f) {
+            boss = &entity;
+            break;
+        }
+    }
+    if (boss == nullptr) {
+        return;
+    }
+    const float sw = screenWidthPx();
+    const float barW = sw * 0.6f;
+    const float barH = 8.0f;
+    const float x = (sw - barW) * 0.5f;
+    const float y = 18.0f;
+    const float pct = std::clamp(static_cast<float>(boss->health) /
+        static_cast<float>(std::max(1, boss->path.combat.maxHealth)), 0.0f, 1.0f);
+    const bool enraged = boss->health * 2 <= boss->path.combat.maxHealth;
+
+    const std::string name = boss->path.combat.bossName.empty()
+        ? boss->path.enemyId : boss->path.combat.bossName;
+    renderText(name, x, y - 13.0f, 0.95f, 0.96f, 0.88f, 0.80f, 1.0f);
+    renderFilledRect(x - 1.0f, y - 1.0f, barW + 2.0f, barH + 2.0f, 0.02f, 0.02f, 0.03f, 0.90f);
+    renderFilledRect(x, y, barW * pct, barH,
+        enraged ? 1.0f : 0.85f, enraged ? 0.25f : 0.12f, enraged ? 0.10f : 0.16f, 0.95f);
+}
+
+void Engine::renderQuestHud() const
+{
+    // Corner objective: the first active quest, kept out of the way of dialogue.
+    if (interactionState_ == InteractionState::InDialogue ||
+        interactionState_ == InteractionState::InShop ||
+        inventoryVisible_ || displayMenuVisible_ || playerDead_) {
+        return;
+    }
+    for (const QuestDef& quest : questDefs_) {
+        if (!questStarted(quest) || questComplete(quest)) {
+            continue;
+        }
+        const std::string line = quest.name + ": " + interpolateText(quest.objectiveText);
+        constexpr float scale = 0.85f;
+        const float w = textWidth(line, scale) + 12.0f;
+        renderFilledRect(6.0f, 6.0f, w, 18.0f, 0.03f, 0.04f, 0.05f, 0.62f);
+        renderText(line, 12.0f, 9.0f, scale, 0.92f, 0.90f, 0.72f, 0.95f);
+        return;
+    }
+}
+
+void Engine::renderDeathOverlay() const
+{
+    if (!playerDead_) {
+        return;
+    }
+    const float sw = screenWidthPx();
+    const float sh = screenHeightPx() + kHudBarHeightPx;
+    const float fade = std::clamp(deathSeconds_ / kDeathFadeSeconds, 0.0f, 1.0f);
+    renderFilledRect(0.0f, 0.0f, sw, sh, 0.0f, 0.0f, 0.0f, 0.78f * fade);
+
+    if (fade >= 0.5f) {
+        const std::string title = "YOU DIED";
+        constexpr float titleScale = 2.6f;
+        const float titleW = textWidth(title, titleScale);
+        const float titleAlpha = std::clamp((fade - 0.5f) * 2.0f, 0.0f, 1.0f);
+        renderText(title, (sw - titleW) * 0.5f, sh * 0.38f, titleScale,
+            0.85f, 0.12f, 0.12f, titleAlpha);
+    }
+    if (deathSeconds_ >= kDeathPromptSeconds) {
+        const float pulse = 0.55f + 0.45f * std::sin(runtimeSeconds_ * 4.0f);
+        const std::string prompt = "PRESS E TO CONTINUE";
+        constexpr float promptScale = 1.0f;
+        const float promptW = textWidth(prompt, promptScale);
+        renderText(prompt, (sw - promptW) * 0.5f, sh * 0.56f, promptScale,
+            0.88f, 0.86f, 0.80f, pulse);
     }
 }
 
@@ -5493,6 +6364,11 @@ void Engine::renderEnemyEntity(const RuntimePathEntity& entity) const
                 const float flash = std::clamp(entity.hitFlashSeconds / kEnemyHitFlashSeconds, 0.0f, 1.0f);
                 renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
                     drawW, drawH, 1.0f, 1.0f, 1.0f, flash * 0.7f);
+            } else if (entity.windupAttackIndex >= 0 || entity.chargeState == 1) {
+                // Telegraph: pulsing red tint while the attack winds up.
+                const float pulse = 0.28f + 0.22f * std::sin(runtimeSeconds_ * 22.0f);
+                renderFilledRect(entity.x - drawW * 0.5f, entity.y - drawH * 0.5f,
+                    drawW, drawH, 1.0f, 0.15f, 0.10f, pulse);
             }
             return;
         }
@@ -5864,7 +6740,9 @@ void Engine::renderItems() const
             continue;
         }
         const float x = item.placement.x;
-        const float y = item.placement.y;
+        // Gentle bob so pickups read as collectible (phase varies per item).
+        const float bobPhase = static_cast<float>(item.placement.id.size()) * 1.7f;
+        const float y = item.placement.y + std::sin(runtimeSeconds_ * 3.0f + bobPhase) * 1.5f;
         const float r = 7.0f;
         float cr = 1.0f, cg = 1.0f, cb = 0.2f;
         if (item.placement.pickupType == ItemPickupType::Ammo) { cr = 0.2f; cg = 0.8f; cb = 1.0f; }
@@ -6021,17 +6899,44 @@ void Engine::renderChargeMeter() const
     renderFilledRect(x, y, barW * charge01, barH, r, g, b, 0.95f);
 }
 
+void Engine::renderHeart(float x, float y, float scale, float fill01) const
+{
+    // 7x6 pixel heart; columns left of the fill fraction draw red, the rest dark.
+    static constexpr std::uint8_t kHeartRows[6] = {
+        0b0110110,
+        0b1111111,
+        0b1111111,
+        0b0111110,
+        0b0011100,
+        0b0001000,
+    };
+    for (int row = 0; row < 6; ++row) {
+        for (int col = 0; col < 7; ++col) {
+            if ((kHeartRows[row] & (1u << (6 - col))) == 0u) {
+                continue;
+            }
+            const bool filled = (static_cast<float>(col) + 0.5f) / 7.0f <= fill01;
+            renderFilledRect(x + static_cast<float>(col) * scale, y + static_cast<float>(row) * scale,
+                scale, scale,
+                filled ? 0.90f : 0.20f, filled ? 0.10f : 0.10f, filled ? 0.14f : 0.12f, 0.95f);
+        }
+    }
+}
+
 void Engine::renderHud() const
 {
     const float barY = screenHeightPx();
     renderFilledRect(0.0f, barY, screenWidthPx(), kHudBarHeightPx, 0.0f, 0.0f, 0.0f, 0.96f);
     renderFilledRect(0.0f, barY, screenWidthPx(), 1.0f, 0.22f, 0.24f, 0.28f, 1.0f);
 
-    const float heartW = 8.0f;
-    for (int i = 0; i < playerMaxHealth_; ++i) {
-        const bool filled = i < playerHealth_;
-        renderFilledRect(10.0f + static_cast<float>(i) * (heartW + 2.0f), barY + 11.0f, heartW, 6.0f,
-            filled ? 0.90f : 0.16f, filled ? 0.08f : 0.08f, filled ? 0.12f : 0.09f, 0.95f);
+    // Classic hearts: each heart is 2 HP, supporting half-heart states.
+    constexpr float heartScale = 1.8f;
+    constexpr float heartAdvance = 7.0f * heartScale + 3.0f;
+    const int heartCount = (playerMaxHealth_ + 1) / 2;
+    for (int i = 0; i < heartCount; ++i) {
+        const int hpForHeart = std::clamp(playerHealth_ - i * 2, 0, 2);
+        renderHeart(10.0f + static_cast<float>(i) * heartAdvance, barY + 7.0f, heartScale,
+            static_cast<float>(hpForHeart) * 0.5f);
     }
 
     const auto renderWeaponSlot = [this](const WeaponDef& weapon, const char* button,
@@ -6104,12 +7009,19 @@ void Engine::renderDisplayMenu() const
         return;
     }
 
-    constexpr float panelW = 220.0f;
-    constexpr float panelH = 154.0f;
-    constexpr float rowH = 25.0f;
+    constexpr float panelW = 236.0f;
+    constexpr float rowH = 23.0f;
+    constexpr int rowCount = 7;
+    constexpr float panelH = 34.0f + rowCount * rowH + 22.0f;
     const float panelX = (screenWidthPx() - panelW) * 0.5f;
     const float panelY = (screenHeightPx() + kHudBarHeightPx - panelH) * 0.5f;
-    const std::array<const char*, 4> labels = {
+
+    const std::string musicLabel = "MUSIC VOLUME  < " + std::to_string(musicVolumePct_) + " >";
+    const std::string sfxLabel = "SFX VOLUME  < " + std::to_string(sfxVolumePct_) + " >";
+    const std::array<std::string, rowCount> labels = {
+        "RESUME",
+        musicLabel,
+        sfxLabel,
         "WINDOWED 1X",
         "WINDOWED 2X",
         "FULLSCREEN 2X",
@@ -6120,19 +7032,19 @@ void Engine::renderDisplayMenu() const
         0.0f, 0.0f, 0.0f, 0.58f);
     renderFilledRect(panelX, panelY, panelW, panelH, 0.03f, 0.04f, 0.06f, 0.98f);
     renderFilledRect(panelX, panelY, panelW, 1.0f, 0.30f, 0.72f, 0.96f, 1.0f);
-    renderText("DISPLAY", panelX + 10.0f, panelY + 8.0f, 1.1f,
+    renderText("PAUSED", panelX + 10.0f, panelY + 8.0f, 1.1f,
         0.92f, 0.96f, 1.0f, 1.0f);
 
-    for (int i = 0; i < static_cast<int>(labels.size()); ++i) {
+    for (int i = 0; i < rowCount; ++i) {
         const float rowY = panelY + 32.0f + static_cast<float>(i) * rowH;
         if (i == displayMenuSelection_) {
             renderFilledRect(panelX + 7.0f, rowY, panelW - 14.0f, rowH - 2.0f,
                 0.16f, 0.34f, 0.48f, 0.95f);
         }
         const bool active =
-            (i == 0 && displayMode_ == DisplayMode::Windowed1x) ||
-            (i == 1 && displayMode_ == DisplayMode::Windowed2x) ||
-            (i == 2 && displayMode_ == DisplayMode::Fullscreen2x);
+            (i == 3 && displayMode_ == DisplayMode::Windowed1x) ||
+            (i == 4 && displayMode_ == DisplayMode::Windowed2x) ||
+            (i == 5 && displayMode_ == DisplayMode::Fullscreen2x);
         const std::string label = std::string(active ? "* " : "  ") + labels[static_cast<std::size_t>(i)];
         renderText(label, panelX + 14.0f, rowY + 4.0f, 0.9f,
             i == displayMenuSelection_ ? 1.0f : 0.78f,
@@ -6374,6 +7286,50 @@ void Engine::renderInventory() const
             const std::string countStr = std::to_string(count);
             renderText(countStr, panelX + panelW - pad - textWidth(countStr, 1.0f), y + 4.0f, 1.0f,
                 0.2f, 0.8f, 1.0f, 1.0f);
+        }
+    }
+
+    // QUESTS section: active objectives plus recently completed quests.
+    struct QuestRow {
+        std::string text;
+        bool complete = false;
+    };
+    std::vector<QuestRow> questRows;
+    for (const QuestDef& quest : questDefs_) {
+        if (!questStarted(quest)) {
+            continue;
+        }
+        const bool complete = questComplete(quest);
+        QuestRow row;
+        row.complete = complete;
+        row.text = complete
+            ? quest.name + " - DONE"
+            : quest.name + ": " + interpolateText(quest.objectiveText);
+        questRows.push_back(std::move(row));
+    }
+    if (!questRows.empty()) {
+        const float ammoBottom = ammoIds.empty()
+            ? panelY + panelH
+            : panelY + panelH + 6.0f + 28.0f + static_cast<float>(ammoIds.size()) * rowH + pad;
+        const float questY = ammoBottom + 6.0f;
+        constexpr float questRowH = 16.0f;
+        const float questH = 28.0f + static_cast<float>(questRows.size()) * questRowH + pad;
+        renderFilledRect(panelX, questY, panelW, questH, 0.03f, 0.04f, 0.06f, 0.88f);
+        renderFilledRect(panelX, questY, panelW, 1.0f, 0.92f, 0.85f, 0.35f, 0.90f);
+        renderText("QUESTS", panelX + pad, questY + 4.0f, 1.0f, 0.95f, 0.90f, 0.60f, 1.0f);
+        for (std::size_t i = 0; i < questRows.size(); ++i) {
+            const QuestRow& row = questRows[i];
+            std::string label = row.text;
+            constexpr float labelScale = 0.78f;
+            const float labelMaxW = panelW - pad * 2.0f;
+            while (!label.empty() && textWidth(label, labelScale) > labelMaxW) {
+                label.pop_back();
+            }
+            renderText(label, panelX + pad, questY + 28.0f + static_cast<float>(i) * questRowH,
+                labelScale,
+                row.complete ? 0.45f : 0.90f,
+                row.complete ? 0.85f : 0.88f,
+                row.complete ? 0.50f : 0.72f, 1.0f);
         }
     }
 }

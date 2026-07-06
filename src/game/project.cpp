@@ -31,6 +31,8 @@ std::string tokenOrDash(const std::string& value)
     return value.empty() ? "-" : value;
 }
 
+constexpr int kGameProjectVersion = 18;
+
 void writeCondition(std::ostream& output, const DialogueCondition& condition)
 {
     output << static_cast<int>(condition.type) << ' '
@@ -83,6 +85,12 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
             return false;
         }
     }
+    for (const QuestDef& quest : project.questDefs) {
+        if (!validToken(quest.id)) {
+            setError(errorMessage, "Quest definition id is invalid: " + quest.id);
+            return false;
+        }
+    }
 
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
@@ -93,7 +101,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
         return false;
     }
 
-    output << "ADGAME 17\n";
+    output << "ADGAME " << kGameProjectVersion << "\n";
     output << "id " << project.id << "\n";
     output << "playable " << (project.playableCharacterId.empty() ? "-" : project.playableCharacterId) << "\n";
     output << "characters " << project.characterIds.size() << "\n";
@@ -120,7 +128,14 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                << ' ' << type.killAmount
                << ' ' << static_cast<int>(type.killVariableScope)
                << ' ' << type.defeatEffectIds.size()
-               << ' ' << type.attacks.size() << "\n";
+               << ' ' << type.attacks.size()
+               << ' ' << static_cast<int>(type.aiStyle)
+               << ' ' << (type.isBoss ? 1 : 0)
+               << ' ' << tokenOrDash(type.bossName)
+               << ' ' << tokenOrDash(type.dropItemId)
+               << ' ' << type.dropChance
+               << ' ' << type.dropQuantityMin
+               << ' ' << type.dropQuantityMax << "\n";
         for (const EnemyAttackDef& atk : type.attacks) {
             output << "enemy_attack"
                    << ' ' << static_cast<int>(atk.type)
@@ -130,6 +145,7 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
                    << ' ' << atk.projectileSpeed
                    << ' ' << (atk.animState.empty() ? "-" : atk.animState)
                    << ' ' << (atk.ammoSpriteId.empty() ? "-" : atk.ammoSpriteId)
+                   << ' ' << atk.windupSeconds
                    << "\n";
         }
         for (const std::string& effectId : type.defeatEffectIds) {
@@ -241,6 +257,17 @@ bool saveGameProject(const std::filesystem::path& path, const GameProject& proje
             }
         }
     }
+    output << "quest_defs " << project.questDefs.size() << "\n";
+    for (const QuestDef& quest : project.questDefs) {
+        output << "quest_def " << quest.id
+               << ' ' << std::quoted(quest.name)
+               << ' ' << std::quoted(quest.objectiveText)
+               << ' ';
+        writeCondition(output, quest.startCondition);
+        output << ' ';
+        writeCondition(output, quest.completeCondition);
+        output << "\n";
+    }
     output << "end\n";
     return static_cast<bool>(output);
 }
@@ -256,7 +283,7 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
     std::string magic;
     int version = 0;
     input >> magic >> version;
-    if (magic != "ADGAME" || version < 1 || version > 17) {
+    if (magic != "ADGAME" || version < 1 || version > kGameProjectVersion) {
         setError(errorMessage, "Unsupported game project file.");
         return false;
     }
@@ -327,6 +354,23 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             int numAttacks = 0;
             if (version >= 8) {
                 input >> numAttacks;
+            }
+            if (version >= 18) {
+                int aiStyle = 0;
+                int isBoss = 0;
+                std::string bossName;
+                std::string dropItemId;
+                input >> aiStyle >> isBoss >> bossName >> dropItemId
+                      >> type.dropChance >> type.dropQuantityMin >> type.dropQuantityMax;
+                type.aiStyle = static_cast<EnemyAiStyle>(std::clamp(aiStyle, 0, 2));
+                type.isBoss = isBoss != 0;
+                type.bossName = (bossName == "-") ? "" : bossName;
+                type.dropItemId = (dropItemId == "-") ? "" : dropItemId;
+                type.dropChance = std::clamp(type.dropChance, 0.0f, 1.0f);
+                type.dropQuantityMin = std::max(1, type.dropQuantityMin);
+                type.dropQuantityMax = std::max(type.dropQuantityMin, type.dropQuantityMax);
+            }
+            if (version >= 8) {
                 for (int ai = 0; ai < numAttacks && input; ++ai) {
                     std::string atkKey;
                     input >> atkKey;
@@ -336,6 +380,10 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
                         std::string animState, ammoSprite;
                         input >> typeInt >> atk.damage >> atk.range >> atk.cooldown
                               >> atk.projectileSpeed >> animState >> ammoSprite;
+                        if (version >= 18) {
+                            input >> atk.windupSeconds;
+                            atk.windupSeconds = std::max(0.0f, atk.windupSeconds);
+                        }
                         atk.type = static_cast<EnemyAttackType>(std::clamp(typeInt, 0, 2));
                         atk.animState    = (animState  == "-") ? "" : animState;
                         atk.ammoSpriteId = (ammoSprite == "-") ? "" : ammoSprite;
@@ -566,6 +614,20 @@ bool loadGameProject(const std::filesystem::path& path, GameProject& project, st
             }
             if (!npc.id.empty()) {
                 loaded.npcTypes.push_back(std::move(npc));
+            }
+        } else if (version >= 18 && key == "quest_defs") {
+            std::size_t count = 0;
+            input >> count;
+            loaded.questDefs.reserve(count);
+        } else if (version >= 18 && key == "quest_def") {
+            QuestDef quest;
+            input >> quest.id >> std::quoted(quest.name) >> std::quoted(quest.objectiveText);
+            if (!readCondition(input, quest.startCondition) ||
+                !readCondition(input, quest.completeCondition)) {
+                break;
+            }
+            if (!quest.id.empty()) {
+                loaded.questDefs.push_back(std::move(quest));
             }
         } else if (key == "end") {
             break;

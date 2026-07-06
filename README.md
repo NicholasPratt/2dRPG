@@ -76,17 +76,29 @@ Controls:
 - Interact: E / Enter / Space / gamepad A
 - Melee attack: Z / gamepad X
 - Ranged attack: X / gamepad B
-- Inventory and weapon selector: I / gamepad Y, Start, or Back
-- Display menu: Escape
+- Dodge roll: Left Shift or C / gamepad right trigger (brief speed burst with i-frames)
+- Inventory, quests, and weapon selector: I / gamepad Y, Start, or Back
+- Pause menu (resume, music/SFX volume, display, quit): Escape
 - Toggle 2x fullscreen: F11
 - In the inventory, highlight a weapon and press its attack button to assign it
 
-The runtime keeps the complete 48 x 32 tile room visible and renders health,
+The runtime keeps the complete 48 x 32 tile room visible and renders hearts,
 weapon slots, and ammo in a compact 28-pixel black bar below the playfield. The
 resulting 768 x 540 logical canvas uses centred integer scaling and black
-letterboxing, so resizing never stretches the image. Escape opens an in-game
-display menu with Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game.
-Fullscreen 2x renders at 1536 x 1080, centred on wider displays.
+letterboxing, so resizing never stretches the image. Escape pauses the game and
+opens a menu with Resume, Music/SFX volume, Windowed 1x, Windowed 2x,
+Fullscreen 2x, and Quit Game. Fullscreen 2x renders at 1536 x 1080, centred on
+wider displays.
+
+Combat feedback (screen shake, hitstop, particles, damage numbers) and all
+combat/UI sound effects are built into the engine — SFX are synthesized
+procedurally, so projects need no audio assets to sound alive. Enemies
+telegraph attacks with a red flash before they land, can drop loot where they
+die, and support per-type AI styles (chaser, kiter, charger) plus a boss mode
+with an on-screen health bar and an enrage phase. Dying fades to a "YOU DIED"
+screen and respawns the player at the map spawn at the cost of 10% of their
+coins. Quests defined in the project appear as a HUD objective line and in the
+inventory's QUESTS section.
 
 Dialogue text can show live game-state values with `$Variable_Id`. For example,
 `You killed $Crows_killed crows.` resolves chapter-scoped variables in the

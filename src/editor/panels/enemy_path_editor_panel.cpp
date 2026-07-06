@@ -449,6 +449,15 @@ void EnemyPathEditorPanel::drawAttackEditor(EditorContext& context, game::EnemyT
                 context.markDirty();
             }
 
+            ImGui::SetNextItemWidth(100.0f);
+            if (ImGui::InputFloat("Windup (s)##atkwu", &atk.windupSeconds, 0.05f, 0.15f, "%.2f")) {
+                atk.windupSeconds = std::clamp(atk.windupSeconds, 0.0f, 3.0f);
+                context.markDirty();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Telegraph: the enemy flashes and holds for this long before the attack lands.\n0 = instant (no telegraph)");
+            }
+
             // Anim state
             char animBuf[64]{};
             std::memcpy(animBuf, atk.animState.data(), std::min(atk.animState.size(), sizeof(animBuf) - 1));
@@ -631,6 +640,70 @@ void EnemyPathEditorPanel::drawEnemyTypePage(EditorContext& context)
         context.markDirty();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = follow waypoints only; >0 = chase the player within this radius");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110.0f);
+    int aiStyle = static_cast<int>(type.aiStyle);
+    if (ImGui::Combo("AI style##ais", &aiStyle, "Chaser\0Kiter\0Charger\0")) {
+        type.aiStyle = static_cast<game::EnemyAiStyle>(std::clamp(aiStyle, 0, 2));
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Behaviour while aggro'd: Chaser runs at the player, Kiter keeps its distance,\n"
+            "Charger does a telegraphed straight-line dash (stunned briefly on wall hit)");
+    }
+
+    // Boss presentation
+    if (ImGui::Checkbox("Boss##bossflag", &type.isBoss)) {
+        context.markDirty();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shows a large health bar; enrages (faster attacks/movement) below half health");
+    if (type.isBoss) {
+        ImGui::SameLine();
+        char bossBuf[64]{};
+        std::memcpy(bossBuf, type.bossName.data(), std::min(type.bossName.size(), sizeof(bossBuf) - 1));
+        ImGui::SetNextItemWidth(150.0f);
+        if (ui::inputTextString("Boss name##bossname", bossBuf, sizeof(bossBuf))) {
+            type.bossName = bossBuf;
+            context.markDirty();
+        }
+    }
+
+    // Loot drop
+    ImGui::Separator();
+    ImGui::TextDisabled("Loot Drop  (item spawned where the enemy dies)");
+    if (ImGui::BeginCombo("Drop item##dropitem", type.dropItemId.empty() ? "(none)" : type.dropItemId.c_str())) {
+        if (ImGui::Selectable("(none)", type.dropItemId.empty())) {
+            type.dropItemId.clear();
+            context.markDirty();
+        }
+        for (const game::ItemDef& item : context.itemDefs) {
+            if (ImGui::Selectable(item.id.c_str(), item.id == type.dropItemId)) {
+                type.dropItemId = item.id;
+                context.markDirty();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (!type.dropItemId.empty()) {
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::InputFloat("Chance (0-1)##dropch", &type.dropChance, 0.05f, 0.25f, "%.2f")) {
+            type.dropChance = std::clamp(type.dropChance, 0.0f, 1.0f);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        if (ImGui::InputInt("Min##dropmin", &type.dropQuantityMin)) {
+            type.dropQuantityMin = std::clamp(type.dropQuantityMin, 1, 99);
+            type.dropQuantityMax = std::max(type.dropQuantityMin, type.dropQuantityMax);
+            context.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        if (ImGui::InputInt("Max##dropmax", &type.dropQuantityMax)) {
+            type.dropQuantityMax = std::clamp(type.dropQuantityMax, type.dropQuantityMin, 99);
+            context.markDirty();
+        }
+    }
 
     char killVarBuf[64]{};
     std::memcpy(killVarBuf, type.killVariable.data(), std::min(type.killVariable.size(), sizeof(killVarBuf) - 1));

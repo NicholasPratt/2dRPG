@@ -869,6 +869,107 @@ void EditorApp::drawProjectStateTab(bool pickerMode)
     }
 
     ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Quests");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(tracked on the HUD and inventory; objective supports ${var} interpolation)");
+    ImGui::SameLine();
+    if (ImGui::Button("Add Quest")) {
+        game::QuestDef quest;
+        quest.id = "quest_" + std::to_string(context_.questDefs.size() + 1);
+        quest.completeCondition.type = game::GameConditionType::IntCompare;
+        quest.completeCondition.op = game::GameCompareOp::GreaterOrEqual;
+        if (!context_.stateVariables.empty()) {
+            quest.completeCondition.variableId = context_.stateVariables.front().id;
+            quest.completeCondition.scope = context_.stateVariables.front().scope;
+        }
+        context_.questDefs.push_back(std::move(quest));
+        context_.markDirty();
+    }
+    if (context_.questDefs.empty()) {
+        ImGui::TextDisabled("No quests defined.");
+    }
+    const auto drawQuestCondition = [this](const char* label, game::GameCondition& condition) {
+        ImGui::PushID(label);
+        ImGui::TextUnformatted(label);
+        static const char* kConditionNames = "Always\0Int Compare\0Bool Equals\0Has Item\0Has Money\0";
+        int type = static_cast<int>(condition.type);
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::Combo("##ctype", &type, kConditionNames)) {
+            condition.type = static_cast<game::GameConditionType>(std::clamp(type, 0, 4));
+            context_.markDirty();
+        }
+        if (condition.type == game::GameConditionType::IntCompare ||
+            condition.type == game::GameConditionType::BoolEquals ||
+            condition.type == game::GameConditionType::HasItem) {
+            ImGui::SameLine();
+            if (editString("Var", condition.variableId)) {
+                context_.markDirty();
+            }
+        }
+        if (condition.type == game::GameConditionType::IntCompare) {
+            static const char* kOpNames = "==\0!=\0<\0<=\0>\0>=\0";
+            int op = static_cast<int>(condition.op);
+            ImGui::SetNextItemWidth(70.0f);
+            if (ImGui::Combo("##cop", &op, kOpNames)) {
+                condition.op = static_cast<game::GameCompareOp>(std::clamp(op, 0, 5));
+                context_.markDirty();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::DragInt("Value##cval", &condition.intValue, 0.2f)) {
+                context_.markDirty();
+            }
+            ImGui::SameLine();
+            int scope = static_cast<int>(condition.scope);
+            ImGui::SetNextItemWidth(110.0f);
+            if (ImGui::Combo("Scope##cscope", &scope, "Universal\0Chapter\0")) {
+                condition.scope = static_cast<game::StateVariableScope>(scope);
+                context_.markDirty();
+            }
+        } else if (condition.type == game::GameConditionType::BoolEquals ||
+            condition.type == game::GameConditionType::HasItem) {
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Is true##cbool", &condition.boolValue)) {
+                context_.markDirty();
+            }
+        } else if (condition.type == game::GameConditionType::HasMoney) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::DragInt("Amount##cmoney", &condition.intValue, 0.2f)) {
+                context_.markDirty();
+            }
+        }
+        ImGui::PopID();
+    };
+    for (int i = 0; i < static_cast<int>(context_.questDefs.size()); ++i) {
+        game::QuestDef& quest = context_.questDefs[static_cast<std::size_t>(i)];
+        ImGui::PushID(3000 + i);
+        ImGui::Separator();
+        if (editString("Quest ID", quest.id)) {
+            context_.markDirty();
+        }
+        if (editString("Name", quest.name)) {
+            context_.markDirty();
+        }
+        if (editString("Objective", quest.objectiveText)) {
+            context_.markDirty();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Shown on the HUD, e.g. \"Crows killed: ${Crows_killed}/5\"");
+        }
+        drawQuestCondition("Active when:", quest.startCondition);
+        drawQuestCondition("Complete when:", quest.completeCondition);
+        if (ImGui::Button("Delete Quest")) {
+            context_.questDefs.erase(context_.questDefs.begin() + i);
+            context_.markDirty();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
     if (ImGui::Button("Save Definitions", ImVec2(180.0f, 32.0f))) {
         saveProjectMetadata();
     }
@@ -1451,6 +1552,7 @@ void EditorApp::loadProjectMetadata()
         context_.stateVariables = project.stateVariables;
         context_.effectDefs = project.effectDefs;
         context_.chapterSynopses = project.chapterSynopses;
+        context_.questDefs = project.questDefs;
         context_.npcTypes = project.npcTypes;
         context_.fontPath = project.fontPath;
     } else {
@@ -1463,6 +1565,7 @@ void EditorApp::loadProjectMetadata()
         context_.stateVariables.clear();
         context_.effectDefs.clear();
         context_.chapterSynopses.clear();
+        context_.questDefs.clear();
         context_.npcTypes.clear();
         context_.fontPath.clear();
     }
@@ -1488,6 +1591,7 @@ void EditorApp::saveProjectMetadata()
     project.stateVariables = context_.stateVariables;
     project.effectDefs = context_.effectDefs;
     project.chapterSynopses = context_.chapterSynopses;
+    project.questDefs = context_.questDefs;
     project.npcTypes = context_.npcTypes;
     project.fontPath = context_.fontPath;
     (void)game::saveGameProject(context_.assets.projectRoot / "assets/game/project.adgame", project, nullptr);

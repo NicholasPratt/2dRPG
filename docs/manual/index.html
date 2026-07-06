@@ -687,17 +687,24 @@ still play over the active music. A screen's walking SFX loops only while the pl
   <tr><td>Interact / confirm / use</td><td><span class="kbd">E</span></td><td>South face button</td></tr>
   <tr><td>Melee attack</td><td><span class="kbd">Z</span></td><td>West face button</td></tr>
   <tr><td>Ranged attack</td><td><span class="kbd">X</span></td><td>East face button</td></tr>
-  <tr><td>Toggle inventory</td><td><span class="kbd">I</span></td><td>North / Start</td></tr>
+  <tr><td>Dodge roll (i-frames, short cooldown)</td><td><span class="kbd">Shift</span> or <span class="kbd">C</span></td><td>Right trigger</td></tr>
+  <tr><td>Toggle inventory &amp; quests</td><td><span class="kbd">I</span></td><td>North / Start</td></tr>
   <tr><td>Scroll dialogue / select response</td><td>Up/Down or W/S</td><td>D-pad / left stick</td></tr>
-  <tr><td>Open / close display menu</td><td><span class="kbd">Esc</span></td><td>Select (Back) button</td></tr>
+  <tr><td>Open / close pause menu</td><td><span class="kbd">Esc</span></td><td>Select (Back) button</td></tr>
   <tr><td>Toggle Fullscreen 2x</td><td><span class="kbd">F11</span></td><td>—</td></tr>
 </table>
 <p>The game renders a fixed 768&times;540 logical canvas: a 768&times;512 playfield and compact
 28-pixel HUD. It uses centred integer scaling with black letterboxing, so resizing never stretches
 the pixels: the playfield grows to the largest whole-number multiple that fits the current window,
-so enlarging the window enlarges the play area in crisp integer steps. The display menu offers
-Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit Game. Fullscreen 2x renders at 1536&times;1080 and
-remains centred on wider monitors.</p>
+so enlarging the window enlarges the play area in crisp integer steps. The pause menu (Escape halts
+the simulation) offers Resume, Music/SFX volume, Windowed 1x, Windowed 2x, Fullscreen 2x, and Quit
+Game. Fullscreen 2x renders at 1536&times;1080 and remains centred on wider monitors.</p>
+<p>Combat feedback is built in: screen shake, hitstop, hit-spark particles, floating damage numbers,
+and procedurally synthesized sound effects (no audio assets required). Enemies telegraph melee and
+ranged attacks with a red flash before they land, may drop loot where they die, and support per-type
+AI styles (chaser / kiter / charger) plus a boss mode with an on-screen health bar and enrage phase.
+Dying shows a "YOU DIED" screen and respawns the player at the map spawn, costing 10% of their coins.
+Quests defined in the project library appear as a HUD objective and in the inventory's QUESTS section.</p>
 
 <!-- ============================================================ -->
 <h2 id="glossary">8. Glossary</h2>
